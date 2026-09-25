@@ -34,6 +34,14 @@ BRIDGE = AGENTS / "_pi" / "env_bridge.ts"
 PI_HOME = AGENTS / "_pi" / "home"        # 专用的 pi 配置目录，和学习者自己的 ~/.pi 隔离
 LOCAL_ENV = store.ROOT / "local.env"
 LEARNER = store.PROGRESS_DIR / "learner.md"
+SETTINGS = store.PROGRESS_DIR / "settings.yaml"
+
+
+def study_settings() -> dict:
+    """学习者的时间预算（progress/settings.yaml，D-010）。"""
+    s = store.load_yaml(SETTINGS)
+    return {"unit_budget_minutes": int(s.get("unit_budget_minutes") or 180),
+            "session_minutes": int(s.get("session_minutes") or 45)}
 
 
 class AgentError(Exception):
@@ -112,7 +120,7 @@ def build_brief(agent: Agent, unit_id: str) -> str:
     return agent.file("task").read_text(encoding="utf-8").format(
         unit_id=unit_id, unit_title=unit.get("title", unit_id), topic_id=tid,
         topic_title=topic.get("title", tid), unit_notes=unit.get("notes") or "无",
-        curriculum_row=curriculum_row(tid), learner=learner,
+        curriculum_row=curriculum_row(tid), learner=learner, **study_settings(),
     )
 
 
@@ -170,10 +178,10 @@ def run(agent_name: str, unit_id: str, model: str | None = None, timeout: int = 
     run_dir.mkdir(parents=True)
     PI_HOME.mkdir(parents=True, exist_ok=True)
     (run_dir / "brief.md").write_text(brief, encoding="utf-8")
-    required = agent.spec["output"]["required_sections"]
+    required = agent.spec["output"].get("required_sections") or []
     (run_dir / "context.json").write_text(json.dumps(
-        {"hosts": sorted(tools.allowed_hosts()), "required_sections": required}, ensure_ascii=False, indent=2),
-        encoding="utf-8")
+        {"hosts": sorted(tools.allowed_hosts()), "required_sections": required, **study_settings()},
+        ensure_ascii=False, indent=2), encoding="utf-8")
 
     m = agent.spec["model"]
     model_id = model or m["id"]
@@ -185,7 +193,7 @@ def run(agent_name: str, unit_id: str, model: str | None = None, timeout: int = 
         "--provider", m["provider"], "--model", model_id,
         *(["--thinking", m["thinking"]] if m.get("thinking") else []),
         "--system-prompt", str(agent.file("system_prompt")),
-        "@brief.md", "按简报完成任务，最后用 submit 提交。",
+        "@brief.md", "按简报完成任务，最后提交。",
     ]
     env = {**os.environ, **load_local_env(),
            "PI_CODING_AGENT_DIR": str(PI_HOME), "PI_SKIP_VERSION_CHECK": "1", "PI_TELEMETRY": "0",
@@ -206,7 +214,8 @@ def run(agent_name: str, unit_id: str, model: str | None = None, timeout: int = 
         "schema_version": 1, "agent": agent.name, "unit": unit_id, "run_id": run_dir.name,
         "prompt_version": agent.prompt_version(), "env_version": env_version(), "provider": m["provider"], "model": model_id,
         "started": started.isoformat(timespec="seconds"), "seconds": round(time.monotonic() - t0, 1),
-        "exit_code": code, "submitted": (run_dir / "output.md").exists(), **summary,
+        "exit_code": code, "submitted": (run_dir / "output.md").exists(),
+        "output_format": agent.spec["output"].get("format", "markdown"), **summary,
     }
     (run_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
     return run_dir

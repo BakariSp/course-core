@@ -117,6 +117,75 @@ def test_submit_rejection_is_tool_error(ctx):
     assert not (ctx.run_dir / "output.md").exists()
 
 
+# ---------- submit_plan（课程计划，D-010） ----------
+
+SRC = "https://missing.csail.mit.edu/2026/"
+
+
+def section(title="导航", minutes=20, **kw):
+    s = {"title": title, "minutes": minutes, "goal": "能用 cd 和 pwd 在目录间移动",
+         "explain": "shell 里有一个'当前目录'的概念。" * 10,
+         "try": [{"command": "pwd", "expect": "打印出当前目录，如 /c/Users/you"}],
+         "pitfalls": [{"symptom": "bash: cd: foo: No such file or directory", "cause": "路径拼错或不在当前目录下", "fix": "先 ls 看看"}],
+         "sources": [{"title": "讲义", "url": SRC}]}
+    s.update(kw)
+    return s
+
+
+def plan_of(*sections, outcomes=3):
+    return {"title": "Shell", "summary": "学 shell 基础。", "parts": [{"title": "第一部分", "sections": list(sections)}],
+            "outcomes": [f"能做 {i}" for i in range(outcomes)]}
+
+
+@pytest.fixture
+def plan_ctx(tmp_path):
+    c = tools.RunContext(tmp_path, HOSTS, [], unit_budget_minutes=180, session_minutes=45)
+    tools.fetch_url(c, SRC, _get=fake_get({SRC: page("x")}))
+    return c
+
+
+def test_valid_plan_is_accepted_and_rendered(plan_ctx):
+    plan = plan_of(section(), section("管道", 30))
+    assert tools.check_plan(plan_ctx, plan) == []
+    assert "通过" in tools.submit_plan(plan_ctx, plan)
+    saved = json.loads((plan_ctx.run_dir / "output.json").read_text(encoding="utf-8"))
+    assert saved["title"] == "Shell"
+    md = (plan_ctx.run_dir / "output.md").read_text(encoding="utf-8")
+    assert "### 2. 管道（30 分钟）" in md and "总时长 50 分钟" in md
+
+
+def test_over_budget_plan_is_rejected(plan_ctx):
+    # INVARIANT: 时间预算是硬约束（F-014）
+    plan = plan_of(*[section(f"节{i}", 40) for i in range(5)])      # 200 分钟 > 180
+    assert any("超过单元预算" in e for e in tools.check_plan(plan_ctx, plan))
+    with pytest.raises(tools.ToolError):
+        tools.submit_plan(plan_ctx, plan)
+    assert not (plan_ctx.run_dir / "output.json").exists()
+
+
+def test_section_longer_than_one_session_is_rejected(plan_ctx):
+    assert any("单次学习上限" in e for e in tools.check_plan(plan_ctx, plan_of(section(minutes=60))))
+
+
+@pytest.mark.parametrize("bad,expected", [
+    ({"explain": "去看讲义。"}, "explain 太短"),                                   # 指路不是讲课（F-013）
+    ({"try": []}, "至少要有一条动手"),
+    ({"pitfalls": [{"symptom": "报错", "cause": "", "fix": "x"}]}, "symptom / cause / fix"),
+    ({"sources": [{"title": "没打开过", "url": "https://missing.csail.mit.edu/2020/"}]}, "没有打开过"),
+])
+def test_plan_section_requirements(plan_ctx, bad, expected):
+    assert any(expected in e for e in tools.check_plan(plan_ctx, plan_of(section(**bad))))
+
+
+def test_outcomes_count(plan_ctx):
+    assert any("outcomes" in e for e in tools.check_plan(plan_ctx, plan_of(section(), outcomes=1)))
+
+
+def test_sections_are_grouped_into_sessions():
+    plan = plan_of(section(minutes=15), section(minutes=25), section(minutes=30), section(minutes=10))
+    assert tools.plan_sessions(plan, 45) == [[0, 1], [2, 3]]
+
+
 # ---------- 适配器入口 ----------
 
 def test_bridge_schema_and_call(tmp_path, capsys, monkeypatch):
@@ -191,6 +260,11 @@ def test_judge_suspicions_are_checked_against_pages_the_agent_read(tmp_path):
         {"claim": "另一个版本号", "quote": "pytest 7.0.0"},
     ])
     assert [c["found_in_pages"] for c in checked] == [True, False]
+
+
+def test_url_extraction_stops_at_chinese_punctuation():
+    text = "见讲义（https://missing.csail.mit.edu/2026/course-shell/）。另见「https://x.org/a」，还有 https://x.org/b。"
+    assert tools.extract_urls(text) == {"https://missing.csail.mit.edu/2026/course-shell/", "https://x.org/a", "https://x.org/b"}
 
 
 def test_rubric_ids_read_from_markdown():

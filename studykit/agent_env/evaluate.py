@@ -18,7 +18,6 @@ from pathlib import Path
 from studykit import store
 from studykit.agent_env import runner, tools
 
-URL_RE = re.compile(r"https?://[^\s)>\]\"'`]+")
 
 
 def resolve_run(agent_name: str, run_id: str | None) -> Path:
@@ -43,7 +42,6 @@ def check(run_dir: Path, _get=tools._http_get) -> list[dict]:
     """确定性检查。每项：id / desc / ok / detail。"""
     meta = json.loads((run_dir / "meta.json").read_text(encoding="utf-8"))
     agent = runner.load_agent(meta["agent"])
-    required = agent.spec["output"]["required_sections"]
     out_path = run_dir / "output.md"
     results = []
 
@@ -54,14 +52,29 @@ def check(run_dir: Path, _get=tools._http_get) -> list[dict]:
     if not out_path.exists():
         return results
     md = out_path.read_text(encoding="utf-8")
-    ctx = tools.RunContext(run_dir, tools.allowed_hosts(), required)
+    spec = json.loads((run_dir / "context.json").read_text(encoding="utf-8"))
+    ctx = tools.RunContext(run_dir, set(spec["hosts"]), spec.get("required_sections") or [],
+                           spec.get("unit_budget_minutes", 180), spec.get("session_minutes", 45))
 
-    headings = [" ".join(h.split()) for h in re.findall(r"^##\s+(.+?)\s*$", md, re.MULTILINE)]
-    order = [h for h in headings if h in required]
-    add("sections", "必需章节齐全且顺序正确", order == required, f"实际：{headings}")
+    plan_path = run_dir / "output.json"
+    if plan_path.exists():
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        problems = tools.check_plan(ctx, plan)
+        add("plan_valid", "课程计划通过环境检查（预算、必填项、出处）", not problems, "；".join(problems))
+        total, n = tools.plan_minutes(plan), len(tools.sections_of(plan))
+        add("budget", f"总时长不超过预算 {ctx.unit_budget_minutes} 分钟", total <= ctx.unit_budget_minutes, f"{total} 分钟")
+        add("shape", "4–8 个小节", 4 <= n <= 8, f"{n} 节")
+        pitfalls = [p_ for sec in tools.sections_of(plan) for p_ in sec.get("pitfalls") or []]
+        add("pitfalls", "至少写了 2 个具体的坑", len(pitfalls) >= 2, f"{len(pitfalls)} 个")
+    else:
+        required = ctx.required_sections
+        headings = [" ".join(h.split()) for h in re.findall(r"^##\s+(.+?)\s*$", md, re.MULTILINE)]
+        order = [h for h in headings if h in required]
+        add("sections", "必需章节齐全且顺序正确", order == required, f"实际：{headings}")
+        add("length", "长度适中（600–7000 字）", 600 <= len(md) <= 7000, f"{len(md)} 字")
 
     seen = tools.grounded_urls(ctx)
-    urls = sorted({u.rstrip(".,;") for u in URL_RE.findall(md)})
+    urls = sorted(tools.extract_urls(md))
     ungrounded = [u for u in urls if tools.url_key(u) not in seen]
     add("grounded", "每个链接都是打开过的页面", not ungrounded, "；".join(ungrounded))
 
@@ -80,7 +93,6 @@ def check(run_dir: Path, _get=tools._http_get) -> list[dict]:
 
     pages = len(fetched_ok)
     add("researched", "至少读了 2 个页面再写", pages >= 2, f"打开成功 {pages} 个页面")
-    add("length", "长度适中（600–7000 字）", 600 <= len(md) <= 7000, f"{len(md)} 字")
 
     case = _case_for(agent, meta["unit"])
     for s in case.get("must_mention") or []:
@@ -273,8 +285,16 @@ def publish(run_dir: Path) -> Path:
     agent = runner.load_agent(meta["agent"])
     dest = store.ROOT / agent.spec["output"]["publish_to"].format(unit=meta["unit"])
     dest.parent.mkdir(parents=True, exist_ok=True)
-    judge_avg = (ev.get("judge") or {}).get("avg", "—")
-    header = (f"<!-- 由助教 agent {meta['agent']} 生成 · prompt 版本 {meta['prompt_version']} · "
-              f"模型 {meta['provider']}/{meta['model']} · 运行 {meta['run_id']} · 评分 {judge_avg}/5 -->\n\n")
-    dest.write_text(header + (run_dir / "output.md").read_text(encoding="utf-8"), encoding="utf-8")
+    judge_avg = (ev.get("judge") or {}).get("avg")
+    provenance = {"agent": meta["agent"], "prompt_version": meta["prompt_version"],
+                  "env_version": meta.get("env_version"), "model": f"{meta['provider']}/{meta['model']}",
+                  "run": meta["run_id"], "judge_avg": judge_avg, "published": dt.datetime.now().isoformat(timespec="seconds")}
+    if dest.suffix == ".json":
+        plan = json.loads((run_dir / "output.json").read_text(encoding="utf-8"))
+        dest.write_text(json.dumps({"schema_version": 1, "unit": meta["unit"], "provenance": provenance, **plan},
+                                   ensure_ascii=False, indent=2), encoding="utf-8")
+    else:
+        header = (f"<!-- 由助教 agent {meta['agent']} 生成 · prompt 版本 {meta['prompt_version']} · "
+                  f"模型 {provenance['model']} · 运行 {meta['run_id']} · 评分 {judge_avg or '—'}/5 -->\n\n")
+        dest.write_text(header + (run_dir / "output.md").read_text(encoding="utf-8"), encoding="utf-8")
     return dest
