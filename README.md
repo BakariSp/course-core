@@ -43,6 +43,20 @@ bash scripts/check-shell-env.sh
 - 路径：Git Bash 里 `/d/cs-study` 就是 `D:\cs-study`；但把 `/d/...` 交给 Windows 程序时，它只认 `D:\...`。
 - 本仓库的 shell 脚本必须是 LF 换行（见 [.gitattributes](.gitattributes)）。
 
+### 怎么查文档（Git Bash 没有 `man`）
+
+`man`、`info`、`groff` 都没有，`/usr/share/man` 目录也不存在 —— 因为 Git Bash 只带命令本身，不带手册页。替代方案：
+
+| 想查什么 | Git Bash 里怎么查 |
+|---|---|
+| bash **内建**命令（`cd` `test` `read` `printf` `trap` `[` `[[` …） | `help <名字>`；`help -m <名字>` 出伪 man 格式；`help -d` 一行简介；`help -s` 只出语法；`help` 列出全部内建命令 |
+| **外部**程序（`grep` `ls` `find` `curl` …） | `<程序> --help` |
+| **git** 子命令 | `git <子命令> -h`（终端里看，最实用）；`git help <子命令>` 打开浏览器读本地 HTML 文档（`C:\Program Files\Git\mingw64\share\doc\git-doc\`，252 个 `.html`） |
+| 真正要 `man` | 装 WSL Ubuntu 后 `sudo apt install man-db manpages manpages-dev`；或查在线 man（注意那是 Linux 版本，选项可能和 Git Bash 里的不同） |
+
+- 坑：`/usr/bin/test --help` **什么都不输出**且 exit=0 —— `test` 把 `--help` 当成一个待测字符串（非空 = 真），根本没进到"打印帮助"的分支。`test` 没有 `--help` 这种入口，只能 `help test`。
+- 同类坑：Git Bash 里的程序是 **MinGW/MSYS 版**，选项和 Linux 版常有差异，网上的 man 页不能照抄。
+
 ## 检验器
 
 | 检验器 | 你看到的 | 怎么判分 |
@@ -61,8 +75,13 @@ bash scripts/check-shell-env.sh
 progress/syllabus.yaml    学了哪些课 —— 你可以直接改（比如标记看完、写笔记）
 progress/attempts.jsonl   每一次提交的记录（决定掌握度）—— 只由答题网页和 study.py 追加
 progress/runs.jsonl       代码题每次「运行测试」的代码和结果（作答过程）—— 只由答题网页追加
-progress.md               由上面两个文件自动生成的视图 —— 不要手改
+progress/study_log.jsonl  课程页上的学习事件：打开小节、检查点、提示、终端命令、新词反馈、心跳 —— 只追加
+knowledge/<学科>.yaml      知识图：知识点 + 先修关系（D-020）—— 你和导师都可以改；状态不写在这里
+progress.md               由上面的文件自动生成的视图 —— 不要手改
 ```
+
+**一份数据，多个视图（D-020）**：薄弱点、进度、已知词表、知识树都由上面的事件算出来，不手写。
+学习时间也是：相邻两个事件间隔不超过 15 分钟就算同一次学习（D-016），`study.py time` 按天列出来。
 
 **掌握度分四级**：1 记忆 → 2 理解 → 3 应用 → 4 分析。每道题都标了等级。某个概念某一级最近 3 次的平均分 ≥ 70%，这一级就算通过；通过后超过 14 天没再练，会被标记为需复习。
 
@@ -76,6 +95,10 @@ progress.md               由上面两个文件自动生成的视图 —— 不�
 | `python study.py weak` | 输出学习状态（JSON 格式，给导师看的） |
 | `python study.py grade ...` | 导师批改简答题时用 |
 | `python study.py runs <课时> [题号]` | 看代码题的作答过程：每次运行的结果和代码改动 |
+| `python study.py time` | 每天学了多久、学了什么；`time add --start 2026-09-25T15:30 --minutes 48 --note "看视频"` 补录 |
+| `python study.py kg summary` / `kg related <单元>` / `kg show <节点>` | 学习者模型，分三级按需看：全部概况 → 和某个单元相关的 → 一个知识点的全部证据 |
+| `python study.py course-eval <单元>` | 课程评测：计划用时、预测负荷、新词预测、检查点难度，各自和实际比 |
+| `python study.py lab verify <运行>` | 把 agent 设计的练习场从头走一遍（发布课程前，导师审阅命令后运行） |
 
 ## 目录
 
@@ -86,6 +109,11 @@ studykit/
   lessons.py               读取题目
   checkers/                检验器（每种一个文件）
   server.py                答题网页的后端
+  course.py                课程页：课程版本、学习事件、检查点、进度（D-010、D-013）
+  lab.py                   练习场：真实 bash、快照、还原、验证（D-014）
+  timeline.py              学习时间：从事件算出学习会话（D-016）
+  knowledge.py             学习者模型：知识图 + 证据 → 状态、薄弱点（D-020）
+  course_eval.py           课程评测：预测 vs 实际（D-019）
 web/index.html             答题网页（每种检验器一个渲染函数）
 docs/question-format.md    检验器设计和题目格式
 templates/lesson/          一套题的模板
