@@ -1,0 +1,728 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cs-study 答题</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/matchbrackets.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/selection/active-line.min.js"></script>
+<style>
+:root {
+  --bg: #f6f5f1; --surface: #ffffff; --text: #1d1d1b; --muted: #6b6a65; --border: #e2e0d8;
+  --accent: #3b5bdb; --accent-soft: #e8ecfd; --ok: #2b8a3e; --ok-soft: #e6f4ea;
+  --warn: #b35c00; --warn-soft: #fdf1e2; --bad: #c92a2a; --bad-soft: #fdeaea;
+  --code-bg: #f0efe9; --term-bg: #1e1f22; --term-text: #d8dee4; --term-dim: #8b949e;
+  --radius: 10px;
+  --mono: ui-monospace, "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+  --syn-kw: #7c3aed; --syn-str: #1f7a3a; --syn-com: #8a8880; --syn-num: #b35c00; --syn-def: #3b5bdb; --syn-builtin: #0e7490;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --syn-kw: #c4a7ff; --syn-str: #8fd19e; --syn-com: #7d7b74; --syn-num: #f0a44b; --syn-def: #8ea4ff; --syn-builtin: #67d4e8;
+  }
+}
+:root[data-theme="dark"] {
+  --syn-kw: #c4a7ff; --syn-str: #8fd19e; --syn-com: #7d7b74; --syn-num: #f0a44b; --syn-def: #8ea4ff; --syn-builtin: #67d4e8;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141414; --surface: #1d1d1d; --text: #e9e7e1; --muted: #9a988f; --border: #2f2e2b;
+    --accent: #8ea4ff; --accent-soft: #232a45; --ok: #69c47c; --ok-soft: #1c2e21;
+    --warn: #f0a44b; --warn-soft: #33261a; --bad: #ff7b7b; --bad-soft: #3a1f1f;
+    --code-bg: #262624; --term-bg: #0d0e10;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #141414; --surface: #1d1d1d; --text: #e9e7e1; --muted: #9a988f; --border: #2f2e2b;
+  --accent: #8ea4ff; --accent-soft: #232a45; --ok: #69c47c; --ok-soft: #1c2e21;
+  --warn: #f0a44b; --warn-soft: #33261a; --bad: #ff7b7b; --bad-soft: #3a1f1f;
+  --code-bg: #262624; --term-bg: #0d0e10;
+}
+* { box-sizing: border-box; }
+/* WHY: 给元素设了 display（grid/flex）之后，浏览器默认的 [hidden] 就失效了，标签页会叠在一起显示。 */
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 15px/1.65 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+main { max-width: 860px; margin: 0 auto; padding: 0 16px 80px; }
+header.top { position: sticky; top: 0; z-index: 5; background: var(--bg); border-bottom: 1px solid var(--border); }
+header.top .inner { max-width: 860px; margin: 0 auto; padding: 14px 16px 12px; }
+h1 { font-size: 20px; margin: 0; }
+.source { color: var(--muted); font-size: 13px; }
+.dots { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+.dot { width: 28px; height: 28px; border-radius: 50%; border: 1.5px solid var(--border); background: var(--surface);
+  display: grid; place-items: center; font-size: 12px; color: var(--muted); cursor: pointer; text-decoration: none; }
+.dot.pass { background: var(--ok-soft); border-color: var(--ok); color: var(--ok); }
+.dot.partial { background: var(--warn-soft); border-color: var(--warn); color: var(--warn); }
+.dot.fail { background: var(--bad-soft); border-color: var(--bad); color: var(--bad); }
+.dot.pending { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 18px 20px; margin-top: 18px; scroll-margin-top: 110px; }
+.card-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+.qno { font-weight: 700; }
+.tag { font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--code-bg); color: var(--muted); }
+.tag.level { background: var(--accent-soft); color: var(--accent); }
+.prompt p { margin: 0 0 8px; }
+code { font-family: var(--mono); font-size: 0.92em; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+pre { font-family: var(--mono); font-size: 13px; background: var(--code-bg); padding: 10px 12px; border-radius: 8px;
+  overflow-x: auto; margin: 8px 0; white-space: pre; }
+pre code { background: none; padding: 0; }
+.options { display: grid; gap: 8px; margin: 10px 0; }
+.option { display: flex; gap: 10px; align-items: flex-start; padding: 9px 12px; border: 1.5px solid var(--border);
+  border-radius: 8px; cursor: pointer; }
+.option:hover { border-color: var(--accent); }
+.option input { margin-top: 5px; }
+.option .letter { font-weight: 700; color: var(--muted); min-width: 16px; }
+.option.picked { border-color: var(--accent); background: var(--accent-soft); }
+input.blank { font: inherit; border: none; border-bottom: 2px solid var(--accent); background: var(--accent-soft);
+  color: var(--text); padding: 0 6px; min-width: 90px; width: 9em; border-radius: 4px 4px 0 0; }
+textarea { width: 100%; font: inherit; color: var(--text); background: var(--bg); border: 1.5px solid var(--border);
+  border-radius: 8px; padding: 10px 12px; resize: vertical; }
+textarea.code { font-family: var(--mono); font-size: 13px; line-height: 1.5; min-height: 260px; tab-size: 4; white-space: pre; }
+textarea:focus, input.blank:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; align-items: center; }
+button { font: inherit; font-size: 14px; padding: 7px 16px; border-radius: 8px; cursor: pointer;
+  border: 1.5px solid var(--border); background: var(--surface); color: var(--text); }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+:root[data-theme="dark"] button.primary { color: #111; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) button.primary { color: #111; } }
+button:disabled { opacity: 0.5; cursor: default; }
+.hint { color: var(--muted); font-size: 13px; }
+.term { background: var(--term-bg); color: var(--term-text); border-radius: 8px; font-family: var(--mono); font-size: 13px;
+  padding: 10px 12px; margin-top: 10px; }
+.term .out { max-height: 340px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
+.term .cmd { color: #7ee787; }
+.term .dim { color: var(--term-dim); }
+.term .line { display: flex; gap: 6px; align-items: center; }
+.term .ps { color: #7ee787; }
+.term input { flex: 1; background: transparent; border: none; color: var(--term-text); font: inherit; outline: none; padding: 2px 0; }
+.result { margin-top: 14px; border-radius: 8px; padding: 10px 14px; border-left: 4px solid var(--border); background: var(--code-bg); }
+.result.pass { border-color: var(--ok); background: var(--ok-soft); }
+.result.partial { border-color: var(--warn); background: var(--warn-soft); }
+.result.fail { border-color: var(--bad); background: var(--bad-soft); }
+.result.pending { border-color: var(--accent); background: var(--accent-soft); }
+.result .score { font-weight: 700; }
+.result ul { margin: 6px 0; padding-left: 20px; }
+.result .explain { margin-top: 6px; }
+.output { max-height: 280px; overflow: auto; }
+.summary { text-align: center; }
+.summary .big { font-size: 28px; font-weight: 700; }
+.lesson-list a { display: block; padding: 12px 16px; margin-top: 10px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); color: var(--text); text-decoration: none; }
+.lesson-list a:hover { border-color: var(--accent); }
+.error { color: var(--bad); }
+
+/* ---------- 代码题工作区：卡片里是小窗，点「展开」变成全屏，同一个编辑器 ---------- */
+.ws { display: grid; grid-template-areas: "main" "side"; gap: 10px; margin-top: 6px; }
+.ws-bar, .ws-prompt { display: none; }
+.ws-main { grid-area: main; display: flex; flex-direction: column; gap: 10px; min-width: 0; min-height: 0; }
+.ws-side { grid-area: side; min-width: 0; }
+.ws-editor { height: var(--ed-h, 360px); border: 1.5px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--surface); }
+.ws-editor:focus-within { border-color: var(--accent); }
+.ws-editor textarea.code { height: 100%; border: none; border-radius: 0; min-height: 0; resize: none; }
+.ws-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.ws-status { font-size: 13px; }
+.ws-status.ok { color: var(--ok); font-weight: 600; }
+.ws-status.bad { color: var(--bad); font-weight: 600; }
+.test { border: 1px solid var(--border); border-left: 4px solid var(--ok); border-radius: 6px; padding: 6px 10px; background: var(--surface); }
+.test.failed, .test.error { border-left-color: var(--bad); }
+.test-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; font-size: 14px; }
+.test-name { font-family: var(--mono); font-size: 13px; }
+.test pre { margin: 6px 0 2px; font-size: 12.5px; white-space: pre-wrap; word-break: break-word; }
+.line-link { font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--bad); color: var(--bad);
+  background: var(--bad-soft); cursor: pointer; }
+.ws-history summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+.ws-history ol { list-style: none; padding: 0; margin: 6px 0 0; display: grid; gap: 4px; }
+.ws-history li { display: flex; gap: 8px; align-items: center; font-size: 13px; padding: 4px 8px; border-radius: 6px; background: var(--code-bg); }
+.ws-history li .n { font-family: var(--mono); color: var(--muted); min-width: 28px; }
+.ws-history li .res.ok { color: var(--ok); }
+.ws-history li .res.bad { color: var(--bad); }
+.ws-history li button { margin-left: auto; font-size: 12px; padding: 1px 10px; }
+.ws-draft { font-size: 12px; color: var(--warn); }
+
+.ws.expanded { position: fixed; inset: 0; z-index: 50; background: var(--bg); margin: 0; padding: 12px 16px 16px;
+  grid-template-areas: "bar bar" "side main"; grid-template-columns: minmax(280px, 34%) 1fr; grid-template-rows: auto 1fr; gap: 12px 16px; }
+.ws.expanded .ws-bar { grid-area: bar; display: flex; gap: 12px; align-items: center; }
+.ws.expanded .ws-bar .spacer { flex: 1; }
+.ws.expanded .ws-prompt { display: block; }
+.ws.expanded .ws-side { overflow-y: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; }
+.ws.expanded .ws-history[open], .ws.expanded .ws-history { margin-top: 12px; }
+.ws.expanded .ws-main { gap: 8px; }
+.ws.expanded .ws-editor { flex: 0 0 auto; height: var(--ed-h-exp, 56vh); }
+.ws.expanded .rt { flex: 1 1 auto; min-height: 90px; max-height: none; }
+@media (max-width: 760px) {
+  .ws.expanded { grid-template-areas: "bar" "side" "main"; grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 28vh) 1fr; }
+}
+
+/* 分隔条：拖动调整编辑器高度 */
+.ws-split { height: 8px; margin: -6px 0 -4px; cursor: row-resize; display: grid; place-items: center; touch-action: none; }
+.ws-split::after { content: ""; width: 44px; height: 4px; border-radius: 2px; background: var(--border); }
+.ws-split:hover::after { background: var(--accent); }
+
+/* 结果面板：终端输出（权威） + 错误分组（辅助） */
+.rt { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+  max-height: 380px; background: var(--surface); }
+.rt-tabs { display: flex; gap: 2px; padding: 4px 6px 0; background: var(--code-bg); border-bottom: 1px solid var(--border); flex: 0 0 auto; }
+.rt-tab { border: none; border-radius: 6px 6px 0 0; background: transparent; color: var(--muted); padding: 5px 12px; font-size: 13px; }
+.rt-tab.on { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: 0 1px 0 var(--surface); }
+.rt-term { flex: 1 1 auto; overflow: auto; background: var(--term-bg); color: var(--term-text); font-family: var(--mono);
+  font-size: 12.5px; line-height: 1.5; padding: 8px 12px; min-height: 0; }
+.rt-term .t-line { white-space: pre; }
+.rt-term .t-err { color: #ff8b8b; }
+.rt-term .t-fail { color: #ff8b8b; }
+.rt-term .t-pass { color: #7ee787; }
+.rt-term .t-rule { color: var(--term-dim); }
+.rt-term .t-caret { color: #d29922; }
+.rt-term .t-link { color: #79c0ff; text-decoration: underline; cursor: pointer; }
+.rt-groups { flex: 1 1 auto; overflow: auto; padding: 10px 12px; display: grid; gap: 10px; align-content: start; min-height: 0; }
+.grp { border: 1px solid var(--border); border-left: 4px solid var(--bad); border-radius: 6px; padding: 8px 12px; }
+.grp.ok { border-left-color: var(--ok); color: var(--ok); }
+.grp-head { display: flex; gap: 8px; align-items: baseline; }
+.grp-n { font-weight: 700; }
+.grp-err { margin: 6px 0; font-size: 12.5px; white-space: pre-wrap; color: var(--bad); background: var(--bad-soft); }
+.grp-label { font-size: 12px; color: var(--muted); margin-top: 6px; }
+.grp-row { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; padding: 2px 0; }
+.grp-row code { font-size: 12.5px; }
+.grp-passed { font-size: 13px; }
+.grp-test { padding: 4px 0; border-top: 1px dashed var(--border); }
+.grp-test:first-of-type { border-top: none; }
+.grp-test-err { margin: 2px 0 0; padding: 4px 8px; font-size: 12px; color: var(--bad); background: transparent; white-space: pre-wrap; }
+
+/* WHY: 关掉连字。Cascadia Code 等字体会把 <= 显示成 ≤、-> 显示成 →，学写代码时看到的和实际敲的不一样。 */
+.CodeMirror, pre, code, textarea.code, .term { font-variant-ligatures: none; font-feature-settings: "liga" 0, "calt" 0; }
+.CodeMirror { height: 100%; font-family: var(--mono); font-size: 13.5px; line-height: 1.55; background: var(--surface); color: var(--text); }
+.CodeMirror-gutters { background: var(--code-bg); border-right: 1px solid var(--border); }
+.CodeMirror-linenumber { color: var(--muted); padding: 0 8px 0 6px; }
+.CodeMirror-cursor { border-left: 2px solid var(--text); }
+.CodeMirror-activeline-background { background: var(--accent-soft); }
+.CodeMirror-selected, .CodeMirror-focused .CodeMirror-selected { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.CodeMirror-matchingbracket { color: var(--ok) !important; font-weight: 700; }
+.cm-keyword { color: var(--syn-kw); } .cm-string { color: var(--syn-str); } .cm-comment { color: var(--syn-com); font-style: italic; }
+.cm-number { color: var(--syn-num); } .cm-def { color: var(--syn-def); } .cm-builtin { color: var(--syn-builtin); }
+.cm-variable, .cm-variable-2, .cm-property, .cm-operator, .cm-punctuation { color: var(--text); }
+.cm-fail-line { background: var(--bad-soft) !important; }
+.cm-fail-gutter .CodeMirror-linenumber { color: var(--bad); font-weight: 700; }
+.cm-flash { animation: flash 1.2s ease-out; }
+@keyframes flash { from { background: color-mix(in srgb, var(--bad) 45%, transparent); } }
+</style>
+</head>
+<body>
+<header class="top"><div class="inner" id="top"><h1>cs-study</h1></div></header>
+<main id="app"></main>
+<script>
+const TOKEN = "__TOKEN__";
+const params = new URLSearchParams(location.search);
+const REF = params.get("lesson");
+const RETAKE = params.get("retake") === "1";
+const CHECKER_NAMES = { choice: "选择", fill: "填空", code: "代码", terminal: "终端", short: "简答" };
+const state = {};   // qid -> previous/result
+
+// ---------- 工具 ----------
+const $ = (tag, attrs = {}, ...kids) => {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") el.className = v;
+    else if (k === "html") el.innerHTML = v;
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else if (v !== undefined && v !== null && v !== false) el.setAttribute(k, v === true ? "" : v);
+  }
+  for (const kid of kids.flat()) if (kid != null) el.append(kid);
+  return el;
+};
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+function md(text, blankFactory) {
+  // 极简 Markdown：代码块、行内代码、粗体、段落。blankFactory 用来把 ____ 换成输入框占位符。
+  const parts = String(text ?? "").split(/```[a-zA-Z]*\n?/);
+  let html = "", blank = 0;
+  parts.forEach((part, i) => {
+    if (i % 2 === 1) { html += `<pre><code>${esc(part.replace(/\n$/, ""))}</code></pre>`; return; }
+    const paras = part.trim().split(/\n\s*\n/).filter(Boolean);
+    for (const p of paras) {
+      let h = esc(p).replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>").replace(/\n/g, "<br>");
+      if (blankFactory) h = h.replace(/____/g, () => `<span data-blank="${blank++}"></span>`);
+      html += `<p>${h}</p>`;
+    }
+  });
+  return html;
+}
+
+async function api(path, body) {
+  const res = await fetch(path, body === undefined ? {} : {
+    method: "POST", headers: { "Content-Type": "application/json", "X-Study-Token": TOKEN }, body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || res.statusText);
+  return data;
+}
+
+// ---------- 结果 ----------
+function resultBox(r) {
+  const cls = r.result || "pending";
+  const label = r.result === "pending" ? "⏳ 已提交，等导师批改"
+    : `${r.result === "pass" ? "✅" : r.result === "partial" ? "🟡" : "❌"} 得分 ${Math.round(r.score * 100)}%`;
+  const box = $("div", { class: `result ${cls}` }, $("div", { class: "score" }, label));
+  const fb = (r.feedback || []).filter(Boolean);
+  if (fb.length && r.result !== "pending") box.append($("ul", {}, fb.map(f => $("li", {}, f))));
+  if (r.note && r.result !== "pending") box.append($("div", {}, "导师批注：" + r.note));
+  if (r.explain) box.append($("div", { class: "explain", html: "<b>解析：</b>" + md(r.explain) }));
+  return box;
+}
+
+// ---------- 代码编辑器：有 CodeMirror 就用（行号、高亮），加载失败退回普通文本框 ----------
+function makeEditor(host, value, { onRun, onEscape, onChange }) {
+  if (window.CodeMirror) {
+    const cm = CodeMirror(host, {
+      value, mode: "python", lineNumbers: true, indentUnit: 4, tabSize: 4, indentWithTabs: false,
+      matchBrackets: true, styleActiveLine: true, screenReaderLabel: "代码编辑器",
+      extraKeys: {
+        Tab: c => c.somethingSelected() ? c.indentSelection("add") : c.replaceSelection("    "),
+        "Shift-Tab": "indentLess",
+        "Ctrl-Enter": () => onRun(), "Cmd-Enter": () => onRun(),
+        Esc: () => onEscape(),
+      },
+    });
+    let marked = [];
+    cm.on("change", () => { onChange(cm.getValue()); clearMarks(); });
+    function clearMarks() {
+      marked.forEach(h => { cm.removeLineClass(h, "background", "cm-fail-line"); cm.removeLineClass(h, "gutter", "cm-fail-gutter"); });
+      marked = [];
+    }
+    // WHY: 卡片插入页面之前 CodeMirror 量不到尺寸，挂上去后要刷新一次，否则行号栏是空的。
+    requestAnimationFrame(() => cm.refresh());
+    return {
+      get: () => cm.getValue(),
+      set: v => cm.setValue(v),
+      focus: () => cm.focus(),
+      refresh: () => setTimeout(() => cm.refresh(), 0),
+      readOnly: () => cm.setOption("readOnly", true),
+      markLines(lines) {
+        clearMarks();
+        lines.forEach(n => {
+          if (n < 1 || n > cm.lineCount()) return;
+          const h = cm.addLineClass(n - 1, "background", "cm-fail-line");
+          cm.addLineClass(n - 1, "gutter", "cm-fail-gutter");
+          marked.push(h);
+        });
+      },
+      jump(n) {
+        cm.focus();
+        cm.setCursor({ line: n - 1, ch: 0 });
+        cm.scrollIntoView({ line: n - 1, ch: 0 }, 80);
+        const h = cm.addLineClass(n - 1, "wrap", "cm-flash");
+        setTimeout(() => cm.removeLineClass(h, "wrap", "cm-flash"), 1200);
+      },
+    };
+  }
+  const area = $("textarea", { class: "code", spellcheck: "false", "aria-label": "代码编辑器" });
+  area.value = value;
+  area.addEventListener("input", () => onChange(area.value));
+  area.addEventListener("keydown", e => {
+    if (e.key === "Tab") { e.preventDefault(); area.setRangeText("    ", area.selectionStart, area.selectionEnd, "end"); }
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); onRun(); }
+  });
+  host.append(area);
+  return {
+    get: () => area.value, set: v => { area.value = v; }, focus: () => area.focus(), refresh() {},
+    readOnly: () => { area.readOnly = true; }, markLines() {},
+    jump(n) {
+      const lines = area.value.split("\n");
+      const pos = lines.slice(0, n - 1).reduce((a, l) => a + l.length + 1, 0);
+      area.focus(); area.setSelectionRange(pos, pos + (lines[n - 1] || "").length);
+    },
+  };
+}
+
+// ---------- 检验器界面：每种一个渲染函数，接口相同 ----------
+// render(q, ui) 返回 { body, collect(), lock() }；ui.act(action) 走 /api/act。
+const RENDERERS = {
+  choice(q) {
+    const type = q.multi ? "checkbox" : "radio";
+    const inputs = [];
+    const list = $("div", { class: "options" }, q.options.map((opt, i) => {
+      const letter = String.fromCharCode(65 + i);
+      const input = $("input", { type, name: q.id, value: letter });
+      inputs.push(input);
+      const row = $("label", { class: "option" }, input, $("span", { class: "letter" }, letter), $("span", { html: md(opt).replace(/^<p>|<\/p>$/g, "") }));
+      input.addEventListener("change", () => inputs.forEach(x => x.closest(".option").classList.toggle("picked", x.checked)));
+      return row;
+    }));
+    const prev = q.previous?.response;
+    if (Array.isArray(prev)) inputs.forEach(x => { x.checked = prev.includes(x.value); x.dispatchEvent(new Event("change")); });
+    return {
+      body: $("div", {}, q.multi ? $("div", { class: "hint" }, "多选：选对的得分，选错的倒扣") : null, list),
+      collect: () => { const v = inputs.filter(x => x.checked).map(x => x.value); return v.length ? v : null; },
+      lock: () => inputs.forEach(x => x.disabled = true),
+    };
+  },
+
+  fill(q) {
+    const prompt = $("div", { class: "prompt", html: md(q.prompt, true) });
+    const inputs = [];
+    prompt.querySelectorAll("[data-blank]").forEach(span => {
+      const i = Number(span.dataset.blank);
+      const input = $("input", { class: "blank", "aria-label": `第 ${i + 1} 空` });
+      input.value = q.previous?.response?.[i] ?? "";
+      inputs.push(input);
+      span.replaceWith(input);
+    });
+    if (!inputs.length) { const input = $("input", { class: "blank" }); inputs.push(input); prompt.append(input); }
+    return {
+      ownsPrompt: true,
+      body: prompt,
+      collect: () => inputs.every(x => !x.value.trim()) ? null : inputs.map(x => x.value),
+      lock: () => inputs.forEach(x => x.disabled = true),
+    };
+  },
+
+  code(q, ui) {
+    // 卡片里是一个小窗编辑器；点「展开」把同一个工作区切成全屏，内容、光标、运行记录都不变。
+    // 结果面板两个标签：「终端输出」是 pytest 原样输出（权威），「错误分组」是整理过的阅读辅助。
+    const draftKey = `cs-study:draft:${REF}:${q.id}`;
+    const tabKey = "cs-study:result-tab";
+    const fileName = q.file.split("/").pop();
+    const saved = q.previous?.response?.code ?? q.starter ?? "";
+    let initial = saved, restoredDraft = false, locked = false, draftTimer = null;
+    try {
+      const d = localStorage.getItem(draftKey);
+      if (d != null && d !== saved && !q.previous) { initial = d; restoredDraft = true; }
+    } catch {}
+
+    const editorHost = $("div", { class: "ws-editor" });
+    const editor = makeEditor(editorHost, initial, {
+      onRun: () => run(), onEscape: () => setExpanded(false),
+      onChange: value => {
+        clearTimeout(draftTimer);
+        draftTimer = setTimeout(() => { try { localStorage.setItem(draftKey, value); } catch {} }, 400);
+      },
+    });
+
+    // ---- 拖动分隔条调整编辑器高度 ----
+    const split = $("div", { class: "ws-split", title: "拖动调整编辑器高度，双击恢复", role: "separator", "aria-orientation": "horizontal" });
+    split.addEventListener("pointerdown", e => {
+      e.preventDefault();
+      const startY = e.clientY, startH = editorHost.getBoundingClientRect().height;
+      const prop = ws.classList.contains("expanded") ? "--ed-h-exp" : "--ed-h";
+      split.setPointerCapture(e.pointerId);
+      const move = ev => ws.style.setProperty(prop, Math.max(120, Math.min(window.innerHeight - 160, startH + ev.clientY - startY)) + "px");
+      const up = () => { split.removeEventListener("pointermove", move); editor.refresh(); };
+      split.addEventListener("pointermove", move);
+      split.addEventListener("pointerup", up, { once: true });
+    });
+    split.addEventListener("dblclick", () => { ws.style.removeProperty("--ed-h"); ws.style.removeProperty("--ed-h-exp"); editor.refresh(); });
+
+    // ---- 操作栏 ----
+    const status = $("span", { class: "ws-status hint" }, `${q.file} · Ctrl+Enter 运行测试`);
+    const draftNote = restoredDraft ? $("span", { class: "ws-draft" }, "已恢复上次没运行的草稿") : null;
+    const expandBtn = $("button", { title: "展开成全屏编辑（Esc 收起）", onclick: () => setExpanded(!ws.classList.contains("expanded")) }, "⤢ 展开");
+    const runBtn = $("button", { onclick: () => run() }, "运行测试");
+    const submitBtn = $("button", { class: "primary", onclick: () => ui.submit() }, "提交");
+
+    // ---- 结果面板：终端输出（权威） + 错误分组（辅助） ----
+    const termPane = $("div", { class: "rt-term", role: "tabpanel" });
+    const groupPane = $("div", { class: "rt-groups", role: "tabpanel" });
+    const tabTerm = $("button", { class: "rt-tab", role: "tab", onclick: () => showTab("term") }, "终端输出");
+    const tabGroups = $("button", { class: "rt-tab", role: "tab", onclick: () => showTab("groups") }, "错误分组");
+    const panel = $("div", { class: "rt", hidden: true },
+      $("div", { class: "rt-tabs", role: "tablist" }, tabTerm, tabGroups), termPane, groupPane);
+    function showTab(name) {
+      tabTerm.classList.toggle("on", name === "term"); tabTerm.setAttribute("aria-selected", name === "term");
+      tabGroups.classList.toggle("on", name === "groups"); tabGroups.setAttribute("aria-selected", name === "groups");
+      termPane.hidden = name !== "term"; groupPane.hidden = name !== "groups";
+      try { localStorage.setItem(tabKey, name); } catch {}
+    }
+    let savedTab = "term";
+    try { savedTab = localStorage.getItem(tabKey) || "term"; } catch {}
+    showTab(savedTab);
+
+    const historyList = $("ol");
+    const historySummary = $("summary", {}, "运行记录");
+    const history = $("details", { class: "ws-history", hidden: true }, historySummary, historyList);
+    const collapseBtn = $("button", { onclick: () => setExpanded(false) }, "收起 Esc");
+    const bar = $("div", { class: "ws-bar" },
+      $("b", {}, `代码题 · ${q.file}`), $("span", { class: "tag level" }, `L${q.level} ${q.level_name}`),
+      $("span", { class: "spacer" }), $("span", { class: "hint" }, "Ctrl+Enter 运行测试"), collapseBtn);
+    const ws = $("div", { class: "ws" },
+      bar,
+      $("div", { class: "ws-side" }, $("div", { class: "prompt ws-prompt", html: md(q.prompt) }), history),
+      $("div", { class: "ws-main" }, editorHost, split,
+        $("div", { class: "ws-actions" }, expandBtn, runBtn, submitBtn, status, draftNote), panel));
+
+    function setExpanded(on) {
+      if (ws.classList.contains("expanded") === on) return;
+      ws.classList.toggle("expanded", on);
+      document.body.style.overflow = on ? "hidden" : "";
+      expandBtn.textContent = on ? "⤡ 收起" : "⤢ 展开";
+      editor.refresh();
+      editor.focus();
+    }
+    document.addEventListener("keydown", e => { if (e.key === "Escape" && ws.classList.contains("expanded")) setExpanded(false); });
+
+    const lineLink = n => $("button", { class: "line-link", onclick: () => editor.jump(n) }, `第 ${n} 行`);
+
+    // 终端输出：原样逐行显示，只加颜色；提到学习者代码行号的地方可以点。
+    function renderTerminal(output) {
+      const esc = fileName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const lineRef = new RegExp(`((?<![\\w.])${esc}:(\\d+)|${esc}", line (\\d+))`, "g");
+      termPane.replaceChildren(...String(output || "（没有输出）").split("\n").map(text => {
+        let cls = "";
+        if (/^E\s/.test(text)) cls = "t-err";
+        else if (/^_{3,}.*_{3,}$|^={3,}/.test(text)) cls = "t-rule";
+        else if (/\bPASSED\b/.test(text)) cls = "t-pass";
+        else if (/\b(FAILED|ERROR)\b/.test(text)) cls = "t-fail";
+        else if (/^\s+\^+\s*$/.test(text)) cls = "t-caret";
+        const row = $("div", { class: "t-line " + cls });
+        let last = 0;
+        for (const m of text.matchAll(lineRef)) {
+          row.append(text.slice(last, m.index));
+          const n = Number(m[2] || m[3]);
+          row.append($("a", { href: "#", class: "t-link", onclick: e => { e.preventDefault(); editor.jump(n); } }, m[0]));
+          last = m.index + m[0].length;
+        }
+        row.append(text.slice(last) || "​");
+        return row;
+      }));
+    }
+
+    // 错误分组：同一个错误、同一处代码的测试合在一起，列出每个测试是用什么输入触发的。
+    function renderGroups(r) {
+      const passed = (r.tests || []).filter(t => t.outcome === "passed").map(t => t.name);
+      const groups = r.groups || [];
+      const blocks = groups.map((g, i) => $("div", { class: "grp" },
+        $("div", { class: "grp-head" },
+          $("span", { class: "grp-n" }, `错误 ${i + 1}`),
+          g.outcome === "error" ? $("span", { class: "tag" }, "没能运行") : null,
+          $("span", { class: "hint" }, `${g.tests.length} 个测试触发`)),
+        $("pre", { class: "grp-err" }, (g.tests.length > 1 ? g.summary : g.error) || "（没有错误信息，看终端输出）"),
+        g.lines.length ? $("div", { class: "grp-where" }, $("div", { class: "grp-label" }, "出错位置（你的代码）"),
+          ...g.lines.map(l => $("div", { class: "grp-row" }, lineLink(l.line), $("code", {}, l.src)))) : null,
+        $("div", { class: "grp-label" }, "触发它的测试"),
+        ...g.tests.map(t => $("div", { class: "grp-test" },
+          $("div", { class: "grp-row" }, $("span", { class: "test-name" }, t.name), t.call ? $("code", {}, t.call.src) : null),
+          // 同组里每个测试期望的值不同，逐条保留自己的报错
+          g.tests.length > 1 && t.error ? $("pre", { class: "grp-test-err" }, t.error) : null))));
+      if (!groups.length && r.total) blocks.push($("div", { class: "grp ok" }, "全部测试通过。"));
+      if (passed.length && groups.length) blocks.push($("div", { class: "grp-passed hint" }, `✓ 通过 ${passed.length} 个：${passed.join("、")}`));
+      groupPane.replaceChildren(...blocks);
+      tabGroups.textContent = groups.length ? `错误分组（${groups.length}）` : "错误分组";
+      editor.markLines([...new Set(groups.flatMap(g => g.lines.map(l => l.line)))]);
+    }
+
+    function showRun(r, when) {
+      const ok = r.total > 0 && r.passed === r.total;
+      const nGroups = (r.groups || []).length;
+      status.className = "ws-status " + (ok ? "ok" : "bad");
+      status.textContent = !r.total ? "没能运行，看终端输出"
+        : [`通过 ${r.passed}/${r.total}`, nGroups ? `${nGroups} 种错误` : null,
+           r.seconds ? `${r.seconds}s` : null, when].filter(Boolean).join(" · ");
+      panel.hidden = false;
+      renderTerminal(r.output);
+      renderGroups(r);
+    }
+
+    async function run() {
+      if (locked) return;
+      runBtn.disabled = true; runBtn.textContent = "运行中…";
+      try {
+        showRun(await ui.act({ op: "run", code: editor.get() }), new Date().toTimeString().slice(0, 5));
+        try { localStorage.removeItem(draftKey); } catch {}
+        draftNote?.remove();
+        loadHistory();
+      } catch (e) {
+        status.className = "ws-status bad"; status.textContent = e.message;
+      }
+      runBtn.disabled = locked; runBtn.textContent = "运行测试";
+    }
+
+    async function loadHistory() {
+      let runs = [];
+      try { runs = await api(`/api/runs?ref=${encodeURIComponent(REF)}&qid=${encodeURIComponent(q.id)}`); } catch { return; }
+      history.hidden = !runs.length;
+      historySummary.textContent = `运行记录（${runs.length} 次）`;
+      historyList.replaceChildren(...runs.map((r, i) => {
+        const ok = r.total > 0 && r.passed === r.total;
+        return $("li", {},
+          $("span", { class: "n" }, `#${i + 1}`),
+          $("span", {}, r.ts.slice(11, 16)),
+          $("span", {}, r.kind === "submit" ? "提交" : "运行"),
+          $("span", { class: "res " + (ok ? "ok" : "bad") }, `${r.passed}/${r.total}`),
+          $("button", { disabled: locked, onclick: () => {
+            if (confirm(`用第 ${i + 1} 次的代码替换编辑器里的内容？`)) { editor.set(r.code); editor.focus(); }
+          } }, "载入"));
+      }).reverse());
+    }
+    loadHistory();
+
+    return {
+      body: ws,
+      ownsSubmit: true,
+      collect: () => ({ code: editor.get() }),
+      busy: on => { submitBtn.disabled = on || locked; submitBtn.textContent = on ? "判分中…" : "提交"; },
+      lock: () => {
+        locked = true;
+        editor.readOnly();
+        runBtn.disabled = submitBtn.disabled = true;
+        historyList.querySelectorAll("button").forEach(b => b.disabled = true);
+      },
+      onResult: (r, initial) => {
+        if (r.tests) showRun(r, r.ts ? r.ts.slice(11, 16) : "");
+        if (!initial) { setExpanded(false); loadHistory(); try { localStorage.removeItem(draftKey); } catch {} }
+      },
+    };
+  },
+
+  terminal(q, ui) {
+    const out = $("div", { class: "out" });
+    const input = $("input", { spellcheck: "false", autocomplete: "off", "aria-label": "命令" });
+    const history = [];
+    let hIdx = 0;
+    const print = (text, cls) => { if (text) { out.append($("div", { class: cls || "" }, text)); out.scrollTop = out.scrollHeight; } };
+    input.addEventListener("keydown", async e => {
+      if (e.key === "ArrowUp" && hIdx > 0) { input.value = history[--hIdx]; e.preventDefault(); }
+      if (e.key === "ArrowDown") { hIdx = Math.min(history.length, hIdx + 1); input.value = history[hIdx] ?? ""; e.preventDefault(); }
+      if (e.key !== "Enter") return;
+      const cmd = input.value.trim();
+      input.value = "";
+      if (!cmd) return;
+      history.push(cmd); hIdx = history.length;
+      if (cmd === "clear") { out.innerHTML = ""; return; }
+      print("$ " + cmd, "cmd");
+      input.disabled = true;
+      try { print((await ui.act({ op: "exec", cmd })).output); } catch (err) { print(err.message, "dim"); }
+      input.disabled = false; input.focus();
+    });
+    const term = $("div", { class: "term", onclick: () => input.focus() }, out, $("div", { class: "line" }, $("span", { class: "ps" }, "$"), input));
+    const reset = $("button", { onclick: async () => {
+      if (!confirm("重置会清掉你在这道题里做的所有操作，确定吗？")) return;
+      out.innerHTML = "";
+      print((await ui.act({ op: "reset" })).output, "dim");
+    } }, "重置场景");
+    ui.act({ op: "open" }).then(r => print(r.output, "dim")).catch(e => print(e.message, "dim"));
+    if (q.intro) print(q.intro, "dim");
+    return {
+      body: term,
+      extraActions: [reset],
+      submitLabel: "提交检查",
+      collect: () => ({ history }),
+      lock: () => { input.disabled = true; reset.disabled = true; },
+    };
+  },
+
+  short(q) {
+    const area = $("textarea", { rows: 6, placeholder: "用你自己的话写…", "aria-label": "你的回答" });
+    area.value = q.previous?.response ?? "";
+    return {
+      body: area,
+      collect: () => area.value.trim() || null,
+      lock: () => area.readOnly = true,
+    };
+  },
+};
+
+// ---------- 页面 ----------
+function card(q, idx, lesson) {
+  // 渲染函数拿到的 ui：act 走 /api/act；submit 走统一的提交流程（自带提交按钮的题型用它）。
+  const ui = {
+    act: action => api("/api/act", { lesson: lesson.ref, qid: q.id, action }),
+    submit: () => doSubmit(),
+  };
+  const view = RENDERERS[q.checker](q, ui);
+  const resultSlot = $("div");
+  const label = view.submitLabel || "提交";
+  const submit = $("button", { class: "primary", onclick: () => doSubmit() }, label);
+
+  async function doSubmit() {
+    const response = view.collect();
+    if (response == null) { alert("还没作答"); return; }
+    submit.disabled = true; submit.textContent = "判分中…";
+    view.busy?.(true);
+    try {
+      showResult(await api("/api/submit", { lesson: lesson.ref, qid: q.id, response }));
+    } catch (e) {
+      resultSlot.replaceChildren($("div", { class: "error" }, e.message));
+      submit.disabled = false; submit.textContent = label;
+    }
+    view.busy?.(false);
+  }
+
+  function showResult(r, initial = false) {
+    state[q.id] = r;
+    view.lock();
+    submit.hidden = true;
+    resultSlot.replaceChildren(resultBox(r));
+    view.onResult?.(r, initial);
+    // 首次渲染时卡片还没挂到页面上，进度点和总结由 showLesson 在全部卡片建好后统一画。
+    if (!initial) {
+      renderDots(lesson); renderSummary(lesson);
+      resultSlot.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }
+
+  const el = $("section", { class: "card", id: "q-" + q.id },
+    $("div", { class: "card-head" },
+      $("span", { class: "qno" }, `${idx + 1}.`),
+      $("span", { class: "tag" }, CHECKER_NAMES[q.checker] || q.checker),
+      $("span", { class: "tag level" }, `L${q.level} ${q.level_name}`),
+      q.kind === "bug" ? $("span", { class: "tag" }, "找 bug") : null,
+      q.kind === "project" ? $("span", { class: "tag" }, "nanoteacher") : null),
+    view.ownsPrompt ? null : $("div", { class: "prompt", html: md(q.prompt) }),
+    view.body,
+    view.ownsSubmit ? null : $("div", { class: "actions" }, ...(view.extraActions || []), submit),
+    view.after || null,
+    resultSlot);
+  if (q.previous) showResult(q.previous, true);
+  return el;
+}
+
+function renderDots(lesson) {
+  const dots = document.getElementById("dots");
+  dots.replaceChildren(...lesson.questions.map((q, i) =>
+    $("a", { class: "dot " + (state[q.id]?.result || ""), href: "#q-" + q.id, title: q.id }, String(i + 1))));
+}
+
+function renderSummary(lesson) {
+  const box = document.getElementById("summary");
+  const done = lesson.questions.filter(q => state[q.id]);
+  if (done.length < lesson.questions.length) {
+    box.replaceChildren($("div", { class: "hint" }, `已完成 ${done.length} / ${lesson.questions.length} 题`));
+    return;
+  }
+  const graded = done.map(q => state[q.id]).filter(r => r.result !== "pending");
+  const pending = done.length - graded.length;
+  const avg = graded.length ? graded.reduce((a, r) => a + r.score, 0) / graded.length : 0;
+  box.replaceChildren(
+    $("div", { class: "big" }, graded.length ? `${Math.round(avg * 100)}%` : "—"),
+    $("div", {}, `自动判分 ${graded.length} 题${pending ? `，${pending} 题等导师批改` : ""}`),
+    $("p", {}, "回到对话，对导师说：", $("code", {}, `批改 ${lesson.ref}`)),
+    $("a", { href: `?lesson=${encodeURIComponent(lesson.ref)}&retake=1` }, "整套重做"));
+}
+
+async function showLesson(ref) {
+  const lesson = await api(`/api/lesson?ref=${encodeURIComponent(ref)}${RETAKE ? "&retake=1" : ""}`);
+  document.title = lesson.title;
+  document.getElementById("top").replaceChildren(
+    $("h1", {}, lesson.title),
+    $("div", { class: "source" }, lesson.source, " · ", $("a", { href: "/" }, "全部课时")),
+    $("div", { class: "dots", id: "dots" }));
+  const app = document.getElementById("app");
+  app.replaceChildren(...lesson.questions.map((q, i) => card(q, i, lesson)),
+    $("section", { class: "card summary", id: "summary" }));
+  renderDots(lesson);
+  renderSummary(lesson);
+}
+
+async function showIndex() {
+  const list = await api("/api/lessons");
+  document.getElementById("app").replaceChildren($("div", { class: "lesson-list" },
+    list.length ? list.map(l => $("a", { href: `?lesson=${encodeURIComponent(l.ref)}` }, $("b", {}, l.title), $("div", { class: "hint" }, `${l.ref} · ${l.count} 题`)))
+                : $("p", {}, "还没有课时。")));
+}
+
+(REF ? showLesson(REF) : showIndex()).catch(e => {
+  document.getElementById("app").replaceChildren($("p", { class: "error" }, "加载失败：" + e.message));
+});
+</script>
+</body>
+</html>

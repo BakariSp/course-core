@@ -1,0 +1,49 @@
+schema_version: 1
+title: <学科> · <NN> <主题>
+source: <课程名> 第 N 讲
+questions:
+  - id: q1
+    checker: choice
+    concept: <topic>.<领域>.<概念>
+    level: 1
+    prompt: <题干>
+    options: [<A>, <B>, <C>, <D>]
+
+  - id: q2
+    checker: choice
+    multi: true
+    concept: <topic>.<领域>.<概念>
+    level: 2
+    prompt: <题干，多选>
+    options: [<A>, <B>, <C>, <D>]
+
+  - id: q3
+    checker: fill
+    concept: <topic>.<领域>.<概念>
+    level: 2
+    prompt: <每个 ____ 是一个空>
+
+  - id: q4
+    checker: code
+    concept: <topic>.<领域>.<概念>
+    level: 3
+    prompt: 实现 `solve()`，要求见 docstring。
+    file: code/ex1.py
+
+  - id: q5
+    checker: terminal
+    concept: <topic>.<领域>.<概念>
+    level: 3
+    prompt: <要在终端里完成的任务>
+    intro: <终端里显示的提示，可省略>
+    setup:
+      - git init
+      - echo hello > a.txt
+
+  - id: q6
+    checker: short
+    concept: <topic>.<领域>.<概念>
+    level: 4
+    kind: bug
+    prompt: |
+      下面这段代码是 AI 写的。哪里有问题？在什么情况下会出错？后果是什么？

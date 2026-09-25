@@ -1,0 +1,31 @@
+schema_version: 1
+answers:
+  q1:
+    answer: B
+    explain: attempts.jsonl 只追加不改写，记录每次答题的原始证据。progress.md 是从它算出来的视图；syllabus.yaml 记的是你看了哪些课，不是答题记录。
+  q2:
+    answer: [A, D]
+    explain: syllabus.yaml 是给人改的；code/ex1.py 是你写答案的地方。attempts.jsonl 只能由程序追加，progress.md 每次都会被重新生成，手改的内容会被覆盖。
+  q3:
+    blanks: [[理解], [分析]]
+    explain: 记忆 → 理解 → 应用 → 分析，越往后越接近"能在陌生代码里判断对错"。
+  q4:
+    explain: 先取最后 window 个元素（切片 `scores[-window:]`），再求平均；列表为空时要单独处理，否则会除以零。
+  q5:
+    checks:
+      - {run: "git branch --list fix-typo", contains: "fix-typo", desc: "有一个叫 fix-typo 的分支"}
+      - {run: "git show fix-typo:app.txt", equals: "v2", desc: "fix-typo 分支上 app.txt 的内容是 v2"}
+      - {run: "git log -1 --format=%s fix-typo", matches: "(?i)fix", desc: "fix-typo 最新一次提交的说明里带 fix"}
+      - {run: "git show main:app.txt", equals: "v1", desc: "main 分支上的 app.txt 还是 v1"}
+      - {run: "git branch --show-current", equals: "main", desc: "当前在 main 分支"}
+      - {run: "git status --porcelain", equals: "", desc: "工作区是干净的（没有未提交的改动）"}
+    explain: |
+      git switch -c fix-typo（或 git checkout -b fix-typo）
+      echo v2 > app.txt
+      git commit -am "fix: typo"
+      git switch main
+  q6:
+    rubric:
+      - 指出会出现两份说法不一致的数据，不知道该信哪个（0.5）
+      - 指出下次重新生成时，手改的内容会被覆盖或丢失；或者说出"派生数据应该从唯一来源算出来"（0.5）
+    explain: 派生视图只能从 source of truth 单向生成。一旦两边都能写，就会出现两份不一致的数据，而且下次生成时手改的部分会被静默覆盖。

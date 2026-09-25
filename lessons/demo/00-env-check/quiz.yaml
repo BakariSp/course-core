@@ -1,0 +1,67 @@
+schema_version: 1
+title: 演示 · 00 认识这个学习环境
+source: README.md 和 docs/question-format.md
+questions:
+  - id: q1
+    checker: choice
+    concept: demo.env.sot
+    level: 1
+    prompt: 你的每一次答题记录，唯一可信的来源（source of truth）是哪个文件？
+    options:
+      - "`progress.md`"
+      - "`progress/attempts.jsonl`"
+      - "`progress/syllabus.yaml`"
+      - 每节课的 `review.md`
+
+  - id: q2
+    checker: choice
+    multi: true
+    concept: demo.env.sot
+    level: 2
+    prompt: 下面哪些文件是**你可以直接手改**的？
+    options:
+      - "`progress/syllabus.yaml`"
+      - "`progress/attempts.jsonl`"
+      - "`progress.md`"
+      - 课时里的 `code/ex1.py`
+
+  - id: q3
+    checker: fill
+    concept: demo.env.levels
+    level: 1
+    prompt: 掌握度分四级：记忆、____、应用、____。
+
+  - id: q4
+    checker: code
+    concept: demo.env.levels
+    level: 3
+    prompt: 实现 `recent_average()`。掌握度就是用这个函数判断某一级有没有通过的。先点「运行测试」看红灯，写好后再提交。
+    file: code/ex1.py
+
+  - id: q5
+    checker: terminal
+    concept: demo.git.branch
+    level: 3
+    prompt: |
+      练习目录里已经有一个 git 仓库，`main` 分支上有一个文件 `app.txt`，内容是 `v1`。
+      请完成：
+      1. 新建一个叫 `fix-typo` 的分支，并切换过去；
+      2. 把 `app.txt` 的内容改成 `v2`，提交，提交说明里要带上 `fix`；
+      3. 切回 `main` 分支。`main` 上的 `app.txt` 应该还是 `v1`。
+    intro: 提示：用 echo v2 > app.txt 改文件。做完点「提交检查」。
+    setup:
+      - git init
+      - echo v1 > app.txt
+      - git add app.txt
+      - git commit -m "init"
+
+  - id: q6
+    checker: short
+    concept: demo.env.sot
+    level: 2
+    kind: project
+    prompt: |
+      `progress.md` 是由 `study.py` 自动生成的，你和导师都不直接改它。
+      nanoteacher 里也有类似的设计：`topic_memory.json` 是 source of truth，`TOPIC_MEMORY.md` 只是渲染出来的投影。
+
+      用你自己的话说：如果允许两个人（或两个程序）都直接改 `progress.md`，会出什么问题？

@@ -1,0 +1,13 @@
+# 评测用例：每个单元一条，写"好的指南一定会做到的事"。
+# must_mention 用来抓事实性遗漏（不区分大小写的子串匹配），别写成对措辞的要求。
+schema_version: 1
+cases:
+  - unit: tools-01-shell
+    must_mention: [Git Bash, missing.csail.mit.edu]
+    must_not_mention: []
+  - unit: tools-02-git
+    must_mention: [Git Bash, missing.csail.mit.edu]
+    must_not_mention: []
+  - unit: test-02-pytest
+    must_mention: [docs.pytest.org]
+    must_not_mention: []

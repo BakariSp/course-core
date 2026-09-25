@@ -1,0 +1,15 @@
+schema_version: 1
+answers:
+  q1: {answer: A, explain: <为什么>}
+  q2: {answer: [A, C], explain: <为什么>}
+  q3: {blanks: [[<第 1 空可接受的答案>], [<第 2 空>]], explain: <为什么>}
+  q4: {explain: <参考思路，不给完整代码>}
+  q5:
+    checks:
+      - {run: "git branch --show-current", equals: "main", desc: <给学习者看的检查项说明>}
+    explain: <参考做法>
+  q6:
+    rubric:
+      - <评分点 1>（0.5）
+      - <评分点 2>（0.5）
+    explain: <正确思路>

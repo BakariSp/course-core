@@ -1,0 +1,98 @@
+# 课程进度（你和导师都可以改）
+#
+# status: todo（没看）| watching（看了一部分）| done（看完）
+# 看完一节就把 status 改成 done，done_on 填日期；notes 写你的感想或疑问。
+# concepts 由导师出题时补充：本单元考到的概念 id → 中文名。
+# 单元拆得不对就直接改，比如把"待拆分"换成具体讲次。
+
+schema_version: 1
+
+topics:
+  tools:
+    title: 开发工具
+    concepts: {}
+    units:
+      - {id: tools-01-shell, title: Shell, status: watching, notes: "练习环境：Git Bash 已验证可用；WSL Ubuntu 待装（需管理员权限）"}
+      - {id: tools-02-git, title: Git 与版本控制, status: todo}
+      - {id: tools-03-debug, title: 调试与性能分析, status: todo}
+
+  test:
+    title: 测试
+    concepts: {}
+    units:
+      - {id: test-01-batchelder, title: Getting Started Testing 演讲, status: todo}
+      - {id: test-02-pytest, title: pytest 入门教程, status: todo}
+
+  net:
+    title: Web 与网络
+    concepts: {}
+    units:
+      - {id: net-01-overview, title: 第 1 章 概述, status: todo}
+      - {id: net-02-http, title: 第 2 章 应用层与 HTTP, status: todo}
+      - {id: net-03-tcp, title: 第 3 章 传输层与 TCP, status: todo}
+      - {id: net-04-sse, title: SSE 与 WebSocket（补充）, status: todo}
+
+  db:
+    title: 数据库
+    concepts: {}
+    units:
+      - {id: db-01-sqlbolt, title: SQLBolt 全部练习, status: todo}
+      - {id: db-02-index, title: 15-445 索引, status: todo}
+      - {id: db-03-txn, title: 15-445 事务与隔离级别, status: todo}
+      - {id: db-04-cc, title: 15-445 并发控制, status: todo}
+      - {id: db-05-recovery, title: 15-445 日志与恢复, status: todo}
+
+  os:
+    title: 操作系统
+    concepts: {}
+    units:
+      - {id: os-01-process, title: 进程, status: todo}
+      - {id: os-02-thread, title: 线程, status: todo}
+      - {id: os-03-sync, title: 同步：锁与条件变量, status: todo}
+      - {id: os-04-fs, title: 文件系统与崩溃一致性, status: todo}
+
+  sec:
+    title: 安全
+    concepts: {}
+    units:
+      - {id: sec-01-access, title: 访问控制, status: todo}
+      - {id: sec-02-auth, title: 身份认证, status: todo}
+      - {id: sec-03-path, title: 路径穿越, status: todo}
+      - {id: sec-04-ssrf, title: SSRF, status: todo}
+
+  dist:
+    title: 分布式与数据系统
+    concepts: {}
+    units:
+      - {id: dist-01, title: Kleppmann 讲座（待拆分）, status: todo}
+
+  design:
+    title: 软件设计
+    concepts: {}
+    units:
+      - {id: design-01-ousterhout, title: Ousterhout 演讲, status: todo}
+
+  sysdesign:
+    title: 系统设计
+    concepts: {}
+    units:
+      - {id: sysdesign-01, title: ByteByteGo 视频（待挑选）, status: todo}
+
+  agent:
+    title: Agent 工程
+    concepts: {}
+    units:
+      - {id: agent-01-effective, title: Building Effective Agents, status: todo}
+
+  dsa:
+    title: 数据结构与算法
+    concepts: {}
+    units:
+      - {id: dsa-01, title: NeetCode（待挑选）, status: todo}
+
+  lang:
+    title: 语言深度
+    concepts: {}
+    units:
+      - {id: lang-01-asyncio, title: import asyncio 系列, status: todo}
+      - {id: lang-02-react, title: react.dev 状态管理, status: todo}

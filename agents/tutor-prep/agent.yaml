@@ -1,0 +1,24 @@
+# 助教 agent：课前学习指南
+# 这个文件夹就是 agent 的全部定义。改 agent = 改这里的文件，不改 pi、不改环境代码。
+schema_version: 1
+name: tutor-prep
+description: 学习者要开始一个单元前，查资料并写一份课前学习指南：学什么、用什么环境、怎么学、看哪些部分、有什么资源。
+
+model:
+  provider: deepseek
+  id: deepseek-flash
+  thinking: medium
+
+system_prompt: SYSTEM.md      # 岗位说明
+task: task.md                 # 每次运行的任务模板（runner 填入单元信息后作为简报）
+tools: [fetch_url, submit]    # 只开放这些环境工具；pi 自带的读写文件、shell 全部关闭
+
+output:
+  # submit 时环境会检查这些二级标题都在；缺了会退回让 agent 补。
+  required_sections: [这一课学什么, 学习环境, 怎么学, 看哪些部分, 资源, 学完能做到]
+  publish_to: preps/{unit}.md
+
+eval:
+  judge_model: {provider: deepseek, id: deepseek-v4-pro}   # 评分用更强的模型，和生成的模型分开
+  rubric: evals/rubric.md
+  cases: evals/cases.yaml
