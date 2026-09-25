@@ -41,6 +41,14 @@
 
 架构和迭代纪律见 [agents/README.md](agents/README.md)。学习者画像在 `progress/learner.md`，学习者可以直接改。
 
+## 学习者谈学习体验、提意见时
+
+这个环境按学习者的真实体验迭代，流程见 [design/README.md](design/README.md)：
+
+1. 把体验记进 `design/FEEDBACK.md`（原话 + 当时在做什么），不要先改写成解决方案。
+2. 能对上已有的决定就关联过去；需要改动就在 `design/DECISIONS.md` 追加一条**提议**（问题、证据、考虑过的做法、理由、怎么验证）。
+3. 学习者拍板后再实现；提交信息写 D-xxx 和原因；改完请学习者再用一次，结果回写到「验证」。
+
 ## 学习者说"我看完了 X"
 
 1. 在 `syllabus.yaml` 里把对应单元的 status 改成 `done`（看了一部分就改成 `watching`），填上 `done_on`。找不到对应单元就问学习者，是新增一个还是拆分已有的单元。
@@ -91,8 +99,3 @@
 - curriculum.md 的顺序和取舍由学习者决定，要改先提出来。
 - 改 `studykit/` 或 `study.py` 要同时改 `tests/`，并跑 `python -m pytest tests -q`。修 bug 先写一个会红的测试。
 - 在答题网页上自己测试之前，先把学习者正在写的 `code/exN.py`、`progress/attempts.jsonl`、`progress/runs.jsonl` 备份到 scratchpad，测完原样恢复并核对。
-
-## 提交
-
-- 提交信息按 Conventional Commits 写：`<type>(<scope>): <说明>`，type 用 `feat` / `fix` / `docs` / `refactor` / `test` / `chore`；一个提交只做一件事。
-- **不要写 AI 署名**：不要在提交信息里加 `Co-authored-by: Claude ...`、`Co-authored-by: Copilot ...`、`Generated with ...`、"🤖 ..." 这类行。提交信息只写改了什么、为什么；署名只留学习者本人。
