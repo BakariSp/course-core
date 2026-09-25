@@ -53,8 +53,7 @@ def check(run_dir: Path, _get=tools._http_get) -> list[dict]:
         return results
     md = out_path.read_text(encoding="utf-8")
     spec = json.loads((run_dir / "context.json").read_text(encoding="utf-8"))
-    ctx = tools.RunContext(run_dir, set(spec["hosts"]), spec.get("required_sections") or [],
-                           spec.get("unit_budget_minutes", 180), spec.get("session_minutes", 45))
+    ctx = tools.RunContext.from_spec(run_dir, spec)
 
     plan_path = run_dir / "output.json"
     if plan_path.exists():
@@ -64,8 +63,16 @@ def check(run_dir: Path, _get=tools._http_get) -> list[dict]:
         total, n = tools.plan_minutes(plan), len(tools.sections_of(plan))
         add("budget", f"总时长不超过预算 {ctx.unit_budget_minutes} 分钟", total <= ctx.unit_budget_minutes, f"{total} 分钟")
         add("shape", "4–8 个小节", 4 <= n <= 8, f"{n} 节")
-        pitfalls = [p_ for sec in tools.sections_of(plan) for p_ in sec.get("pitfalls") or []]
-        add("pitfalls", "至少写了 2 个具体的坑", len(pitfalls) >= 2, f"{len(pitfalls)} 个")
+        secs = tools.sections_of(plan)
+        items = [c for sec in secs for c in sec.get("checkpoint") or []]
+        lab_items = [c for c in items if c.get("type") == "lab"]
+        add("checkpoints", "每节都有检查点，其中至少一半的小节有练习场任务（D-013、D-014）",
+            all(sec.get("checkpoint") for sec in secs) and 2 * sum(any(c.get("type") == "lab" for c in sec.get("checkpoint") or []) for sec in secs) >= n,
+            f"{len(items)} 道，练习场任务 {len(lab_items)} 道")
+        traps = [t for c in items for t in c.get("traps") or []] + [k["trap"] for c in lab_items for k in c.get("checks") or [] if k.get("trap")]
+        add("traps", "至少写了 3 个挂在检查点上的坑（答错时才出现，D-015）", len(traps) >= 3, f"{len(traps)} 个")
+        concepts = [c for c in items if c.get("concept")]
+        add("concepts", "检查点都标了检验的知识节点（D-020）", len(concepts) == len(items), f"{len(concepts)}/{len(items)}")
     else:
         required = ctx.required_sections
         headings = [" ".join(h.split()) for h in re.findall(r"^##\s+(.+?)\s*$", md, re.MULTILINE)]
@@ -282,6 +289,13 @@ def publish(run_dir: Path) -> Path:
     if failed:
         raise runner.AgentError("自动检查没通过，不能发布：" + "；".join(failed))
     meta = ev["meta"]
+    plan_path = run_dir / "output.json"
+    plan = json.loads(plan_path.read_text(encoding="utf-8")) if plan_path.exists() else None
+    if plan and plan.get("lab"):
+        # INVARIANT: 有练习场的课程，导师审阅命令后跑过 lab verify 并通过，才能发布（D-014）。
+        vpath = run_dir / "lab_verify.json"
+        if not vpath.exists() or not json.loads(vpath.read_text(encoding="utf-8")).get("ok"):
+            raise runner.AgentError(f"练习场还没验证通过：先读 {run_dir / 'output.md'} 里的命令，再运行 python study.py lab verify {run_dir.name}")
     agent = runner.load_agent(meta["agent"])
     dest = store.ROOT / agent.spec["output"]["publish_to"].format(unit=meta["unit"])
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -290,9 +304,18 @@ def publish(run_dir: Path) -> Path:
                   "env_version": meta.get("env_version"), "model": f"{meta['provider']}/{meta['model']}",
                   "run": meta["run_id"], "judge_avg": judge_avg, "published": dt.datetime.now().isoformat(timespec="seconds")}
     if dest.suffix == ".json":
-        plan = json.loads((run_dir / "output.json").read_text(encoding="utf-8"))
-        dest.write_text(json.dumps({"schema_version": 1, "unit": meta["unit"], "provenance": provenance, **plan},
-                                   ensure_ascii=False, indent=2), encoding="utf-8")
+        from studykit import knowledge
+        text = json.dumps({"schema_version": tools.PLAN_SCHEMA_VERSION, "unit": meta["unit"], "provenance": provenance, **plan},
+                          ensure_ascii=False, indent=2)
+        dest.write_text(text, encoding="utf-8")
+        # 每一版都存一份：两版对比、给旧事件找到它属于哪一版（course.plan_of_event）。
+        hist = dest.parent / "history" / meta["unit"] / f"{meta['run_id']}.json"
+        hist.parent.mkdir(parents=True, exist_ok=True)
+        hist.write_text(text, encoding="utf-8")
+        # agent 提议的知识节点，导师审阅（发布）后并入知识图；已有的节点不覆盖（D-020）。
+        added = knowledge.add_nodes([{**n, "units": n.get("units") or [meta["unit"]]} for n in plan.get("nodes") or []])
+        if added:
+            print(f"知识图新增 {len(added)} 个节点：{', '.join(added)}")
     else:
         header = (f"<!-- 由助教 agent {meta['agent']} 生成 · prompt 版本 {meta['prompt_version']} · "
                   f"模型 {provenance['model']} · 运行 {meta['run_id']} · 评分 {judge_avg or '—'}/5 -->\n\n")

@@ -14,8 +14,7 @@ from studykit.agent_env import tools
 
 def load_context(run_dir: Path) -> tools.RunContext:
     spec = json.loads((run_dir / "context.json").read_text(encoding="utf-8"))
-    return tools.RunContext(run_dir, set(spec["hosts"]), spec.get("required_sections") or [],
-                            spec.get("unit_budget_minutes", 180), spec.get("session_minutes", 45))
+    return tools.RunContext.from_spec(run_dir, spec)
 
 
 def main(argv: list[str]) -> int:

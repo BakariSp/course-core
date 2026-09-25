@@ -1,0 +1,75 @@
+# 知识图（D-020）：节点 + 先修关系。状态不写在这里，由证据算出（study.py kg）。
+schema_version: 1
+topic: tools
+nodes:
+  tools.shell.roles:
+    title: 终端、shell、命令的分工
+    desc: 终端负责显示和接收按键；shell 读你敲的一行字、改写后启动程序；命令是被启动的那个程序。
+    kind: concept
+    units:
+    - tools-01-shell
+  tools.shell.expansion:
+    title: shell 先改写命令行再启动程序
+    desc: 变量、通配符、引号都由 shell 在启动程序之前处理，程序收到的是改写后的参数。
+    kind: concept
+    requires:
+    - tools.shell.roles
+    units:
+    - tools-01-shell
+  tools.shell.glob:
+    title: 通配符（glob）
+    desc: '*.txt 这类写法由 shell 展开成匹配的文件名列表，再交给命令。'
+    kind: concept
+    requires:
+    - tools.shell.expansion
+    units:
+    - tools-01-shell
+  tools.shell.quoting:
+    title: 引号改变谁来解释
+    desc: 单引号里的内容 shell 原样交给程序；双引号里 shell 仍会展开变量。
+    kind: concept
+    requires:
+    - tools.shell.expansion
+    units:
+    - tools-01-shell
+  tools.cmd.sed:
+    title: sed
+    desc: 按规则逐行改写文本的命令，最常用 s/旧/新/g 替换。
+    kind: term
+    requires:
+    - tools.shell.quoting
+    units:
+    - tools-01-shell
+  tools.shell.options:
+    title: 选项常常切换输出模式
+    desc: -l、-c 这类选项不只是修饰，常常让命令改成输出另一种东西（如 grep -l 只打印文件名）。
+    kind: concept
+    requires:
+    - tools.shell.roles
+    units:
+    - tools-01-shell
+  tools.shell.metachars:
+    title: 语法字符和展开字符
+    desc: ; | > 是 shell 用来切分、连接命令的语法字符；* $ ~ 是 shell 要展开的字符。两类都要加引号或反斜杠才能原样交给程序。
+    kind: concept
+    requires:
+    - tools.shell.expansion
+    units:
+    - tools-01-shell
+  tools.cmd.find:
+    title: find
+    desc: 按名字、类型等条件在目录树里找文件；-exec 对每个结果执行一条命令。
+    kind: term
+    requires:
+    - tools.shell.glob
+    - tools.shell.metachars
+    units:
+    - tools-01-shell
+  tools.cmd.grep:
+    title: grep
+    desc: 在文本里找包含某个模式的行。
+    kind: term
+    requires:
+    - tools.shell.options
+    units:
+    - tools-01-shell

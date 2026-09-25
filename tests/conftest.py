@@ -16,6 +16,9 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(store, "PROGRESS_MD", tmp_path / "progress.md")
     monkeypatch.setattr(store, "SANDBOX", tmp_path / ".sandbox")
     monkeypatch.setattr(store, "LESSONS", tmp_path / "lessons")
+    # WHY: 练习场默认建在 ~/cs-study-lab，测试不能碰学习者真实的练习场。
+    (tmp_path / "progress").mkdir()
+    (tmp_path / "progress" / "settings.yaml").write_text(f"lab_root: '{(tmp_path / 'labs').as_posix()}'\n", encoding="utf-8")
     lesson = tmp_path / "lessons" / "t" / "01-x"
     (lesson / "code").mkdir(parents=True)
     (lesson / "quiz.yaml").write_text(textwrap.dedent("""

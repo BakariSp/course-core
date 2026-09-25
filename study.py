@@ -6,6 +6,15 @@
     python study.py grade <lesson> <qid> --score 0.5 --note "..."   导师批改简答题
     python study.py runs <lesson> [qid]      看代码题的作答过程（每次运行的结果和代码改动）
     python study.py log --concept dsa.hash --level 3 --score 1 --note "LeetCode 1"   记录课外练习
+    python study.py time [--days 7]          每天学了多久、学了什么（D-016）
+    python study.py time add --start 2026-09-25T15:30 --minutes 48 --note "看第 1 讲视频"   补录一段学习
+    python study.py kg summary               学习者模型第 0 级：每个学科的掌握情况和薄弱点标题（D-020）
+    python study.py kg related <单元>         第 1 级：和这个单元相关、还没掌握的节点
+    python study.py kg show <节点>            第 2 级：一个节点的描述、先修、全部证据
+    python study.py kg observe <节点> weak|ok "原话"   导师观察：把"哪里没跟上"记到具体节点上
+    python study.py kg check                 检查知识图（id、先修是否存在、有没有环）
+    python study.py course-eval <单元> [--plan <版本>] [--write]   课程评测：预测 vs 实际（D-019）
+    python study.py lab verify <agent 运行目录名>   把课程计划的练习场从头走一遍（会执行 agent 写的命令，先审阅）
 """
 from __future__ import annotations
 
@@ -93,6 +102,75 @@ def cmd_log(args) -> None:
     print("已记录。")
 
 
+def cmd_time(args) -> None:
+    from studykit import course, timeline
+    if args.action == "add":
+        if not args.start or not args.minutes:
+            sys.exit("补录要写 --start 2026-09-25T15:30 和 --minutes 48")
+        store.record_study(event="manual", start=args.start + (":00" if len(args.start) == 16 else ""),
+                           minutes=args.minutes, note=args.note or "手动补录")
+        print("已补录。")
+        return
+    print(timeline.report(args.days, plan_of=course.plan_of_event))
+
+
+def cmd_kg(args) -> None:
+    from studykit import knowledge
+    if args.action == "summary":
+        print(knowledge.summary())
+    elif args.action == "related":
+        print(json.dumps(knowledge.related(args.target), ensure_ascii=False, indent=2))
+    elif args.action == "show":
+        print(json.dumps(knowledge.show(args.target), ensure_ascii=False, indent=2))
+    elif args.action == "observe":
+        if args.polarity not in ("weak", "ok") or not args.note:
+            sys.exit('用法：kg observe <节点> weak|ok "原话"')
+        knowledge.observe(args.target, args.polarity, args.note)
+        store.write_progress_md()
+        print(f"已记录：{args.target} {args.polarity}")
+    elif args.action == "check":
+        errors = knowledge.validate(knowledge.load_graph())
+        print("\n".join(errors) or "知识图没有问题。")
+        if errors:
+            sys.exit(1)
+
+
+def cmd_course_eval(args) -> None:
+    from studykit import course_eval
+    result = course_eval.evaluate(args.unit, args.plan)
+    text = course_eval.format_report(result)
+    print(text)
+    if args.write:
+        d = store.ROOT / "runs" / "agents" / "tutor-prep" / result["plan"]
+        if d.exists():
+            (d / "learner_eval.md").write_text(text, encoding="utf-8")
+            (d / "learner_eval.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+            print(f"已写入 {d / 'learner_eval.md'}")
+        else:
+            print(f"找不到运行目录 {d}，没有写入")
+
+
+def cmd_lab(args) -> None:
+    from studykit import lab
+    from studykit.agent_env import evaluate
+    run_dir = evaluate.resolve_run("tutor-prep", args.run)
+    plan = json.loads((run_dir / "output.json").read_text(encoding="utf-8"))
+    result = lab.verify(plan, store.SANDBOX / "lab-verify" / run_dir.name)
+    (run_dir / "lab_verify.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    for sec in result["sections"]:
+        tries = " ".join("✓" if t["rc"] == 0 else f"✗{t['rc']}" for t in sec["try"])
+        cps = " ".join(f"检查点{c['idx']}：做之前 {sum(c['passed_before'])}/{len(c['passed_before'])} → 做之后 "
+                       f"{sum(c['passed_after'])}/{len(c['passed_after'])}" for c in sec["checkpoints"])
+        print(f"第 {sec['section']} 节 {sec['title']}  动手 {tries or '—'}  {cps}")
+    for w in result["warnings"]:
+        print("注意：" + w)
+    for p_ in result["problems"]:
+        print("问题：" + p_)
+    print("通过" if result["ok"] else "没通过")
+    if not result["ok"]:
+        sys.exit(1)
+
+
 def cmd_agent(args) -> None:
     from studykit.agent_env import evaluate, runner
     if args.action == "run":
@@ -144,6 +222,28 @@ def main(argv: list[str] | None = None) -> None:
     ag.add_argument("--no-eval", action="store_true", help="run：跑完不评测")
     ag.add_argument("--no-judge", action="store_true", help="只跑自动检查，不调用评分模型")
     ag.set_defaults(func=cmd_agent)
+    t = sub.add_parser("time", help="学习时间：每天学了多久、学了什么")
+    t.add_argument("action", nargs="?", choices=["report", "add"], default="report")
+    t.add_argument("--days", type=int, help="只看最近几天")
+    t.add_argument("--start", help="add：开始时间，如 2026-09-25T15:30")
+    t.add_argument("--minutes", type=float, help="add：多少分钟")
+    t.add_argument("--note", help="add：学了什么")
+    t.set_defaults(func=cmd_time)
+    k = sub.add_parser("kg", help="学习者模型：知识图、薄弱点（分级查询）")
+    k.add_argument("action", choices=["summary", "related", "show", "observe", "check"])
+    k.add_argument("target", nargs="?", help="related：单元 id；show / observe：节点 id")
+    k.add_argument("polarity", nargs="?", help="observe：weak 或 ok")
+    k.add_argument("note", nargs="?", help="observe：学习者的原话或导师看到的现象")
+    k.set_defaults(func=cmd_kg)
+    ce = sub.add_parser("course-eval", help="课程评测：预测 vs 实际")
+    ce.add_argument("unit")
+    ce.add_argument("--plan", help="课程版本（agent 运行目录名），默认当前发布的")
+    ce.add_argument("--write", action="store_true", help="把报告写进 agent 的运行目录")
+    ce.set_defaults(func=cmd_course_eval)
+    lb = sub.add_parser("lab", help="练习场")
+    lb.add_argument("action", choices=["verify"])
+    lb.add_argument("run", nargs="?", help="tutor-prep 的运行目录名，默认最近一次")
+    lb.set_defaults(func=cmd_lab)
     lg = sub.add_parser("log", help="记录课外练习（LeetCode、PortSwigger 靶场等）")
     lg.add_argument("--concept", required=True)
     lg.add_argument("--level", type=int, default=3, choices=[1, 2, 3, 4])

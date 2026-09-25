@@ -41,7 +41,8 @@ def study_settings() -> dict:
     """学习者的时间预算（progress/settings.yaml，D-010）。"""
     s = store.load_yaml(SETTINGS)
     return {"unit_budget_minutes": int(s.get("unit_budget_minutes") or 180),
-            "session_minutes": int(s.get("session_minutes") or 45)}
+            "session_minutes": int(s.get("session_minutes") or 45),
+            "max_new_terms": int(s.get("max_new_terms") or 5)}
 
 
 class AgentError(Exception):
@@ -113,6 +114,32 @@ def curriculum_row(topic_id: str) -> str:
     return "\n".join([header, "|" + "---|" * (header.count("|") - 1), row]) if header else row
 
 
+def knowledge_context(unit_id: str, topic_id: str) -> dict:
+    """给 agent 的学习者模型（D-020 第 1 级）：只给和这个单元相关的，不给全部。"""
+    from studykit import knowledge
+    nodes = knowledge.load_graph()
+    sts = knowledge.states(nodes)
+    known = sorted(s.node.title for s in sts.values() if s.state == "mastered" and s.node.topic == topic_id)
+    return {"known_terms": sorted(knowledge.known_titles(topic_id, sts)),
+            "known_titles": known,
+            "existing_nodes": {nid: n.title for nid, n in nodes.items() if n.topic == topic_id},
+            "related": knowledge.related(unit_id)}
+
+
+def format_knowledge(k: dict) -> str:
+    lines = ["已经掌握（讲解里可以直接用，不用再解释）：" + ("、".join(k["known_titles"]) or "（还没有）")]
+    rel = k["related"]
+    if rel["weak"]:
+        lines.append("和这个单元相关的薄弱点（讲到时放慢、多给例子）：")
+        lines += [f"- {w['title']}（`{w['id']}`）：{'；'.join(w.get('why') or [])}" for w in rel["weak"]]
+    if rel["prerequisites_not_mastered"]:
+        lines.append("先修里还没掌握的：" + "、".join(f"{n['title']}（`{n['id']}`）" for n in rel["prerequisites_not_mastered"]))
+    if k["existing_nodes"]:
+        lines.append("知识图里这个学科已有的节点（新词和检查点的 concept 优先用这些 id，不要重复提议）：")
+        lines += [f"- `{nid}` {title}" for nid, title in sorted(k["existing_nodes"].items())]
+    return "\n".join(lines)
+
+
 def build_brief(agent: Agent, unit_id: str) -> str:
     tid, topic, unit = find_unit(unit_id)
     learner = LEARNER.read_text(encoding="utf-8") if LEARNER.exists() else "（没有学习者画像）"
@@ -120,7 +147,8 @@ def build_brief(agent: Agent, unit_id: str) -> str:
     return agent.file("task").read_text(encoding="utf-8").format(
         unit_id=unit_id, unit_title=unit.get("title", unit_id), topic_id=tid,
         topic_title=topic.get("title", tid), unit_notes=unit.get("notes") or "无",
-        curriculum_row=curriculum_row(tid), learner=learner, **study_settings(),
+        curriculum_row=curriculum_row(tid), learner=learner,
+        knowledge=format_knowledge(knowledge_context(unit_id, tid)), **study_settings(),
     )
 
 
@@ -179,8 +207,10 @@ def run(agent_name: str, unit_id: str, model: str | None = None, timeout: int = 
     PI_HOME.mkdir(parents=True, exist_ok=True)
     (run_dir / "brief.md").write_text(brief, encoding="utf-8")
     required = agent.spec["output"].get("required_sections") or []
+    k = knowledge_context(unit_id, find_unit(unit_id)[0])
     (run_dir / "context.json").write_text(json.dumps(
-        {"hosts": sorted(tools.allowed_hosts()), "required_sections": required, **study_settings()},
+        {"hosts": sorted(tools.allowed_hosts()), "required_sections": required, "unit": unit_id,
+         "known_terms": k["known_terms"], "existing_nodes": k["existing_nodes"], **study_settings()},
         ensure_ascii=False, indent=2), encoding="utf-8")
 
     m = agent.spec["model"]

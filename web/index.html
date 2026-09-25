@@ -217,7 +217,7 @@ main.wide { max-width: 1180px; }
 .toc .m { font-size: 12px; color: var(--muted); white-space: nowrap; }
 .toc .later { margin: 12px 8px 4px; font-size: 12.5px; color: var(--muted); border-top: 1px dashed var(--border); padding-top: 10px; }
 .toc .later ul { padding-left: 16px; margin: 4px 0 0; }
-.lesson { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 24px; min-width: 0; }
+.lesson { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 24px; min-width: 0; scroll-margin-top: 130px; }
 .sec-meta { font-size: 13px; color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap; }
 .lesson h2 { margin: 6px 0 12px; font-size: 21px; }
 .lesson h3 { font-size: 15px; margin: 22px 0 8px; }
@@ -255,6 +255,91 @@ main.wide { max-width: 1180px; }
   border-radius: var(--radius); color: var(--text); text-decoration: none; }
 .unit-list a:hover { border-color: var(--accent); }
 .index-h { font-size: 15px; margin: 22px 0 0; color: var(--muted); }
+
+/* ---------- 课程页 v2（D-013 ~ D-017）：讲解 | 练习场终端 ---------- */
+main.wide { max-width: 1560px; }
+.course.has-lab { grid-template-columns: 220px minmax(0, 1fr) minmax(360px, 40%); }
+.labterm { position: sticky; top: 100px; display: flex; flex-direction: column; gap: 6px; height: calc(100vh - 116px); min-width: 0; }
+.labterm .lab-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.labterm .lab-head button { font-size: 12.5px; padding: 3px 10px; }
+.labterm .spacer { flex: 1; }
+.labterm .lab-where { font-size: 12px; overflow-wrap: anywhere; }
+.labterm .term { flex: 1 1 auto; display: flex; flex-direction: column; margin-top: 0; min-height: 0; cursor: text; }
+.labterm .term .out { flex: 1 1 auto; max-height: none; }
+.term .warn { color: #f0a44b; }
+.term .ps { white-space: nowrap; }
+.term .ps.outside { color: #f0a44b; }
+@media (max-width: 1100px) {
+  .course.has-lab { grid-template-columns: minmax(0, 1fr) minmax(320px, 42%); }
+  .course.has-lab .toc { grid-column: 1 / -1; position: static; max-height: none; }
+}
+@media (max-width: 760px) {
+  .course.has-lab { grid-template-columns: 1fr; }
+  .labterm { position: static; height: 60vh; }
+}
+.toc a.skipped .mark { color: var(--warn); }
+.load-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-left: 5px; vertical-align: middle; }
+.load-dot.l-低 { background: var(--ok); } .load-dot.l-中 { background: var(--warn); } .load-dot.l-高 { background: var(--bad); }
+.sec-meta .load { padding: 0 8px; border-radius: 999px; }
+.sec-meta .load.l-低 { background: var(--ok-soft); color: var(--ok); }
+.sec-meta .load.l-中 { background: var(--warn-soft); color: var(--warn); }
+.sec-meta .load.l-高 { background: var(--bad-soft); color: var(--bad); }
+.notice { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; background: var(--warn-soft); border-radius: 8px; padding: 8px 12px; margin-bottom: 12px; font-size: 14px; }
+.notice button { font-size: 13px; padding: 2px 10px; }
+.mission { background: var(--code-bg); border-left: 4px solid var(--accent); border-radius: 8px; padding: 10px 14px; margin: 0 0 14px; }
+.mission b { color: var(--accent); }
+.terms { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin: 0 0 12px; }
+.term-chip { font-size: 13px; padding: 1px 10px; border-radius: 999px; border: 1px dashed var(--accent); color: var(--accent); background: transparent; }
+.term-chip.unknown { border-style: solid; background: var(--accent-soft); }
+.term-chip.known { border-color: var(--border); color: var(--muted); text-decoration: line-through; }
+.nt { border-bottom: 2px dotted var(--accent); cursor: help; }
+.nt:hover, .nt:focus { background: var(--accent-soft); outline: none; }
+.popover { position: absolute; z-index: 60; max-width: 340px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, .18); padding: 12px 14px; font-size: 14px; display: grid; gap: 8px; }
+.popover .pop-t { font-weight: 700; font-family: var(--mono); }
+.pop-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.pop-actions button { font-size: 13px; padding: 3px 10px; }
+.pop-actions button.on, .rating button.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.miss-btn { position: absolute; z-index: 61; font-size: 13px; padding: 3px 10px; background: var(--text); color: var(--bg); border-color: var(--text); }
+.toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 70; background: var(--text); color: var(--bg);
+  padding: 8px 16px; border-radius: 8px; font-size: 14px; }
+.watch { margin-top: 14px; }
+.checkpoints { margin-top: 24px; padding-top: 6px; border-top: 1px solid var(--border); }
+.cp { border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: 8px; padding: 12px 14px; margin-top: 12px; }
+.cp.ok { border-left-color: var(--ok); }
+.cp-head { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+.cp-ok { color: var(--ok); font-weight: 600; font-size: 14px; }
+.cp-hints { display: grid; gap: 4px; margin-top: 8px; }
+.cp-hint { font-size: 14px; background: var(--accent-soft); border-radius: 6px; padding: 5px 10px; }
+.cp-hint b { color: var(--accent); margin-right: 4px; }
+.rating { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 16px; padding: 10px 12px; background: var(--code-bg); border-radius: 8px; }
+.rating button { font-size: 13px; padding: 3px 10px; }
+.video-btn { font-size: 12.5px; padding: 2px 10px; }
+.video-btn.on { background: var(--bad-soft); border-color: var(--bad); color: var(--bad); }
+
+/* ---------- 知识树（D-020） ---------- */
+.kg { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 18px; margin-top: 16px; align-items: start; }
+.kg-canvas { position: relative; display: flex; gap: 56px; overflow-x: auto; padding: 12px; background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius); min-height: 300px; }
+.kg-edges { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; }
+.kg-edges path { fill: none; stroke: var(--border); stroke-width: 1.5; }
+.kg-col { display: flex; flex-direction: column; gap: 10px; min-width: 150px; position: relative; }
+.kg-col-h { font-size: 12px; color: var(--muted); }
+.kg-node { font-size: 13px; padding: 5px 10px; border-radius: 8px; border: 1.5px solid var(--border); background: var(--surface); color: var(--text); text-align: left; }
+.kg-node.k-term { font-family: var(--mono); }
+.kg-node.s-mastered { background: var(--ok-soft); border-color: var(--ok); color: var(--ok); }
+.kg-node.s-weak { background: var(--warn-soft); border-color: var(--warn); color: var(--warn); }
+.kg-node.s-stale { background: var(--bad-soft); border-color: var(--bad); color: var(--bad); }
+.kg-node.s-learning { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.kg-node.s-new { color: var(--muted); border-style: dashed; }
+.kg-node.sel { box-shadow: 0 0 0 3px var(--accent); }
+.kg-legend { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.kg-legend .kg-node { font-size: 12px; padding: 1px 8px; }
+.kg-detail { position: sticky; top: 100px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; font-size: 14px; }
+.kg-detail h3 { margin: 8px 0 2px; }
+.kg-detail .kg-node { display: inline-block; font-size: 12px; padding: 1px 8px; }
+.kg-ev { padding-left: 18px; margin: 6px 0; }
+@media (max-width: 900px) { .kg { grid-template-columns: 1fr; } .kg-detail { position: static; } }
 
 /* WHY: 关掉连字。Cascadia Code 等字体会把 <= 显示成 ≤、-> 显示成 →，学写代码时看到的和实际敲的不一样。 */
 .CodeMirror, pre, code, textarea.code, .term { font-variant-ligatures: none; font-feature-settings: "liga" 0, "calt" 0; }
@@ -819,56 +904,83 @@ async function showLesson(ref) {
   renderSummary(lesson);
 }
 
-// ---------- 课程页（D-010）：part → section，限时，有目标，学完进练习 ----------
+// ---------- 课程页（D-010、D-013 ~ D-017）：讲解在左，练习场终端在右，检查点做对才算学完 ----------
 async function showCourse(unitId) {
-  const data = await api(`/api/unit?id=${encodeURIComponent(unitId)}`);
+  let data = await api(`/api/unit?id=${encodeURIComponent(unitId)}`);
   const { plan, settings, sessions } = data;
   const sections = plan.parts.flatMap(p => p.sections.map(s => ({ ...s, part: p.title })));
+  const N = sections.length;
   const sessionOf = i => sessions.findIndex(g => g.includes(i));
   const sessionMinutes = g => g.reduce((a, i) => a + sections[i].minutes, 0);
+  const hasLab = !!plan.lab;
   let progress = data.progress;
-  const isDone = i => progress.done.includes(i);
+  const isPassed = i => progress.passed.includes(i);
+  const isSkipped = i => progress.skipped.includes(i);
+  const post = (event, extra = {}) => api("/api/unit/progress", { unit: unitId, event, ...extra });
   const fromHash = Number((location.hash.match(/^#s(\d+)$/) || [])[1]);
-  let current = Number.isInteger(fromHash) && fromHash >= 1 && fromHash <= sections.length ? fromHash - 1
-    : (sections.findIndex((_, i) => !isDone(i)) + 1 || sections.length + 1) - 1;   // 第一个没学完的；全学完了就到结尾
+  let current = Number.isInteger(fromHash) && fromHash >= 1 && fromHash <= N ? fromHash - 1
+    : (sections.findIndex((_, i) => !isPassed(i) && !isSkipped(i)) + 1 || N + 1) - 1;
 
-  // 计时：只算页面在前台的时间，切到别的窗口就暂停（防止开着页面过夜，把用时算得很离谱）。
-  let activeMs = 0, since = document.hidden ? null : Date.now();
-  const elapsedMin = () => (activeMs + (since ? Date.now() - since : 0)) / 60000;
-  document.addEventListener("visibilitychange", () => {
-    if (document.hidden && since) { activeMs += Date.now() - since; since = null; }
-    else if (!document.hidden && !since) since = Date.now();
-  });
-  const resetTimer = () => { activeMs = 0; since = document.hidden ? null : Date.now(); };
+  // ---- 计时（D-016）：服务器按事件的时间算会话；页面只负责在"有人在学"时发心跳 ----
+  let lastInteract = Date.now(), videoSince = null;
+  ["pointerdown", "keydown", "scroll", "mousemove"].forEach(ev =>
+    document.addEventListener(ev, () => { lastInteract = Date.now(); }, { passive: true }));
+  clearInterval(showCourse._hb);
+  showCourse._hb = setInterval(() => {
+    const section = current < N ? current : undefined;
+    if (videoSince) {
+      if (Date.now() - videoSince > 120 * 60000) return setVideo(false);   // 忘了点结束：最多算 2 小时
+      post("activity", { section, kind: "video" }).catch(() => {});
+    } else if (!document.hidden && Date.now() - lastInteract < 60000) {
+      post("activity", { section, kind: "page" }).catch(() => {});
+    }
+  }, 60000);
+  const videoBtn = $("button", { class: "video-btn", onclick: () => setVideo(!videoSince) });
+  function setVideo(on) {
+    videoSince = on ? Date.now() : null;
+    if (on) post("activity", { section: current < N ? current : undefined, kind: "video" }).catch(() => {});
+    renderVideoBtn();
+  }
+  function renderVideoBtn() {
+    videoBtn.classList.toggle("on", !!videoSince);
+    videoBtn.textContent = videoSince ? `● 看视频中 ${Math.floor((Date.now() - videoSince) / 60000)} 分钟 · 看完了` : "▶ 我去看视频了";
+    videoBtn.title = videoSince ? "点一下结束" : "切到视频窗口前点一下：看视频的时间也算进学习时间（最多 2 小时）";
+  }
+  clearInterval(showCourse._vb); showCourse._vb = setInterval(renderVideoBtn, 30000);
+  renderVideoBtn();
 
+  // ---- 页面骨架 ----
   document.title = plan.title;
   document.getElementById("app").classList.add("wide");
   const budgetEl = $("div", { class: "budget" });
   fill(document.getElementById("top"),
     $("h1", {}, plan.title),
     $("div", { class: "source" }, `分 ${sessions.length} 次学，每次不超过 ${settings.session_minutes} 分钟 · `,
+      $("a", { href: `?kg=${encodeURIComponent(unitId.split("-")[0])}` }, "知识树"), " · ",
       $("a", { href: "/" }, "全部课程")),
     budgetEl);
   const tocList = $("div");
   const tocSummary = $("summary");
-  // 宽屏时目录常开；窄屏时折叠成一行，不把正文挤到下面去。
-  const toc = $("details", { class: "toc", open: window.innerWidth > 700 }, tocSummary, tocList);
+  const toc = $("details", { class: "toc", open: window.innerWidth > 1100 }, tocSummary, tocList);
   const lesson = $("article", { class: "lesson" });
-  document.getElementById("app").replaceChildren($("div", { class: "course" }, toc, lesson));
+  const term = hasLab ? labTerminal() : null;
+  document.getElementById("app").replaceChildren(
+    $("div", { class: "course" + (hasLab ? " has-lab" : "") }, toc, lesson, term ? term.el : null));
 
   function renderBudget() {
     const planned = data.planned_minutes;
-    const donePlanned = progress.done.reduce((a, i) => a + (sections[i]?.minutes || 0), 0);
+    const donePlanned = progress.passed.reduce((a, i) => a + (sections[i]?.minutes || 0), 0);
     const spent = progress.total_spent || 0;
-    // 用时明显超出计划时提醒：这个单元不该无限膨胀（F-014）。
     const over = donePlanned > 0 && spent > donePlanned * 1.4;
     fill(budgetEl,
-      $("span", {}, `${progress.done.length}/${sections.length} 节`),
-      $("div", { class: "budget-bar", title: `计划进度 ${donePlanned}/${planned} 分钟` }, $("div", { style: `width:${Math.round(100 * donePlanned / planned)}%` })),
+      $("span", {}, `通过 ${progress.passed.length}/${N} 节`),
+      $("div", { class: "budget-bar", title: `已通过的小节计划 ${donePlanned}/${planned} 分钟` }, $("div", { style: `width:${Math.round(100 * donePlanned / planned)}%` })),
       $("span", {}, `计划 ${planned}′（上限 ${settings.unit_budget_minutes}′）· 实际 ${Math.round(spent)}′`),
-      over ? $("span", { class: "warn" }, "比计划慢不少：卡住的地方可以先跳过，记下来问导师") : null);
+      over ? $("span", { class: "warn" }, "比计划慢不少：卡住的地方可以先跳过，记下来问导师") : null,
+      videoBtn);
   }
 
+  function tocMark(i) { return isPassed(i) ? "✓" : isSkipped(i) ? "◐" : "○"; }
   function renderToc() {
     const items = [];
     let idx = 0;
@@ -876,94 +988,353 @@ async function showCourse(unitId) {
       items.push($("div", { class: "toc-part" }, p.title));
       p.sections.forEach(s => {
         const i = idx++;
-        items.push($("a", { href: `#s${i + 1}`, class: [i === current ? "on" : "", isDone(i) ? "done" : ""].join(" "),
-          onclick: e => { e.preventDefault(); go(i); } },
-          $("span", { class: "mark" }, isDone(i) ? "✓" : "○"),
+        const load = data.load[i];
+        items.push($("a", { href: `#s${i + 1}`, class: [i === current ? "on" : "", isPassed(i) ? "done" : "", isSkipped(i) ? "skipped" : ""].join(" "),
+          title: isSkipped(i) ? "看过，但没做对检查点" : "", onclick: e => { e.preventDefault(); go(i); } },
+          $("span", { class: "mark" }, tocMark(i)),
           $("span", { class: "t" }, s.title),
-          $("span", { class: "m" }, `${s.minutes}′`)));
+          $("span", { class: "m" }, `${s.minutes}′`, load && load.new_terms ? $("span", { class: `load-dot l-${load.level}`, title: `新词 ${load.new_terms} 个 · 预计负荷${load.level}` }) : null)));
       });
     });
-    items.push($("a", { href: `#end`, class: current === sections.length ? "on" : "", onclick: e => { e.preventDefault(); go(sections.length); } },
+    items.push($("a", { href: `#end`, class: current === N ? "on" : "", onclick: e => { e.preventDefault(); go(N); } },
       $("span", { class: "mark" }, "★"), $("span", { class: "t" }, "学完 → 练习题")));
     if (plan.later?.length) items.push($("div", { class: "later" }, $("b", {}, "以后再学"), "（不在这次的时间预算里）",
       $("ul", {}, plan.later.map(x => $("li", { title: x.why }, x.title)))));
+    if (hasLab) items.push($("div", { class: "later" }, $("b", {}, "练习场"), $("p", {}, plan.lab.story)));
     fill(tocList, ...items);
-    tocSummary.textContent = `目录 · 第 ${Math.min(current + 1, sections.length)}/${sections.length} 节`;
+    tocSummary.textContent = `目录 · 第 ${Math.min(current + 1, N)}/${N} 节`;
   }
 
   const copyBtn = text => $("button", { onclick: async ev => {
     try { await navigator.clipboard.writeText(text); ev.target.textContent = "已复制"; setTimeout(() => ev.target.textContent = "复制", 1200); } catch {}
   } }, "复制");
 
+  // ---- 一节 ----
   function renderSection() {
-    if (current >= sections.length) return renderFinish();
-    const s = sections[current], k = sessionOf(current);
+    closePopover();
+    if (current >= N) return renderFinish();
+    const s = sections[current], k = sessionOf(current), i = current;
+    const load = data.load[i] || {};
+    const spent = progress.spent_minutes[String(i)];
+    const blocked = sections.slice(0, i).findIndex((_, j) => !isPassed(j) && !isSkipped(j));
+    const explain = $("div", { class: "explain", html: md(s.explain) });
+    const terms = s.terms || [];
+    markTerms(explain, terms);
     fill(lesson,
+      blocked >= 0 ? $("div", { class: "notice" }, `第 ${blocked + 1} 节的检查点还没做对。可以先看这一节，但它可能会用到前面的结果。`,
+        $("button", { onclick: () => go(blocked) }, `回第 ${blocked + 1} 节`)) : null,
       $("div", { class: "sec-meta" },
-        $("span", {}, s.part), $("span", {}, `第 ${current + 1} / ${sections.length} 节`),
-        $("span", {}, `计划 ${s.minutes} 分钟`),
-        $("span", {}, `第 ${k + 1} 次学习（这次共 ${sessionMinutes(sessions[k])} 分钟）`)),
+        $("span", {}, s.part), $("span", {}, `第 ${i + 1} / ${N} 节`),
+        $("span", {}, `计划 ${s.minutes} 分钟${spent ? `，已用 ${Math.round(spent)}` : ""}`),
+        $("span", {}, `第 ${k + 1} 次学习（这次共 ${sessionMinutes(sessions[k])} 分钟）`),
+        terms.length ? $("span", { class: `load l-${load.level}`, title: "新词越多越费劲。你标了「早就知道」的词不算新词。" },
+          `新词 ${load.new_terms} 个 · 预计负荷${load.level}`) : null),
       $("h2", {}, s.title),
       $("div", { class: "goal" }, $("b", {}, "目标 "), s.goal),
-      $("div", { class: "explain", html: md(s.explain) }),
+      s.mission ? $("div", { class: "mission" }, $("b", {}, "任务 "), s.mission) : null,
+      terms.length ? $("div", { class: "terms" }, $("span", { class: "hint" }, "本节新词（点开看解释）："),
+        ...terms.map(t => termChip(t))) : null,
+      explain,
       s.try?.length ? $("h3", {}, "动手") : null,
       s.try?.length ? $("ol", { class: "try" }, s.try.map(t => $("li", {},
-        $("div", { class: "cmd" }, $("code", {}, t.command), copyBtn(t.command)),
+        $("div", { class: "cmd" }, $("code", {}, t.command),
+          term ? $("button", { onclick: () => term.put(t.command), title: "放进右边的终端，按回车运行" }, "放进终端") : null,
+          copyBtn(t.command)),
         $("div", { class: "expect", html: "<b>应该看到：</b>" + inlineMd(t.expect) })))) : null,
-      s.pitfalls?.length ? $("h3", {}, "常见坑") : null,
-      ...(s.pitfalls || []).map(p => $("div", { class: "pit" },
-        $("div", { class: "row" }, $("span", { class: "k" }, "你看到"), $("pre", {}, p.symptom)),
-        $("div", { class: "row" }, $("span", { class: "k" }, "原因"), $("span", { html: inlineMd(p.cause) })),
-        $("div", { class: "row" }, $("span", { class: "k" }, "怎么办"), $("span", { html: inlineMd(p.fix) })))),
-      (s.watch || s.sources?.length) ? $("details", { class: "deeper" }, $("summary", {}, "想看原讲解 / 出处"),
-        s.watch ? $("p", {}, s.watch) : null,
-        $("ul", {}, (s.sources || []).map(x => $("li", {}, $("a", { href: x.url, target: "_blank", rel: "noopener" }, x.title))))) : null,
+      s.watch ? $("p", { class: "watch hint" }, "想看原讲解：", s.watch) : null,
+      s.checkpoint?.length ? checkpointBlock(s, i) : legacyExtras(s),
       navBar());
     lesson.scrollIntoView({ block: "start" });
   }
 
-  function navBar() {
-    const timer = $("span", { class: "hint" });
-    const tick = () => { timer.textContent = `这一节已用 ${Math.floor(elapsedMin())} 分钟 / 计划 ${sections[current]?.minutes ?? 0} 分钟`; };
-    tick();
-    clearInterval(showCourse._t); showCourse._t = setInterval(tick, 20000);
-    const done = isDone(current);
-    return $("div", { class: "sec-nav" },
-      current > 0 ? $("button", { onclick: () => go(current - 1) }, "← 上一节") : null,
-      timer, $("span", { class: "spacer" }),
-      done ? $("button", { onclick: () => mark("undone") }, "标为没学完") : null,
-      $("button", { class: "primary", onclick: () => done ? go(current + 1) : mark("done") },
-        done ? "下一节 →" : "学完这一节，下一节 →"));
+  // 旧版课程计划（没有检查点）：常见坑收起来，出事了再看（D-015）
+  function legacyExtras(s) {
+    return s.pitfalls?.length ? $("details", { class: "deeper" }, $("summary", {}, `遇到问题时看（${s.pitfalls.length} 个常见坑）`),
+      ...s.pitfalls.map(p => trapBox(p))) : null;
   }
 
-  async function mark(event) {
-    const i = current;
-    // 实际用时上限是计划的 3 倍：离开座位忘了关页面，不该把一节算成几个小时。
-    const minutes = event === "done" ? Math.min(elapsedMin(), sections[i].minutes * 3) : undefined;
-    progress = await api("/api/unit/progress", { unit: unitId, section: i, event, minutes });
+  function trapBox(p) {
+    return $("div", { class: "pit" },
+      $("div", { class: "row" }, $("span", { class: "k" }, "你看到"), $("pre", {}, p.symptom)),
+      $("div", { class: "row" }, $("span", { class: "k" }, "原因"), $("span", { html: inlineMd(p.cause) })),
+      $("div", { class: "row" }, $("span", { class: "k" }, "怎么办"), $("span", { html: inlineMd(p.fix) })));
+  }
+
+  // ---- 检查点（D-013） ----
+  function checkpointBlock(s, i) {
+    const box = $("div", { class: "checkpoints" }, $("h3", {}, `检查点（${s.checkpoint.length} 道，都做对才算学完这一节）`));
+    s.checkpoint.forEach((item, idx) => box.append(checkpointItem(item, i, idx)));
+    if (isPassed(i)) box.append(ratingRow(i));
+    return box;
+  }
+
+  function checkpointItem(item, i, idx) {
+    const st = progress.checkpoints[String(i)]?.[String(idx)] || {};
+    const el = $("div", { class: "cp" + (st.ok ? " ok" : "") });
+    const head = $("div", { class: "cp-head" }, $("span", { class: "tag" }, { choice: "选择", fill: "填空", lab: "练习场任务" }[item.type]),
+      st.ok ? $("span", { class: "cp-ok" }, `✓ 做对了${st.attempts > 1 ? `（第 ${st.attempts} 次）` : ""}`) : null);
+    let collect;
+    const body = $("div", { class: "cp-body" });
+    if (item.type === "choice") {
+      const name = `cp-${i}-${idx}`;
+      const inputs = item.options.map((o, n) => $("input", { type: item.multi ? "checkbox" : "radio", name, value: String.fromCharCode(65 + n) }));
+      body.append($("div", { class: "prompt", html: md(item.prompt) }),
+        $("div", { class: "options" }, item.options.map((o, n) => $("label", { class: "option" }, inputs[n],
+          $("span", { class: "letter" }, String.fromCharCode(65 + n)), $("span", { html: inlineMd(o) })))));
+      collect = () => { const v = inputs.filter(x => x.checked).map(x => x.value); return v.length ? v : null; };
+    } else if (item.type === "fill") {
+      const prompt = $("div", { class: "prompt", html: md(item.prompt, true) });
+      const inputs = [...prompt.querySelectorAll("[data-blank]")].map(slot => {
+        const inp = $("input", { class: "blank", spellcheck: "false", autocomplete: "off" });
+        inp.addEventListener("keydown", e => { if (e.key === "Enter") check(); });
+        slot.replaceWith(inp);
+        return inp;
+      });
+      body.append(prompt);
+      collect = () => inputs.every(x => !x.value.trim()) ? null : inputs.map(x => x.value.trim());
+    } else {
+      body.append($("div", { class: "prompt", html: md(item.prompt) }),
+        $("div", { class: "hint" }, "在右边的终端里做完，再点「检查」。改坏了可以点终端上方的「还原到本节开始」。"));
+      collect = () => ({});
+    }
+    const hintsBox = $("div", { class: "cp-hints" });
+    const result = $("div");
+    const checkBtn = $("button", { class: "primary", onclick: () => check() }, st.ok ? "再检查一次" : "检查");
+    const hintBtn = $("button", { onclick: async () => {
+      try {
+        const h = await api("/api/unit/hint", { unit: unitId, section: i, idx });
+        fill(hintsBox, h.hints.map((t, n) => $("div", { class: "cp-hint" }, $("b", {}, ["方向", "关键概念", "接近答案"][n] || `提示 ${n + 1}`), " ", $("span", { html: inlineMd(t) }))));
+        hintBtn.textContent = h.level >= h.total ? "提示已经全部给出" : `再要一级提示（${h.level}/${h.total}）`;
+        hintBtn.disabled = h.level >= h.total;
+      } catch (e) { alert(e.message); }
+    } }, st.hints ? `再要一级提示（${st.hints}/3）` : "要提示");
+    async function check() {
+      const response = collect();
+      if (response == null) { alert("还没作答"); return; }
+      checkBtn.disabled = true; checkBtn.textContent = "检查中…";
+      try {
+        const r = await api("/api/unit/check", { unit: unitId, section: i, idx, response });
+        const wasPassed = isPassed(i);
+        progress = r.progress;
+        fill(result, r.ok
+          ? $("div", { class: "result pass" }, $("div", { class: "score" }, "✅ 做对了"),
+              r.checks ? $("ul", {}, r.checks.map(c => $("li", {}, "✓ " + c.desc))) : null,
+              r.explain ? $("div", { class: "explain", html: "<b>解析：</b>" + md(r.explain) }) : null,
+              r.solution?.length ? $("div", {}, $("b", {}, "参考做法"), $("pre", {}, r.solution.join("\n"))) : null)
+          : $("div", { class: "result fail" }, $("div", { class: "score" }, `❌ 还不对（第 ${r.attempt} 次）`),
+              r.feedback?.length ? $("ul", {}, r.feedback.map(f => $("li", {}, f))) : null,
+              r.trap ? $("div", {}, $("div", { class: "hint" }, "你可能踩了这个坑："), trapBox(r.trap)) : null,
+              $("div", { class: "hint" }, "改一改再检查；卡住了就要一级提示。")));
+        el.classList.toggle("ok", r.ok);
+        renderBudget(); renderToc();
+        if (r.section_passed && !wasPassed) {
+          // 整节通过：重画这一节，出现"费不费劲"和"下一节"
+          const keep = result.cloneNode(true);
+          renderSection();
+          lesson.querySelectorAll(".cp")[idx]?.querySelector(".cp-result")?.replaceChildren(...keep.childNodes);
+          lesson.querySelector(".rating")?.scrollIntoView({ behavior: "smooth", block: "center" });
+          return;
+        }
+      } catch (e) { fill(result, $("div", { class: "error" }, e.message)); }
+      checkBtn.disabled = false; checkBtn.textContent = "检查";
+    }
+    result.className = "cp-result";
+    el.append(head, body, hintsBox, $("div", { class: "actions" }, checkBtn, hintBtn), result);
+    return el;
+  }
+
+  function ratingRow(i) {
+    const chosen = progress.ratings[String(i)];
+    const labels = ["很轻松", "有点费劲", "费劲", "很费劲", "非常费劲"];
+    return $("div", { class: "rating" }, $("span", {}, "这一节费不费劲？"),
+      ...labels.map((l, n) => $("button", { class: chosen === n + 1 ? "on" : "", title: l, onclick: async () => {
+        progress = await post("load_rating", { section: i, rating: n + 1 });
+        lesson.querySelector(".rating")?.replaceWith(ratingRow(i));
+      } }, `${n + 1} ${l}`)),
+      $("span", { class: "hint" }, "用来校准「预计负荷」准不准。"));
+  }
+
+  function navBar() {
+    const i = current, passed = isPassed(i), hasCp = sections[i].checkpoint?.length;
+    const next = () => go(i + 1);
+    let right;
+    if (passed) right = [$("button", { class: "primary", onclick: next }, "下一节 →")];
+    else if (!hasCp) right = [$("button", { class: "primary", onclick: async () => {    // 旧版计划：没有检查点，还是自己标记
+      progress = await post("done", { section: i }); renderBudget(); next();
+    } }, "学完这一节，下一节 →")];
+    else right = [$("button", { onclick: () => skip(i) }, isSkipped(i) ? "下一节（这节还没做对）→" : "先跳过这一节 →")];
+    return $("div", { class: "sec-nav" },
+      i > 0 ? $("button", { onclick: () => go(i - 1) }, "← 上一节") : null,
+      $("span", { class: "spacer" }),
+      !passed && hasCp ? $("span", { class: "hint" }, "检查点都做对才算学完；跳过的小节在目录里标成 ◐") : null,
+      ...right);
+  }
+
+  async function skip(i) {
+    if (!isSkipped(i)) {
+      progress = await post("skip", { section: i });
+      const needsLab = hasLab && sections[i].checkpoint?.some(c => c.type === "lab");
+      if (needsLab && confirm("后面的节会用到这一节在练习场里的结果。要用参考做法把练习场补齐吗？（推荐）")) {
+        const r = await api("/api/unit/lab", { unit: unitId, op: "fill", section: i });
+        term?.print(r.output, "dim");
+      }
+    }
     renderBudget();
-    event === "done" ? go(i + 1) : (renderToc(), renderSection());
+    go(i + 1);
   }
 
   function renderFinish() {
+    const left = N - progress.passed.length;
     fill(lesson, $("div", { class: "finish" },
-      $("h2", {}, progress.done.length === sections.length ? "这个单元学完了" : `还有 ${sections.length - progress.done.length} 节没学完`),
+      $("h2", {}, left === 0 ? "这个单元学完了" : `还有 ${left} 节没通过检查点`),
       $("p", {}, "学完之后，你应该能做到下面这些事。练习题就按这些出："),
       $("ol", {}, plan.outcomes.map(o => $("li", {}, o))),
       data.quiz
         ? $("a", { class: "primary-link", href: `?lesson=${encodeURIComponent(data.quiz)}` }, $("button", { class: "primary" }, "开始练习题 →"))
         : $("p", {}, "练习题还没出。回到对话，对导师说：", $("code", {}, `我学完了 ${unitId}，出题`)),
+      data.sources?.length ? $("details", { class: "deeper" }, $("summary", {}, "这个单元的出处"),
+        $("ul", {}, data.sources.map(x => $("li", {}, $("a", { href: x.url, target: "_blank", rel: "noopener" }, x.title))))) : null,
       plan.later?.length ? $("details", { class: "deeper" }, $("summary", {}, "以后再学（这次没放进来的内容）"),
         $("ul", {}, plan.later.map(x => $("li", {}, $("b", {}, x.title), "：", x.why, " ",
           x.url ? $("a", { href: x.url, target: "_blank", rel: "noopener" }, "链接") : null)))) : null,
-      $("div", { class: "sec-nav" }, $("button", { onclick: () => go(sections.length - 1) }, "← 回到最后一节"))));
+      $("div", { class: "sec-nav" }, $("button", { onclick: () => go(N - 1) }, "← 回到最后一节"))));
+  }
+
+  // ---- 新词（D-017）：下划线标出，点开看解释，👍 / 👎 ----
+  const opened = new Set();
+  const pop = $("div", { class: "popover", hidden: true });
+  document.body.append(pop);
+  document.addEventListener("pointerdown", e => { if (!pop.contains(e.target) && !e.target.closest?.(".nt, .term-chip")) closePopover(); });
+  function closePopover() { pop.hidden = true; }
+
+  function termChip(t) {
+    const vote = progress.terms[t.id];
+    return $("button", { class: "term-chip" + (vote ? " " + vote : ""), onclick: e => openTerm(t, e.currentTarget) }, t.term);
+  }
+
+  function markTerms(root, terms) {
+    // 每个新词只标第一次出现的地方；英文词要整词匹配，免得把 cat 标进 concatenate 里。
+    [...terms].sort((a, b) => b.term.length - a.term.length).forEach(t => {
+      const ascii = /^[\x20-\x7e]+$/.test(t.term);
+      const re = ascii ? new RegExp(`(^|[^A-Za-z0-9_-])(${t.term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})(?![A-Za-z0-9_-])`) : null;
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+        acceptNode: n => n.parentElement.closest("pre, .nt") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT });
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        let at, len = t.term.length;
+        if (ascii) { const m = re.exec(n.data); if (!m) continue; at = m.index + m[1].length; }
+        else { at = n.data.indexOf(t.term); if (at < 0) continue; }
+        const mid = n.splitText(at);
+        mid.splitText(len);
+        const span = $("span", { class: "nt", tabindex: "0", role: "button", title: "新词：点开看解释" }, mid.data);
+        span.addEventListener("click", () => openTerm(t, span));
+        mid.replaceWith(span);
+        break;
+      }
+    });
+  }
+
+  function openTerm(t, anchor) {
+    if (!opened.has(t.id)) { opened.add(t.id); post("term", { section: current, node: t.id, action: "open" }).catch(() => {}); }
+    const vote = progress.terms[t.id];
+    const voteBtn = (action, label) => $("button", { class: vote === action ? "on" : "", onclick: async () => {
+      progress = await post("term", { section: current, node: t.id, action });
+      openTerm(t, anchor);
+      lesson.querySelectorAll(".term-chip").forEach(c => { if (c.textContent === t.term) c.className = "term-chip " + action; });
+    } }, label);
+    fill(pop, $("div", { class: "pop-t" }, t.term), $("div", { html: inlineMd(t.explain) }),
+      $("div", { class: "pop-actions" }, voteBtn("unknown", "👍 有用，我确实不懂"), voteBtn("known", "👎 我早就知道")),
+      $("div", { class: "hint" }, "你的反馈用来检验「新词预测」准不准；点了「早就知道」的词以后不再算新词。"));
+    const r = anchor.getBoundingClientRect();
+    pop.hidden = false;
+    pop.style.left = Math.max(8, Math.min(r.left + scrollX, scrollX + innerWidth - pop.offsetWidth - 8)) + "px";
+    pop.style.top = (r.bottom + scrollY + 6) + "px";
+  }
+
+  // 没被标出来、但看不懂的词：选中它，点「这个我不懂」（预测器漏掉的，D-017）
+  const missBtn = $("button", { class: "miss-btn", hidden: true }, "这个我不懂");
+  document.body.append(missBtn);
+  let missText = "";
+  lesson.addEventListener("mouseup", () => setTimeout(() => {
+    const sel = getSelection();
+    const text = sel.toString().trim();
+    if (!text || text.length > 40 || current >= N || !lesson.contains(sel.anchorNode)) { missBtn.hidden = true; return; }
+    missText = text;
+    const r = sel.getRangeAt(0).getBoundingClientRect();
+    missBtn.hidden = false;
+    missBtn.style.left = (r.left + scrollX) + "px";
+    missBtn.style.top = (r.top + scrollY - 34) + "px";
+  }, 0));
+  document.addEventListener("pointerdown", e => { if (e.target !== missBtn) missBtn.hidden = true; });
+  missBtn.addEventListener("click", async () => {
+    missBtn.hidden = true;
+    try { await post("term_miss", { section: current, text: missText }); toast(`记下了「${missText}」，导师会补上解释`); }
+    catch (e) { toast(e.message); }
+  });
+
+  // ---- 练习场终端（D-014）：真实的 bash，开在练习场里 ----
+  function labTerminal() {
+    const out = $("div", { class: "out" });
+    const ps = $("span", { class: "ps" }, "$");
+    const input = $("input", { spellcheck: "false", autocomplete: "off", "aria-label": "命令", placeholder: "在这里敲命令，回车运行" });
+    const where = $("code", { class: "lab-path" });
+    let labPosix = "", tabTold = false;
+    const hist = [];
+    let hIdx = 0;
+    const print = (text, cls) => { if (text) { out.append($("div", { class: cls || "" }, text)); out.scrollTop = out.scrollHeight; } };
+    const showCwd = cwd => {
+      const inside = cwd === labPosix || cwd.startsWith(labPosix + "/");
+      ps.textContent = (inside ? "练习场" + cwd.slice(labPosix.length) : cwd) + " $";
+      ps.classList.toggle("outside", !inside);
+    };
+    const act = (op, extra = {}) => api("/api/unit/lab", { unit: unitId, op, section: current < N ? current : undefined, ...extra });
+    input.addEventListener("keydown", async e => {
+      if (e.key === "Tab") { e.preventDefault(); if (!tabTold) { print("（这里没有 Tab 补全。想练 Tab 补全，就在 Git Bash 里 cd 到上面那个路径试。）", "dim"); tabTold = true; } return; }
+      if (e.key === "l" && e.ctrlKey) { e.preventDefault(); out.innerHTML = ""; return; }
+      if (e.key === "ArrowUp" && hIdx > 0) { input.value = hist[--hIdx]; e.preventDefault(); }
+      if (e.key === "ArrowDown") { hIdx = Math.min(hist.length, hIdx + 1); input.value = hist[hIdx] ?? ""; e.preventDefault(); }
+      if (e.key !== "Enter") return;
+      const cmd = input.value;
+      input.value = "";
+      if (cmd.trim()) { hist.push(cmd); hIdx = hist.length; }
+      if (cmd.trim() === "clear") { out.innerHTML = ""; return; }
+      print(ps.textContent + " " + cmd, "cmd");
+      input.disabled = true;
+      try {
+        const r = await act("run", { cmd });
+        print(r.output);
+        if (r.rc) print(`（退出码 ${r.rc}）`, "dim");
+        if (r.note) print(r.note, "dim");
+        if (r.outside) print(`你已经离开练习场（现在在 ${r.cwd}）。这里的文件是真实的，改了没法用「还原」撤销。回练习场：cd "$LAB"`, "warn");
+        if (r.cwd) showCwd(r.cwd);
+      } catch (err) { print(err.message, "dim"); }
+      input.disabled = false; input.focus();
+    });
+    const restore = $("button", { onclick: async () => {
+      if (!confirm(`把练习场还原到第 ${current + 1} 节开始时的样子？这一节里的改动都会丢掉。`)) return;
+      try { const r = await act("restore"); print(r.output, "dim"); showCwd(r.cwd); } catch (e) { print(e.message, "dim"); }
+    } }, "还原到本节开始");
+    const reset = $("button", { onclick: async () => {
+      if (!confirm("把练习场重置成单元开始时的样子？所有节的改动都会丢掉。")) return;
+      const r = await act("reset"); print(r.output, "dim"); showCwd(r.cwd);
+    } }, "重置练习场");
+    const el = $("aside", { class: "labterm" },
+      $("div", { class: "lab-head" }, $("b", {}, "练习场终端"), $("span", { class: "hint" }, "真实的 bash"), $("span", { class: "spacer" }), restore, reset),
+      $("div", { class: "lab-where hint" }, "位置：", where, " · 也可以在 Git Bash 里 cd 过去"),
+      $("div", { class: "term", onclick: () => { if (!getSelection().toString()) input.focus(); } }, out, $("div", { class: "line" }, ps, input)));
+    act("open").then(r => {
+      labPosix = r.lab_posix;
+      where.textContent = r.lab_posix;
+      showCwd(r.cwd || r.lab_posix);
+      if (String(r.bash).startsWith("error")) print(r.bash.slice(7), "warn");
+      else print("练习场准备好了。命令都在这个目录里执行，变量和 cd 会保留到下一条命令。", "dim");
+    }).catch(e => print(e.message, "warn"));
+    return { el, print, put: cmd => { input.value = cmd; input.focus(); } };
   }
 
   function go(i) {
-    current = Math.max(0, Math.min(i, sections.length));
-    history.replaceState(null, "", current < sections.length ? `#s${current + 1}` : "#end");
-    resetTimer();
-    if (current < sections.length) api("/api/unit/progress", { unit: unitId, section: current, event: "open" }).catch(() => {});
+    current = Math.max(0, Math.min(i, N));
+    history.replaceState(null, "", current < N ? `#s${current + 1}` : "#end");
+    if (current < N) post("open", { section: current }).catch(() => {});
     renderToc();
     renderSection();
   }
@@ -972,14 +1343,85 @@ async function showCourse(unitId) {
   go(current);
 }
 
+function toast(text) {
+  const t = $("div", { class: "toast" }, text);
+  document.body.append(t);
+  setTimeout(() => t.remove(), 2600);
+}
+
+// ---------- 知识树（D-020）：一份数据，状态上色 ----------
+const STATE_NAMES = { new: "没学", learning: "在学", weak: "薄弱", mastered: "掌握", stale: "需复习" };
+async function showKnowledge(topic) {
+  const data = await api(`/api/kg?topic=${encodeURIComponent(topic)}`);
+  document.title = `知识树 · ${topic}`;
+  document.getElementById("app").classList.add("wide");
+  const counts = {};
+  data.nodes.forEach(n => counts[n.state] = (counts[n.state] || 0) + 1);
+  fill(document.getElementById("top"),
+    $("h1", {}, "知识树"),
+    $("div", { class: "source" }, "节点的状态由答题、检查点、新词反馈和导师观察算出，不手写 · ",
+      ...data.topics.flatMap(t => [t === topic ? $("b", {}, t) : $("a", { href: `?kg=${t}` }, t), " "]),
+      "· ", $("a", { href: "/" }, "全部课程")),
+    $("div", { class: "kg-legend" }, Object.entries(STATE_NAMES).map(([k, v]) =>
+      $("span", { class: `kg-node s-${k}` }, `${v} ${counts[k] || 0}`))));
+  const detail = $("aside", { class: "kg-detail" }, $("p", { class: "hint" }, "点一个节点，看它为什么是这个状态、先修是什么。"));
+  const canvas = $("div", { class: "kg-canvas" });
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.classList.add("kg-edges");
+  const depthMax = Math.max(0, ...data.nodes.map(n => n.depth));
+  const cols = [...Array(depthMax + 1)].map((_, d) => $("div", { class: "kg-col" },
+    $("div", { class: "kg-col-h" }, d === 0 ? "基础" : `第 ${d} 层`)));
+  const els = {};
+  data.nodes.forEach(n => {
+    const el = $("button", { class: `kg-node s-${n.state} k-${n.kind}`, title: n.desc, onclick: () => showNode(n.id) }, n.title);
+    els[n.id] = el;
+    cols[n.depth].append(el);
+  });
+  canvas.append(svg, ...cols);
+  document.getElementById("app").replaceChildren(
+    data.nodes.length ? $("div", { class: "kg" }, canvas, detail)
+      : $("p", { class: "hint" }, "这个学科的知识图还是空的。助教 agent 生成课程时会提议节点，导师审阅后加进来。"));
+  function drawEdges() {
+    const box = canvas.getBoundingClientRect();
+    svg.setAttribute("width", canvas.scrollWidth); svg.setAttribute("height", canvas.scrollHeight);
+    svg.replaceChildren(...data.edges.filter(([a, b]) => els[a] && els[b]).map(([a, b]) => {
+      const ra = els[a].getBoundingClientRect(), rb = els[b].getBoundingClientRect();
+      const x1 = ra.right - box.left, y1 = ra.top + ra.height / 2 - box.top, x2 = rb.left - box.left, y2 = rb.top + rb.height / 2 - box.top;
+      const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      p.setAttribute("d", `M${x1},${y1} C${x1 + 30},${y1} ${x2 - 30},${y2} ${x2},${y2}`);
+      return p;
+    }));
+  }
+  requestAnimationFrame(drawEdges);
+  addEventListener("resize", drawEdges);
+  async function showNode(id) {
+    const n = await api(`/api/kg/node?id=${encodeURIComponent(id)}`);
+    const link = x => $("a", { href: "#", onclick: e => { e.preventDefault(); showNode(x.id); } }, x.title || x.id);
+    fill(detail,
+      $("div", { class: `kg-node s-${n.state}` }, STATE_NAMES[n.state] || n.state), $("h3", {}, n.title), $("code", {}, n.id),
+      $("p", {}, n.desc || "（没有描述）"),
+      n.reasons.length ? $("div", {}, $("b", {}, "为什么"), $("ul", {}, n.reasons.map(r => $("li", {}, r)))) : null,
+      n.requires.length ? $("div", {}, $("b", {}, "先修："), ...n.requires.flatMap(r => [link(r), `（${STATE_NAMES[r.state] || r.state}） `])) : null,
+      n.required_by.length ? $("div", {}, $("b", {}, "后续："), ...n.required_by.flatMap(r => [link(r), " "])) : null,
+      n.evidence.length ? $("details", { open: true }, $("summary", {}, `证据（${n.evidence.length} 条）`),
+        $("ul", { class: "kg-ev" }, n.evidence.map(e => $("li", {}, $("span", { class: "hint" }, e.ts.replace("T", " "), " "),
+          e.sign > 0 ? "＋" : e.sign < 0 ? "－" : "·", " ", e.note)))) : null);
+    Object.values(els).forEach(el => el.classList.remove("sel"));
+    els[id]?.classList.add("sel");
+  }
+}
+
 async function showIndex() {
   const [units, list] = await Promise.all([api("/api/units"), api("/api/lessons")]);
   document.getElementById("app").replaceChildren(
     $("h2", { class: "index-h" }, "课程"),
     $("div", { class: "unit-list" }, units.length
       ? units.map(u => $("a", { href: `?unit=${encodeURIComponent(u.unit)}` }, $("b", {}, u.title),
-          $("div", { class: "hint" }, `${u.unit} · ${u.sections} 节 · ${u.minutes} 分钟 · 已学 ${u.done}/${u.sections}`)))
+          $("div", { class: "hint" }, `${u.unit} · ${u.sections} 节 · ${u.minutes} 分钟 · 通过 ${u.done}/${u.sections}`)))
       : $("p", { class: "hint" }, "还没有课程页。对导师说「准备学 <单元>」生成一份。")),
+    $("h2", { class: "index-h" }, "学习者模型"),
+    $("div", { class: "unit-list" }, $("a", { href: "?kg=tools" }, $("b", {}, "知识树"),
+      $("div", { class: "hint" }, "每个知识点现在是什么状态、为什么、先修是什么"))),
     $("h2", { class: "index-h" }, "练习题"),
     $("div", { class: "lesson-list" }, list.length
       ? list.map(l => $("a", { href: `?lesson=${encodeURIComponent(l.ref)}` }, $("b", {}, l.title), $("div", { class: "hint" }, `${l.ref} · ${l.count} 题`)))
@@ -987,7 +1429,8 @@ async function showIndex() {
 }
 
 const UNIT = params.get("unit");
-(UNIT ? showCourse(UNIT) : REF ? showLesson(REF) : showIndex()).catch(e => {
+const KG = params.get("kg");
+(UNIT ? showCourse(UNIT) : KG ? showKnowledge(KG) : REF ? showLesson(REF) : showIndex()).catch(e => {
   document.getElementById("app").replaceChildren($("p", { class: "error" }, "加载失败：" + e.message));
 });
 </script>

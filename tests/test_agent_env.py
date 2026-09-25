@@ -122,24 +122,37 @@ def test_submit_rejection_is_tool_error(ctx):
 SRC = "https://missing.csail.mit.edu/2026/"
 
 
+def checkpoint(**kw):
+    c = {"type": "choice", "prompt": "pwd 打印的是什么？", "options": ["上一个目录", "当前目录"], "answer": "B",
+         "concept": "tools.shell.cwd", "hints": ["方向", "关键概念", "接近答案"], "explain": "pwd = print working directory"}
+    c.update(kw)
+    return c
+
+
 def section(title="导航", minutes=20, **kw):
     s = {"title": title, "minutes": minutes, "goal": "能用 cd 和 pwd 在目录间移动",
          "explain": "shell 里有一个'当前目录'的概念。" * 10,
+         "terms": [{"id": "tools.cmd.pwd", "term": "pwd", "explain": "打印当前目录"}],
          "try": [{"command": "pwd", "expect": "打印出当前目录，如 /c/Users/you"}],
-         "pitfalls": [{"symptom": "bash: cd: foo: No such file or directory", "cause": "路径拼错或不在当前目录下", "fix": "先 ls 看看"}],
-         "sources": [{"title": "讲义", "url": SRC}]}
+         "checkpoint": [checkpoint()]}
     s.update(kw)
     return s
 
 
-def plan_of(*sections, outcomes=3):
-    return {"title": "Shell", "summary": "学 shell 基础。", "parts": [{"title": "第一部分", "sections": list(sections)}],
-            "outcomes": [f"能做 {i}" for i in range(outcomes)]}
+NODES = [{"id": "tools.cmd.pwd", "title": "pwd", "desc": "打印当前目录", "kind": "term"},
+         {"id": "tools.shell.cwd", "title": "当前目录", "desc": "shell 此刻所在的目录", "kind": "concept"}]
+
+
+def plan_of(*sections, outcomes=3, **kw):
+    p = {"title": "Shell", "summary": "学 shell 基础。", "parts": [{"title": "第一部分", "sections": list(sections)}],
+         "nodes": NODES, "sources": [{"title": "讲义", "url": SRC}], "outcomes": [f"能做 {i}" for i in range(outcomes)]}
+    p.update(kw)
+    return p
 
 
 @pytest.fixture
 def plan_ctx(tmp_path):
-    c = tools.RunContext(tmp_path, HOSTS, [], unit_budget_minutes=180, session_minutes=45)
+    c = tools.RunContext(tmp_path, HOSTS, [], unit_budget_minutes=180, session_minutes=45, unit="tools-01-shell")
     tools.fetch_url(c, SRC, _get=fake_get({SRC: page("x")}))
     return c
 
@@ -152,6 +165,7 @@ def test_valid_plan_is_accepted_and_rendered(plan_ctx):
     assert saved["title"] == "Shell"
     md = (plan_ctx.run_dir / "output.md").read_text(encoding="utf-8")
     assert "### 2. 管道（30 分钟）" in md and "总时长 50 分钟" in md
+    assert "答案：B" in md and "提示 3：接近答案" in md       # 审阅版带答案，网页版由 course.public_plan 去掉
 
 
 def test_over_budget_plan_is_rejected(plan_ctx):
@@ -170,11 +184,64 @@ def test_section_longer_than_one_session_is_rejected(plan_ctx):
 @pytest.mark.parametrize("bad,expected", [
     ({"explain": "去看讲义。"}, "explain 太短"),                                   # 指路不是讲课（F-013）
     ({"try": []}, "至少要有一条动手"),
-    ({"pitfalls": [{"symptom": "报错", "cause": "", "fix": "x"}]}, "symptom / cause / fix"),
-    ({"sources": [{"title": "没打开过", "url": "https://missing.csail.mit.edu/2020/"}]}, "没有打开过"),
+    ({"pitfalls": [{"symptom": "报错", "cause": "c", "fix": "x"}]}, "不要再写 pitfalls"),   # D-015
+    ({"checkpoint": []}, "检查点要 1–3 道题"),                                     # D-013
+    ({"checkpoint": [checkpoint(hints=["只有一级"])]}, "正好 3 级"),
+    ({"checkpoint": [checkpoint(answer="C")]}, "answer 要是选项字母"),
+    ({"checkpoint": [checkpoint(type="fill", prompt="____ 和 ____", accept=[["a"]])]}, "____ 的个数"),
+    ({"checkpoint": [checkpoint(concept="tools.nope")]}, "不在知识图里"),
+    ({"checkpoint": [checkpoint(type="lab", checks=[{"run": "ls", "desc": "有文件"}])]}, "要有 solution"),
+    ({"try": [{"command": "ls | grep x", "expect": "e"}]}, "还不认识的命令 grep, ls"),   # D-017
+    ({"explain": "用 `sed -i s/a/b/ f` 改文件。" * 20}, "还不认识的命令 sed"),
 ])
 def test_plan_section_requirements(plan_ctx, bad, expected):
-    assert any(expected in e for e in tools.check_plan(plan_ctx, plan_of(section(**bad))))
+    errors = tools.check_plan(plan_ctx, plan_of(section(**bad)))
+    assert any(expected in e for e in errors), errors
+
+
+def test_unopened_links_are_rejected(plan_ctx):
+    plan = plan_of(section(), sources=[{"title": "没打开过", "url": "https://missing.csail.mit.edu/2020/"}])
+    assert any("没有打开过" in e for e in tools.check_plan(plan_ctx, plan))
+
+
+def test_new_term_budget_uses_what_the_learner_already_knows(plan_ctx):
+    # INVARIANT: 每节新词数是硬约束（F-019、D-017）；已经掌握的词不算新词。
+    terms = [{"id": f"tools.cmd.c{i}", "term": f"c{i}", "explain": "x"} for i in range(6)]
+    nodes = NODES + [{"id": t["id"], "title": t["term"], "desc": "x", "kind": "term"} for t in terms]
+    plan = plan_of(section(terms=terms), nodes=nodes)
+    assert any("超过每节上限 5 个" in e for e in tools.check_plan(plan_ctx, plan))
+    plan_ctx.known_terms = {"c0", "tools.cmd.c1"}
+    assert not any("超过每节上限" in e for e in tools.check_plan(plan_ctx, plan))
+
+
+def test_terms_learned_in_earlier_sections_are_known_later(plan_ctx):
+    later = section("第二节", terms=[])          # 第二节又用 pwd，但它在第一节已经是新词了
+    assert tools.check_plan(plan_ctx, plan_of(section(), later)) == []
+
+
+def test_knowledge_nodes_are_checked(plan_ctx):
+    bad = [{"id": "Shell.X", "title": "x", "desc": "d", "kind": "term"},
+           {"id": "net.http", "title": "x", "desc": "d", "kind": "concept"},
+           {"id": "tools.a", "title": "a", "desc": "d", "kind": "concept", "requires": ["tools.missing"]}]
+    errors = "\n".join(tools.check_plan(plan_ctx, plan_of(section(), nodes=NODES + bad)))
+    assert "id 格式不对：Shell.X" in errors and "要以学科 tools. 开头" in errors and "tools.missing" in errors
+    plan_ctx.existing_nodes = {"tools.cmd.pwd": "pwd"}
+    assert any("已经在知识图里了" in e for e in tools.check_plan(plan_ctx, plan_of(section())))
+
+
+def test_lab_is_required_and_paths_are_checked(plan_ctx):
+    lab_cp = checkpoint(type="lab", checks=[{"file": "report.txt", "contains": "3", "desc": "报告"}], solution=["echo 3 > report.txt"])
+    assert any("没有定义练习场" in e for e in tools.check_plan(plan_ctx, plan_of(section(checkpoint=[lab_cp]))))
+    lab = {"story": "接手一个服务器", "files": [{"path": "../evil", "content": "x"}, {"path": "logs/", "content": ""}]}
+    errors = tools.check_plan(plan_ctx, plan_of(section(checkpoint=[lab_cp]), lab=lab))
+    assert [e for e in errors if "相对路径" in e] == ["lab 文件路径要是练习场里的相对路径：'../evil'"]
+
+
+def test_command_words():
+    assert tools.command_words("cp a b && sed -i 's/x/y/' f | grep -c x; for f in *.txt; do echo $f; done") == \
+        {"cp", "sed", "grep", "for", "echo"}
+    assert tools.command_words("X=1 python3 -V") == {"python3"}
+    assert tools.inline_commands("用 `g` 标志，或者 `ls -l` 看看 `app.log`") == {"ls"}
 
 
 def test_outcomes_count(plan_ctx):

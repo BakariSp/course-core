@@ -6,7 +6,12 @@ GET  /api/lesson?ref=...    一套题（每道题的 view + 最近一次作答�
 GET  /api/runs?ref=&qid=    一道代码题的运行记录（每次的代码快照和测试结果）
 GET  /api/units             已发布的课程页（D-010）
 GET  /api/unit?id=...       一个单元的课程计划 + 学习进度
-POST /api/unit/progress     记录打开 / 学完某一节
+GET  /api/kg?topic=...       知识树：节点（带状态）+ 先修边（D-020）
+GET  /api/kg/node?id=...     一个节点的详情和证据
+POST /api/unit/progress     课程页事件：打开小节、心跳、跳过、新词反馈、费劲程度……
+POST /api/unit/check        检查点判分（D-013）
+POST /api/unit/hint         检查点的下一级提示
+POST /api/unit/lab          练习场：执行命令、还原到本节开始、重置、用参考做法补齐（D-014）
 POST /api/act               作答过程中的交互（跑测试、执行终端命令），不记录
 POST /api/submit            提交一道题：检验器判分 → 写入 attempts.jsonl → 更新 progress.md
 """
@@ -18,7 +23,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from studykit import checkers, course, lessons, store
+from studykit import checkers, course, knowledge, lab, lessons, store
 
 WEB = Path(__file__).resolve().parent.parent / "web"
 MAX_BODY = 2 * 1024 * 1024    # 代码题提交的代码也不会超过这个大小
@@ -126,6 +131,10 @@ def make_handler(token: str, port: int):
                     return self._json(course.list_units())
                 if url.path == "/api/unit":
                     return self._json(course.payload(parse_qs(url.query).get("id", [""])[0]))
+                if url.path == "/api/kg":
+                    return self._json(knowledge.tree(parse_qs(url.query).get("topic", [None])[0]))
+                if url.path == "/api/kg/node":
+                    return self._json(knowledge.show(parse_qs(url.query).get("id", [""])[0]))
                 if url.path == "/api/runs":
                     qs = parse_qs(url.query)
                     return self._json(runs_payload(qs.get("ref", [""])[0], qs.get("qid", [""])[0]))
@@ -153,8 +162,15 @@ def make_handler(token: str, port: int):
                 if self.path == "/api/act":
                     return self._json(act(body["lesson"], body["qid"], body.get("action") or {}))
                 if self.path == "/api/unit/progress":
-                    course.record(body["unit"], body["section"], body["event"], body.get("minutes"))
+                    extra = {k: body.get(k) for k in ("kind", "node", "action", "text", "rating")}
+                    course.record(body["unit"], body.get("section"), body["event"], body.get("minutes"), **extra)
                     return self._json(course.progress(body["unit"]))
+                if self.path == "/api/unit/check":
+                    return self._json(course.check(body["unit"], body["section"], body["idx"], body.get("response")))
+                if self.path == "/api/unit/hint":
+                    return self._json(course.hint(body["unit"], body["section"], body["idx"]))
+                if self.path == "/api/unit/lab":
+                    return self._json(course.lab_action(body["unit"], body["op"], body.get("section"), body.get("cmd", "")))
                 if self.path == "/api/submit":
                     return self._json(submit(body["lesson"], body["qid"], body.get("response")))
             except (lessons.LessonError, ValueError, KeyError) as e:
@@ -173,4 +189,5 @@ def serve(port: int = 8770) -> None:
     except KeyboardInterrupt:
         pass
     finally:
+        lab.SHELLS.stop_all()
         server.server_close()

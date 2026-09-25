@@ -35,7 +35,9 @@
 
 1. 跑 `python study.py agent run tutor-prep --unit <单元 id>`，读 `runs/agents/tutor-prep/<运行>/` 里的产出、评测结果和 `fetches.jsonl`。
 2. 自己审阅，写 `review.md`。评分模型的判断要抽查（到 `events.jsonl` 里核对它质疑的内容）。
-3. 通过就 `python study.py agent publish tutor-prep --run <运行>`，把 `preps/<单元>.md` 给学习者。
+3. 通过就先读 `output.md` 里的动手命令和参考做法，确认没问题后跑 `python study.py lab verify <运行>`（会在本机执行这些命令），
+   再 `python study.py agent publish tutor-prep --run <运行>`，把课程页 `/?unit=<单元>` 给学习者。发布会把 agent 提议的知识节点并入 `knowledge/`。
+   学习者用过之后跑 `python study.py course-eval <单元> --write`，看预测和实际差在哪，决定下一次改什么。
 4. 不通过就先判断问题在哪一层（prompt / 环境工具 / 评测），一次只改一处，跑全部用例对比。
    你的工作是改 `agents/` 里的 prompt 和评测，以及 `studykit/agent_env/` 里的环境；不是替 agent 写内容。
 
@@ -58,6 +60,8 @@
 ## 出题
 
 1. 先跑 `python study.py weak`，看学过哪些单元、每个概念的掌握度、错过哪些题、还有哪些没批改。
+   学习者模型按需分级看，不要一次读全部：`kg summary` → `kg related <单元>` → `kg show <节点>`（D-020）。
+   学习者说"哪里没懂"时，用 `kg observe <节点> weak "原话"` 记到知识点上，不要写进 learner.md。
 2. **选检验器**：先想清楚"这道题要验证学习者能做到什么"，再选能验证这件事的检验器。
 
    | 想验证的能力 | 检验器 |

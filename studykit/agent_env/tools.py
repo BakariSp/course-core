@@ -9,7 +9,7 @@ import json
 import re
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
@@ -105,6 +105,21 @@ class RunContext:
     required_sections: list[str]
     unit_budget_minutes: int = 180
     session_minutes: int = 45
+    unit: str = ""
+    max_new_terms: int = 5
+    known_terms: set[str] = field(default_factory=set)        # 学习者已掌握的术语（小写标题 / 节点 id，D-017）
+    existing_nodes: dict[str, str] = field(default_factory=dict)   # 知识图里已有的节点 id → 标题（D-020）
+
+    @classmethod
+    def from_spec(cls, run_dir: Path, spec: dict) -> "RunContext":
+        return cls(run_dir, set(spec["hosts"]), spec.get("required_sections") or [],
+                   spec.get("unit_budget_minutes", 180), spec.get("session_minutes", 45),
+                   spec.get("unit", ""), spec.get("max_new_terms", 5),
+                   {t.lower() for t in spec.get("known_terms") or []}, dict(spec.get("existing_nodes") or {}))
+
+    @property
+    def topic(self) -> str:
+        return self.unit.split("-")[0] if self.unit else ""
 
     def log(self, name: str, rec: dict) -> None:
         with (self.run_dir / name).open("a", encoding="utf-8") as f:
@@ -239,40 +254,89 @@ def submit(ctx: RunContext, markdown: str) -> str:
     return "已收到，格式检查通过。任务完成，不需要再做别的。"
 
 
-# ---------- 工具：submit_plan（课程计划，D-010） ----------
+# ---------- 工具：submit_plan（课程计划 v2：D-010、D-013 ~ D-017、D-020） ----------
+
+PLAN_SCHEMA_VERSION = 2
+NODE_ID = re.compile(r"^[a-z][a-z0-9]*(\.[a-z0-9][a-z0-9_-]*)+$")
 
 _SOURCE = {"type": "object", "properties": {
     "title": {"type": "string"}, "url": {"type": "string", "description": "必须是你用 fetch_url 打开过的页面"}},
     "required": ["title", "url"]}
 _TRY = {"type": "object", "properties": {
-    "command": {"type": "string", "description": "学习者要在终端里敲的一条命令（或一小段）"},
+    "command": {"type": "string", "description": "学习者要在右边的终端里敲的一条命令（或一小段），要能在练习场里直接跑通"},
     "expect": {"type": "string", "description": "敲完应该看到什么；看到别的说明什么"}},
     "required": ["command", "expect"]}
-_PITFALL = {"type": "object", "properties": {
-    "symptom": {"type": "string", "description": "学习者会看到的现象，最好是原样的报错或输出"},
+_TRAP = {"type": "object", "properties": {
+    "when": {"type": "string", "description": "什么样的错误答案说明踩了这个坑：选择题写选项字母；填空题写匹配错误答案的正则"},
+    "symptom": {"type": "string", "description": "学习者会看到的现象"},
     "cause": {"type": "string", "description": "为什么会这样，一两句话"},
-    "fix": {"type": "string", "description": "具体怎么做，给命令"}},
-    "required": ["symptom", "cause", "fix"]}
+    "fix": {"type": "string", "description": "具体怎么做"}},
+    "required": ["when", "symptom", "cause", "fix"]}
+_CHECK = {"type": "object", "properties": {
+    "run": {"type": "string", "description": "在练习场根目录执行的 bash 命令，检查它的输出"},
+    "file": {"type": "string", "description": "或者：检查练习场里这个文件的内容（相对路径）"},
+    "equals": {"type": "string"}, "contains": {"type": "string"}, "not_contains": {"type": "string"},
+    "matches": {"type": "string", "description": "正则"}, "absent": {"type": "boolean", "description": "file 不应该存在"},
+    "desc": {"type": "string", "description": "给学习者看的检查项，如「report.txt 里有 ERROR 的次数」"},
+    "trap": {"type": "object", "description": "这一项没通过时最可能的原因（symptom / cause / fix）", "properties": {
+        "symptom": {"type": "string"}, "cause": {"type": "string"}, "fix": {"type": "string"}}}},
+    "required": ["desc"]}
+_CHECKPOINT = {"type": "object", "properties": {
+    "type": {"type": "string", "enum": ["choice", "fill", "lab"],
+             "description": "choice 选择；fill 填空（题干里每个 ____ 是一个空）；lab 在练习场里完成一个任务，环境检查练习场的状态"},
+    "prompt": {"type": "string"},
+    "concept": {"type": "string", "description": "这道题检验的知识节点 id（知识图里已有的，或你在 nodes 里提议的）"},
+    "options": {"type": "array", "items": {"type": "string"}, "description": "choice：选项文字，不带字母"},
+    "multi": {"type": "boolean"},
+    "answer": {"description": "choice：正确选项字母，如 \"B\"；多选用列表"},
+    "accept": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}, "description": "fill：每个空可接受的答案"},
+    "checks": {"type": "array", "items": _CHECK, "description": "lab：做完后练习场应该是什么状态"},
+    "solution": {"type": "array", "items": {"type": "string"}, "description": "lab：参考做法（按顺序的命令）。学习者跳过这一节时，环境用它把练习场补齐"},
+    "hints": {"type": "array", "items": {"type": "string"}, "description": "正好 3 级：方向 → 关键概念 → 接近答案（不直接给答案）"},
+    "traps": {"type": "array", "items": _TRAP, "description": "choice / fill：常见坑，答错时才显示"},
+    "explain": {"type": "string", "description": "做对之后显示的解析"}},
+    "required": ["type", "prompt", "hints", "explain"]}
+_TERM = {"type": "object", "properties": {
+    "id": {"type": "string", "description": "知识节点 id，如 tools.cmd.grep、tools.shell.glob；知识图里已有的就用已有的 id"},
+    "term": {"type": "string", "description": "页面上出现的原词，如 grep、通配符"},
+    "explain": {"type": "string", "description": "一句话解释，学习者点这个词时看到"}},
+    "required": ["id", "term", "explain"]}
+_NODE = {"type": "object", "properties": {
+    "id": {"type": "string"}, "title": {"type": "string"}, "desc": {"type": "string", "description": "一句话描述"},
+    "kind": {"type": "string", "enum": ["concept", "term", "skill"]},
+    "requires": {"type": "array", "items": {"type": "string"}, "description": "先修节点 id：学这个之前必须先会的"},
+    "units": {"type": "array", "items": {"type": "string"}, "description": "哪些单元教它（通常就是这个单元）"}},
+    "required": ["id", "title", "desc", "kind"]}
 _SECTION = {"type": "object", "properties": {
     "title": {"type": "string"},
-    "minutes": {"type": "integer", "description": "学完这一节要多少分钟（含动手）"},
+    "minutes": {"type": "integer", "description": "学完这一节要多少分钟（含动手和检查点）"},
     "goal": {"type": "string", "description": "学完这一节能做到什么，写成可检验的行为"},
-    "explain": {"type": "string", "description": "用你自己的话把这一节讲清楚（Markdown），学习者只读这里就能学会；不要只说'去看讲义'"},
+    "mission": {"type": "string", "description": "这一节在练习场故事里的任务（一两句话），它的结果是下一节的材料"},
+    "explain": {"type": "string", "description": "用你自己的话把这一节讲清楚（Markdown），学习者只读这里就能学会"},
+    "terms": {"type": "array", "items": _TERM, "description": "这一节第一次出现、对这个学习者来说是新的术语和命令"},
     "try": {"type": "array", "items": _TRY, "description": "动手：按顺序敲的命令和预期结果"},
-    "pitfalls": {"type": "array", "items": _PITFALL},
-    "watch": {"type": "string", "description": "可选：想看原讲解时，对应视频/讲义的哪一部分"},
-    "sources": {"type": "array", "items": _SOURCE, "description": "这一节内容的出处"}},
-    "required": ["title", "minutes", "goal", "explain", "try", "sources"]}
+    "checkpoint": {"type": "array", "items": _CHECKPOINT, "description": "1–3 道检查点题，做对才算学完这一节"},
+    "watch": {"type": "string", "description": "可选：想看原讲解时，视频/讲义里对应的章节名"}},
+    "required": ["title", "minutes", "goal", "explain", "terms", "try", "checkpoint"]}
+_LAB = {"type": "object", "properties": {
+    "story": {"type": "string", "description": "练习场的故事：学习者接手了什么、要一步步查清楚什么"},
+    "files": {"type": "array", "items": {"type": "object", "properties": {
+        "path": {"type": "string", "description": "相对练习场根目录的路径；以 / 结尾表示空目录"},
+        "content": {"type": "string"}}, "required": ["path"]}}},
+    "required": ["story", "files"]}
 PLAN_SCHEMA = {"type": "object", "properties": {
     "title": {"type": "string"},
     "summary": {"type": "string", "description": "两三句话：这一课学什么，和学习者目标的关系"},
+    "lab": _LAB,
     "parts": {"type": "array", "items": {"type": "object", "properties": {
         "title": {"type": "string"}, "sections": {"type": "array", "items": _SECTION}},
         "required": ["title", "sections"]}},
+    "nodes": {"type": "array", "items": _NODE, "description": "提议加进知识图的新节点（terms 和 concept 用到的、知识图里还没有的）"},
+    "sources": {"type": "array", "items": _SOURCE, "description": "整个单元的出处（只列一次，不要每节重复）"},
     "later": {"type": "array", "description": "因为时间预算没放进来、以后可以再学的内容", "items": {"type": "object", "properties": {
         "title": {"type": "string"}, "why": {"type": "string"}, "url": {"type": "string"}}, "required": ["title", "why"]}},
     "outcomes": {"type": "array", "items": {"type": "string"}, "description": "学完整个单元能做到的 3-5 件事，之后的练习题按这些出"}},
-    "required": ["title", "summary", "parts", "outcomes"]}
+    "required": ["title", "summary", "parts", "sources", "outcomes"]}
 
 
 def sections_of(plan: dict) -> list[dict]:
@@ -302,17 +366,131 @@ def plan_urls(plan: dict) -> set[str]:
     return extract_urls(json.dumps(plan, ensure_ascii=False))
 
 
+# WHY: 这些是 shell 语法里跟在别的词后面的关键字，出现在行首不代表是一个新命令。
+_NOT_COMMANDS = {"then", "do", "done", "fi", "else", "elif", "esac", "in", "{", "}", "(", ")", "!"}
+_CMD = re.compile(r"^[a-z][a-z0-9_+-]*$")
+
+
+def command_words(text: str) -> set[str]:
+    """一段 shell 命令里用到的命令名：按 | && || ; 和换行切开，取每段的第一个词。"""
+    words = set()
+    for seg in re.split(r"\|\||&&|[|;\n]|\$\(|`", text or ""):
+        toks = seg.strip().split()
+        while toks and (re.match(r"^\w+=", toks[0]) or toks[0] in _NOT_COMMANDS or toks[0] in ("sudo", "time")):
+            toks = toks[1:]
+        if toks and _CMD.match(toks[0]):
+            words.add(toks[0])
+    return words
+
+
+def inline_commands(markdown: str) -> set[str]:
+    """讲解里行内代码中的命令。只看至少两个词的片段：单个词（如 `g`、`-i`）多半是参数或文件名，不是命令。"""
+    words = set()
+    for span in re.findall(r"(?<!`)`([^`\n]+)`(?!`)", markdown or ""):
+        if len(span.split()) >= 2:
+            words |= command_words(span)
+    return words
+
+
+def _check_checkpoint(name: str, j: int, c: dict, node_ids: set[str]) -> list[str]:
+    errors = []
+    where = f"{name} 检查点第 {j} 题"
+    kind = c.get("type")
+    if kind not in ("choice", "fill", "lab"):
+        return [f"{where}：type 只能是 choice / fill / lab"]
+    if not str(c.get("prompt") or "").strip():
+        errors.append(f"{where}：缺少 prompt")
+    hints = [h for h in c.get("hints") or [] if str(h).strip()]
+    if len(hints) != 3:
+        errors.append(f"{where}：hints 要正好 3 级（方向 → 关键概念 → 接近答案），现在 {len(hints)} 条")
+    if not str(c.get("explain") or "").strip():
+        errors.append(f"{where}：缺少 explain（做对之后的解析）")
+    if c.get("concept") and c["concept"] not in node_ids:
+        errors.append(f"{where}：concept {c['concept']} 不在知识图里，也没有在 nodes 里提议")
+    if kind == "choice":
+        opts = c.get("options") or []
+        letters = {chr(65 + i) for i in range(len(opts))}
+        ans = c.get("answer")
+        ans = ans if isinstance(ans, list) else [ans]
+        if len(opts) < 2:
+            errors.append(f"{where}：选择题至少 2 个选项")
+        if not ans or not all(str(a).upper() in letters for a in ans):
+            errors.append(f"{where}：answer 要是选项字母（{'、'.join(sorted(letters)) or '无'}）")
+    elif kind == "fill":
+        blanks = str(c.get("prompt") or "").count("____")
+        accept = c.get("accept") or []
+        if not blanks or blanks != len(accept) or not all(accept):
+            errors.append(f"{where}：题干里 ____ 的个数（{blanks}）要和 accept 的组数（{len(accept)}）一样，每组至少一个答案")
+    elif kind == "lab":
+        checks = c.get("checks") or []
+        if not checks:
+            errors.append(f"{where}：lab 题至少要有一个 check")
+        for k in checks:
+            if not (k.get("run") or k.get("file")):
+                errors.append(f"{where}：每个 check 要有 run 或 file")
+            if not str(k.get("desc") or "").strip():
+                errors.append(f"{where}：每个 check 要有 desc")
+        if not c.get("solution"):
+            errors.append(f"{where}：lab 题要有 solution（参考做法），学习者跳过时用它补齐练习场")
+    for t in c.get("traps") or []:
+        if not all(str(t.get(k) or "").strip() for k in ("when", "symptom", "cause", "fix")):
+            errors.append(f"{where}：每个 trap 都要写清 when / symptom / cause / fix")
+    return errors
+
+
+def _check_lab(lab: dict) -> list[str]:
+    errors = []
+    if not str(lab.get("story") or "").strip():
+        errors.append("lab 缺少 story")
+    files = lab.get("files") or []
+    if not files:
+        errors.append("lab 至少要有一个文件或目录")
+    if len(files) > 80:
+        errors.append(f"lab 文件太多（{len(files)} 个，上限 80）")
+    size = 0
+    for f in files:
+        path = str(f.get("path") or "")
+        parts = Path(path).parts
+        if not path or path.startswith(("/", "\\")) or re.match(r"^[A-Za-z]:", path) or ".." in parts:
+            errors.append(f"lab 文件路径要是练习场里的相对路径：{path!r}")
+        size += len(str(f.get("content") or ""))
+    if size > 200_000:
+        errors.append(f"lab 文件总大小 {size} 字，上限 200000")
+    return errors
+
+
 def check_plan(ctx: RunContext, plan: dict) -> list[str]:
-    """课程计划的硬性检查。INVARIANT: 时间预算是硬约束，超了不收（F-014：没有预算一个单元会无限膨胀）。"""
+    """课程计划的硬性检查。INVARIANT: 时间预算、每节新词数是硬约束，超了不收（F-014、F-019）。"""
     errors = []
     if not isinstance(plan, dict):
         return ["plan 必须是一个对象"]
     for key in ("title", "summary"):
         if not str(plan.get(key) or "").strip():
             errors.append(f"缺少 {key}")
+    if not plan.get("sources"):
+        errors.append("至少要有一个出处（sources，整个单元列一次）")
     sections = sections_of(plan)
     if not sections:
         errors.append("至少要有一个 part 和一个 section")
+
+    proposed = {n.get("id"): n for n in plan.get("nodes") or []}
+    for nid, n in proposed.items():
+        if not NODE_ID.match(str(nid or "")):
+            errors.append(f"nodes：id 格式不对：{nid}（小写，点分层，如 {ctx.topic or 'tools'}.cmd.grep）")
+        elif ctx.topic and not nid.startswith(ctx.topic + "."):
+            errors.append(f"nodes：{nid} 要以学科 {ctx.topic}. 开头")
+        if nid in ctx.existing_nodes:
+            errors.append(f"nodes：{nid} 已经在知识图里了，直接用，不要重复提议")
+        if not str(n.get("desc") or "").strip():
+            errors.append(f"nodes：{nid} 缺少 desc")
+    node_ids = set(ctx.existing_nodes) | set(proposed)
+    for nid, n in proposed.items():
+        for r in n.get("requires") or []:
+            if r not in node_ids:
+                errors.append(f"nodes：{nid} 的先修 {r} 不存在（知识图里没有，也没有提议）")
+
+    has_lab_task = False
+    known = set(ctx.known_terms)
     for i, s in enumerate(sections, 1):
         name = f"第 {i} 节「{s.get('title', '')}」"
         m = s.get("minutes")
@@ -330,11 +508,39 @@ def check_plan(ctx: RunContext, plan: dict) -> list[str]:
         for t in s.get("try") or []:
             if not str(t.get("command") or "").strip() or not str(t.get("expect") or "").strip():
                 errors.append(f"{name}：每条动手都要有 command 和 expect")
-        for p in s.get("pitfalls") or []:
-            if not all(str(p.get(k) or "").strip() for k in ("symptom", "cause", "fix")):
-                errors.append(f"{name}：每个坑都要写清 symptom / cause / fix")
-        if not s.get("sources"):
-            errors.append(f"{name}：至少要有一个出处（sources）")
+        if s.get("pitfalls") or s.get("sources"):
+            errors.append(f"{name}：不要再写 pitfalls / sources。常见坑写进检查点的 traps（答错时才出现），出处写在单元的 sources 里")
+
+        terms = s.get("terms") or []
+        new_terms = [t for t in terms if str(t.get("id")) not in known and str(t.get("term", "")).lower() not in known]
+        if len(new_terms) > ctx.max_new_terms:
+            errors.append(f"{name}：新词 {len(new_terms)} 个，超过每节上限 {ctx.max_new_terms} 个。"
+                          "新东西太多学习者记不住：把这一节拆成两节，或者把次要的词挪到后面的节")
+        for t in terms:
+            if not all(str(t.get(k) or "").strip() for k in ("id", "term", "explain")):
+                errors.append(f"{name}：每个新词都要有 id / term / explain")
+            elif t["id"] not in node_ids:
+                errors.append(f"{name}：新词 {t['term']} 的 id {t['id']} 不在知识图里，要在 nodes 里提议")
+        known |= {str(t.get("id")) for t in terms} | {str(t.get("term", "")).lower() for t in terms}
+        used = inline_commands(s.get("explain", "")) | inline_commands(s.get("mission", ""))
+        for t in s.get("try") or []:
+            used |= command_words(t.get("command", ""))
+        undeclared = sorted(w for w in used if w not in known)
+        if undeclared:
+            errors.append(f"{name}：用到了学习者还不认识的命令 {', '.join(undeclared)}。"
+                          "要么列进这一节的 terms（给一句话解释），要么换成已经学过的命令")
+
+        items = s.get("checkpoint") or []
+        if not 1 <= len(items) <= 3:
+            errors.append(f"{name}：检查点要 1–3 道题，现在 {len(items)} 道")
+        for j, c in enumerate(items, 1):
+            errors += _check_checkpoint(name, j, c, node_ids)
+            has_lab_task |= c.get("type") == "lab"
+    if has_lab_task and not plan.get("lab"):
+        errors.append("有 lab 类型的检查点，但没有定义练习场（lab）")
+    if plan.get("lab"):
+        errors += _check_lab(plan["lab"])
+
     total = plan_minutes(plan)
     if total > ctx.unit_budget_minutes:
         errors.append(f"总时长 {total} 分钟超过单元预算 {ctx.unit_budget_minutes} 分钟。"
@@ -343,34 +549,61 @@ def check_plan(ctx: RunContext, plan: dict) -> list[str]:
     if not 3 <= len(outcomes) <= 5:
         errors.append(f"outcomes 要 3-5 条，现在是 {len(outcomes)} 条")
     seen = grounded_urls(ctx)
-    for url in sorted(plan_urls(plan)):
+    # 练习场文件里的链接是故事道具（比如日志里的请求地址），不算引用，不检查。
+    for url in sorted(plan_urls({k: v for k, v in plan.items() if k != "lab"})):
         if url_key(url) not in seen:
             errors.append(f"链接没有打开过：{url}。只能引用你用 fetch_url 打开过的页面")
     return errors
 
 
 def render_plan_md(plan: dict, session_minutes: int = 45) -> str:
-    """课程计划的 Markdown 版本：给导师审阅和命令行阅读用，网页用的是 JSON。"""
+    """课程计划的 Markdown 版本：给导师审阅用（包括答案和参考做法），网页用的是 JSON。"""
     lines = [f"# {plan.get('title', '')}", "", plan.get("summary", ""), "",
              f"总时长 {plan_minutes(plan)} 分钟，分 {len(plan_sessions(plan, session_minutes))} 次学完。", ""]
+    if plan.get("lab"):
+        lines += ["## 练习场", "", plan["lab"].get("story", ""), "",
+                  "文件：" + "、".join(f"`{f['path']}`" for f in plan["lab"].get("files") or []), ""]
     n = 0
     for p in plan.get("parts") or []:
         lines += [f"## {p.get('title', '')}", ""]
         for s in p.get("sections") or []:
             n += 1
-            lines += [f"### {n}. {s.get('title', '')}（{s.get('minutes')} 分钟）", "", f"**目标**：{s.get('goal', '')}", "",
-                      s.get("explain", ""), ""]
+            lines += [f"### {n}. {s.get('title', '')}（{s.get('minutes')} 分钟）", "", f"**目标**：{s.get('goal', '')}", ""]
+            if s.get("mission"):
+                lines += [f"**任务**：{s['mission']}", ""]
+            if s.get("terms"):
+                lines += ["**新词**：" + "；".join(f"{t['term']}（`{t['id']}`）：{t['explain']}" for t in s["terms"]), ""]
+            lines += [s.get("explain", ""), ""]
             if s.get("try"):
                 lines.append("**动手**")
                 lines += [f"- `{t['command']}` → {t['expect']}" for t in s["try"]]
                 lines.append("")
-            if s.get("pitfalls"):
-                lines.append("**常见坑**")
-                lines += [f"- 现象：{p_['symptom']}；原因：{p_['cause']}；怎么办：{p_['fix']}" for p_ in s["pitfalls"]]
+            for j, c in enumerate(s.get("checkpoint") or [], 1):
+                lines.append(f"**检查点 {j}（{c.get('type')}，{c.get('concept') or '—'}）**：{c.get('prompt', '')}")
+                if c.get("options"):
+                    lines += [f"  {chr(65 + k)}. {o}" for k, o in enumerate(c["options"])]
+                if c.get("answer") is not None:
+                    lines.append(f"  答案：{c['answer']}")
+                if c.get("accept"):
+                    lines.append(f"  可接受：{c['accept']}")
+                for k in c.get("checks") or []:
+                    how = next((f"{m} {k[m]!r}" for m in ("equals", "contains", "not_contains", "matches") if m in k),
+                               "不存在" if k.get("absent") else "有输出")
+                    target = f"执行 `{k['run']}`" if k.get("run") else f"文件 `{k.get('file')}`"
+                    lines.append(f"  检查：{k.get('desc')} ← {target}，{how}")
+                if c.get("solution"):
+                    lines.append("  参考做法：" + " ; ".join(f"`{x}`" for x in c["solution"]))
+                lines += [f"  提示 {h + 1}：{t}" for h, t in enumerate(c.get("hints") or [])]
+                lines += [f"  坑（{t.get('when')}）：{t.get('symptom')} / {t.get('cause')} / {t.get('fix')}" for t in c.get("traps") or []]
                 lines.append("")
             if s.get("watch"):
                 lines += [f"**对应原讲解**：{s['watch']}", ""]
-            lines += ["出处：" + "；".join(f"[{x['title']}]({x['url']})" for x in s.get("sources") or []), ""]
+    if plan.get("nodes"):
+        lines += ["## 提议的知识节点", ""] + [
+            f"- `{x['id']}` {x['title']}（{x.get('kind')}）：{x.get('desc', '')}" +
+            (f" · 先修 {', '.join(x['requires'])}" if x.get("requires") else "") for x in plan["nodes"]] + [""]
+    if plan.get("sources"):
+        lines += ["## 出处", ""] + [f"- [{x['title']}]({x['url']})" for x in plan["sources"]] + [""]
     if plan.get("later"):
         lines += ["## 以后再学", ""] + [f"- {x['title']}：{x['why']}" + (f"（{x['url']}）" if x.get("url") else "")
                                         for x in plan["later"]] + [""]
@@ -393,7 +626,7 @@ TOOLS = {
                   "schema": FETCH_SCHEMA, "fn": lambda ctx, a: fetch_url(ctx, a.get("url", ""), a.get("start", 0))},
     "submit": {"description": "提交最终的学习指南（Markdown）。环境会检查必需的章节和链接出处，不通过会返回错误，改完再提交。",
                "schema": SUBMIT_SCHEMA, "fn": lambda ctx, a: submit(ctx, a.get("markdown", ""))},
-    "submit_plan": {"description": "提交这个单元的课程计划（结构化）。环境会检查时间预算、每节的目标/讲解/动手/出处、链接是否打开过；不通过会返回错误，改完再提交。",
+    "submit_plan": {"description": "提交这个单元的课程计划（结构化）。环境会检查时间预算、每节的新词数和没声明的命令、检查点、练习场、知识节点、链接是否打开过；不通过会返回错误，改完再提交。",
                     "schema": {"type": "object", "properties": {"plan": PLAN_SCHEMA}, "required": ["plan"]},
                     "fn": lambda ctx, a: submit_plan(ctx, a.get("plan") or {})},
 }
