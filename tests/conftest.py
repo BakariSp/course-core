@@ -11,6 +11,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(store, "PROGRESS_DIR", tmp_path / "progress")
     monkeypatch.setattr(store, "ATTEMPTS", tmp_path / "progress" / "attempts.jsonl")
     monkeypatch.setattr(store, "RUNS", tmp_path / "progress" / "runs.jsonl")
+    monkeypatch.setattr(store, "STUDY_LOG", tmp_path / "progress" / "study_log.jsonl")
     monkeypatch.setattr(store, "SYLLABUS", tmp_path / "progress" / "syllabus.yaml")
     monkeypatch.setattr(store, "PROGRESS_MD", tmp_path / "progress.md")
     monkeypatch.setattr(store, "SANDBOX", tmp_path / ".sandbox")

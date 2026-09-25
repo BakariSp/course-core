@@ -18,6 +18,7 @@ PROGRESS_DIR = ROOT / "progress"
 SYLLABUS = PROGRESS_DIR / "syllabus.yaml"
 ATTEMPTS = PROGRESS_DIR / "attempts.jsonl"
 RUNS = PROGRESS_DIR / "runs.jsonl"
+STUDY_LOG = PROGRESS_DIR / "study_log.jsonl"
 PROGRESS_MD = ROOT / "progress.md"
 
 SCHEMA_VERSION = 1
@@ -80,6 +81,15 @@ def record_run(**fields) -> dict:
     不参与掌握度计算——掌握度只看提交结果（attempts.jsonl）。导师批改时用它看解题过程。
     """
     return _append(RUNS, fields)
+
+
+def record_study(**fields) -> dict:
+    """课程页上的学习记录（打开 / 学完某一节）。INVARIANT: 只追加；进度由事件算出。"""
+    return _append(STUDY_LOG, fields)
+
+
+def load_study_log(unit: str | None = None) -> list[dict]:
+    return [e for e in _read_jsonl(STUDY_LOG) if unit is None or e.get("unit") == unit]
 
 
 def load_runs(quiz: str | None = None, qid: str | None = None) -> list[dict]:
