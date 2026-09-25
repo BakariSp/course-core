@@ -271,3 +271,69 @@
 | 第二批 | D-017 新词与负荷、D-019 评测报告 | 需要第一批的事件和检查点数据 |
 | 第三批 | D-018 提问 | 要在服务器里调模型，最复杂 |
 | 然后 | 用新 schema 重新生成 Shell 课程第二版（含"例子依赖没装的工具时给能跑的等价版本"这条 prompt 改动），和第一版对比 | 第一版的实际数据是对照组 |
+
+## D-021 数据库 + 统一证据信封：证据由数据库强制只追加 · 接受 · 2026-09-25
+
+> 学习者拍板（2026-09-25）：接受。先做不上数据库的阶段 0-3（backend-core-design §7），验收后再上 SQLite。
+
+- **问题**：三份证据日志（attempts / runs / study_log）各有形状；跨进程写入只有线程锁；写证据和更新 progress.md 是两步，progress.md 已经过期（审查 §4.3 ②③）；代码运行对不上提交、提示和作答没有因果、作答不记题目版本、观察不记是谁（G1-G4）；将来的提问、对话、agent 观察、策略记忆每加一种就多一种形状（F-032、F-033）。
+- **证据**：F-032、F-033；`docs/cs-study-architecture-review.md` §4.3；`docs/data-requirements.md` §5.2
+- **考虑过**：
+  1. 保持 JSONL，加跨进程文件锁（审查的建议）。——解决并发，但约束（只追加、外键、pending ⇔ 无分数）仍然只是约定；多学科、多 agent 之后按条件查询要全量扫。
+  2. 每种证据一张表。——新功能要加表；投影（时长、节点状态）要 UNION 十几张表。
+  3. **SQLite（WAL）+ 一张统一信封的 `evidence` 表 + verb 注册表**（推荐）。
+- **决定（提议）**：
+  - 证据信封：`actor · learner · verb · object(+version) · context(unit, plan, section, caused_by, run) · result · nodes · payload`，参考 xAPI。
+  - 一张 `evidence` 表，只追加由触发器强制；常查字段提成列，其余在 `payload_json`，按 (verb, schema_version) 在应用层校验。
+  - 策略记忆也是事件（`proposed / confirmed / refuted / vetoed_strategy`），当前有效的策略是投影。
+  - 人要审的内容（题、知识图、syllabus、画像、agent 定义、学科 spec）留在文件里；数据库不进 git，`study.py export` 导出 JSONL 进 git。
+  - **取代** D-002「attempts.jsonl 是唯一证据」和 D-020「SQLite 只作派生索引」这两句；D-002、D-020 的其它内容（只追加、状态由证据算出）不变，而且由数据库强制。
+  - 映射与迁移规则：`docs/data-model.md` §1、§2、§6。
+- **理由**：不变量从注释变成机制；新功能 = 新 verb，不改存储；和 nanoteacher 用同一套 SQLite WAL，审它的代码时有对照组。
+- **怎么验证**：① 导入现有 JSONL 后，`study.py weak`、每个单元的 `progress`、`study.py time` 与导入前逐字段相同；② UPDATE evidence 报错；③ 两个进程并发各写 200 条，不丢不坏；④ 用 §1.4 的将来 verb 各写一条，不改表结构。
+- **实现（2026-09-25）**：学习者要求"不做兼容，只要最优的最小结构"，所以没有走绞杀者模式，直接到目标结构：`studykit/{domain,app,adapters,specs}` + `web.py`/`cli.py`/`agent_tools.py` + `bootstrap.py`，旧模块全部删除；`data/study.db`（不进 git），`study.py export` 导出 `progress/evidence.jsonl`。
+  验证：① 导入后 `kg summary`、`course-eval` 与导入前相同；`time` 从 23 分钟变成 21 分钟——旧规则把导师写观察的时间也算成了学习时间，新规则只算学习者自己的证据，是有意的修正；② ③ 见 `tests/test_store.py`（两个进程各写 150 条）；④ 没有单独测，`asked`/`replied` 等将来 verb 只需注册。和设计的差别见 `docs/data-model.md` §7。
+
+## D-022 harness 对象模型：每次 agent 工作都能被评测、归因和迭代 · 接受 · 2026-09-25
+
+> 学习者拍板（2026-09-25）：接受。先做不上数据库的阶段 0-3（backend-core-design §7），验收后再上 SQLite。
+
+- **问题**：agent 的改进靠导师手动：看失败 → 改 prompt → 重跑。版本号漏掉了上下文配方、模型参数、工具集和评分器（`runner.py:61-74`），效果变化无法归因；每个版本只跑 1 次，看不出方差；用例没有冻结输入、没有留出集；审阅是自由文本；pi 的原始事件流（一次 45 MB，99% 是逐字流式输出）直接当运行记录，换 loop 后历史对不上；"导师"其实是 Claude Code，它自己的工作不在任何版本记录里（F-034、F-035）。
+- **证据**：F-034、F-035；`docs/data-requirements.md` §10.6（H1-H9）；`docs/data-model.md` §3
+- **考虑过**：
+  1. 在现有运行目录上补字段。——版本漏项能补，但 Grade 仍是 5 种格式，Experiment 和改进记录无处安放。
+  2. 接入外部 eval 平台。——多一个依赖和账号；学习结果评分要引用本地学习证据，外部平台接不上。
+  3. **自建最小对象模型：AgentSpec、Variant、Run、RunStep、Grade、Dataset、Experiment、ChangeProposal、EvalChange**（推荐）。
+- **决定（提议）**：
+  - 参与者 = learner / agent / system；agent 按角色（tutor、tutor-prep、将来的 explainer、optimizer）分权限。所有证据和评分都记 `actor`（含 variant）。
+  - Variant = 岗位说明 + 任务模板 + 上下文配方 + 模型及参数 + 工具集及实现 + 学科 spec 规则 + 运行时，整体一个哈希，各组成的哈希也分别存。评分器同样有版本。
+  - Run 分 batch / interactive（讲解 agent 两种都要）；输入快照永久，统一轨迹（RunStep）永久，原始事件流 30 天后清理。
+  - Grade 统一五种评分器：check、judge（+ claim_check）、practice_verify、review（结构化：结论 + 维度 + 问题的层）、outcome（引用学习证据）。
+  - 改进规则：优化者只改 Variant；用例、rubric、评分器的修改是 EvalChange，须学习者批准；用例分开发集 / 留出集，优化者只看开发集的分数；采纳条件是留出集不比旧版差、每个用例重复 3 次；每个 ChangeProposal 只改一层。
+  - 优化者先由 tutor（Claude Code）兼任，每次改动都写 ChangeProposal 并跑 Experiment；流程稳定后再拆成独立 agent。
+  - tutor 纳入 harness：先记录它的 Variant（`CLAUDE.md` 等的哈希），暂不评测。
+  - 定义 `AgentRuntime` 接口，只实现 pi。
+- **理由**：让"这版 prompt 更好"变成有数据的结论，而不是一次运行的印象；学习结果评分（outcome）把 harness 和学习证据连起来，是唯一的最终裁判。
+- **怎么验证**：① 只改上下文配方，Variant 哈希变化、且能看出"只差在上下文配方"；② 对 tutor-prep 做一次完整的 ChangeProposal → Experiment（开发集 + 留出集 × 3 次）→ 采纳 / 回滚；③ 导入 8 次历史运行后，每次的 tokens / cost 与 meta.json 相同，`results.jsonl` 能由查询重算。
+- **实现（2026-09-25）**：Variant（6 个组成，上下文配方和工具按源码算哈希）、Run、RunStep（pi 事件流 → 统一步骤，原始日志放 `raw/`）、Grade（check / judge / claim_check / practice_verify / review / outcome）、`AgentRuntime` 接口 + pi 实现、`agent review`（结构化）、`agent report`（按版本对比并列出差在哪一层）。
+  验证：①③ 通过（`tests/test_harness.py::test_variant_changes_when_a_component_changes`；导入脚本逐条断言 tokens / cost）；② **还没做**：Dataset / Experiment / ChangeProposal / EvalChange 这四张表按最小原则推迟到第一次真正做 A/B 时再建（`docs/data-model.md` §7）。
+
+## D-023 三层：通用 core / 学科 spec / 学习者实例 · 接受 · 2026-09-25
+
+> 学习者拍板（2026-09-25）：接受。先做不上数据库的阶段 0-3（backend-core-design §7），验收后再上 SQLite。
+
+- **问题**：cs-study 要做成通用的学习 harness（F-036，也呼应 F-016"开源给同类学生用自己的 agent 学"），但代码学习的假设散在 core 里：岗位说明第一句是"计算机课程助教"，计划格式里有练习场和 bash 检查，计划校验要求"命令必须声明"，rubric 要求"命令能在 Git Bash 跑通"，画像里写着 Windows 和 Git Bash。
+- **证据**：F-036、F-016；`docs/data-requirements.md` §2.2
+- **考虑过**：
+  1. 保持现状，以后学别的再说。——代码学习的假设会越积越多，将来拆的代价更大。
+  2. 每个学科一套独立系统。——证据、投影、harness 全要重写。
+  3. **core 只放"学什么都成立"的东西；学科 spec 是插件目录；你的画像、课程、证据是实例**（推荐）。
+- **决定（提议）**：
+  - 判断标准：换成学日语还成立吗？成立 → core；只对代码学习成立 → `cs-practice` spec；只对你成立 → 实例。
+  - 学科 spec 提供：检验器、检查点题型、练习环境、计划校验规则、学习者环境字段、岗位说明片段、rubric 附加项、节点类型、材料类型、spec 专属的 verb。
+  - 学习者画像拆成 core 字段（身份与背景、目标、偏好与约束；`settings.yaml` 并入约束）+ 每个学科的环境与目标（字段由 spec 定义）；知识状态转成证据；教学策略转成带范围（全局 / 学科 / 单元 / 节点）的策略记忆。
+  - `code`、`terminal` 检验器，`lab.py`，计划 schema 里的 lab 部分，`check_plan` 的命令声明规则，搬进 `specs/cs-practice/`。
+- **理由**：新学科 = 一个 spec 目录，core 不动；同一条教学经验的通用部分能跨学科复用。
+- **怎么验证**：写一份最小的假学科 spec（只有 choice / fill，没有练习环境），不改 core 代码就能出题、做题、算掌握度、跑一次备课 agent。
+- **实现（2026-09-25）**：`app.ports.Spec` 是扩展点（verb、检验器、检查点题型、练习环境、计划规则、schema 字段）；`specs/cs_practice/` 收了 code / terminal 检验器、bash 练习场、lab 检查点和"命令必须声明"规则；core 的计划检查、schema、评测检查项都不再提练习场。
+  **还没做**：学习者画像的拆分（`learner.md` → `learner/profile.yaml` + `learner/spec/cs-practice.yaml` + 观察 + 策略记忆），因为要逐条改写学习者手写的内容，需要学习者过目；验证用的"假学科 spec"也还没写。
