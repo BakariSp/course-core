@@ -1,0 +1,23 @@
+{"schema_version": 1, "id": "e155791126e3", "ts": "2026-09-25T16:20:48", "unit": "tools-01-shell", "section": 0, "event": "open"}
+{"schema_version": 1, "id": "c767aae677a8", "ts": "2026-09-25T16:21:24", "unit": "tools-01-shell", "section": 0, "event": "open"}
+{"schema_version": 1, "id": "b9865179ccb2", "ts": "2026-09-25T16:21:44", "unit": "tools-01-shell", "section": 1, "event": "open"}
+{"schema_version": 1, "id": "9141f350756d", "ts": "2026-09-25T16:21:57", "unit": "tools-01-shell", "section": 0, "event": "open"}
+{"schema_version": 1, "id": "d95597dcd110", "ts": "2026-09-25T16:22:04", "unit": "tools-01-shell", "section": 0, "event": "open"}
+{"schema_version": 1, "id": "e457c63687ff", "ts": "2026-09-25T16:22:07", "unit": "tools-01-shell", "section": 0, "event": "open"}
+{"schema_version": 1, "id": "7274be5d66a1", "ts": "2026-09-25T16:31:11", "unit": "tools-01-shell", "section": 0, "event": "open"}
+{"schema_version": 1, "id": "3d1c23187f12", "ts": "2026-09-25T16:31:16", "unit": "tools-01-shell", "section": 0, "event": "done", "minutes": 0.1}
+{"schema_version": 1, "id": "d81265f69a28", "ts": "2026-09-25T16:31:16", "unit": "tools-01-shell", "section": 1, "event": "open"}
+{"schema_version": 1, "id": "c2663989ab9d", "ts": "2026-09-25T16:32:04", "unit": "tools-01-shell", "section": 1, "event": "done", "minutes": 0.8}
+{"schema_version": 1, "id": "3360f01bbe56", "ts": "2026-09-25T16:32:04", "unit": "tools-01-shell", "section": 2, "event": "open"}
+{"schema_version": 1, "id": "9768699030b8", "ts": "2026-09-25T16:35:20", "unit": "tools-01-shell", "section": 2, "event": "done", "minutes": 3.3}
+{"schema_version": 1, "id": "ee15f3baf664", "ts": "2026-09-25T16:35:20", "unit": "tools-01-shell", "section": 3, "event": "open"}
+{"schema_version": 1, "id": "cacdcf4a9bca", "ts": "2026-09-25T16:35:53", "unit": "tools-01-shell", "section": 6, "event": "open"}
+{"schema_version": 1, "id": "5462eb701fcd", "ts": "2026-09-25T16:35:56", "unit": "tools-01-shell", "section": 3, "event": "open"}
+{"schema_version": 1, "id": "9b5c54137cef", "ts": "2026-09-25T16:37:39", "unit": "tools-01-shell", "section": 0, "event": "open"}
+{"schema_version": 1, "id": "b9f17d566e36", "ts": "2026-09-25T16:57:50", "unit": "tools-01-shell", "section": 1, "event": "open"}
+{"schema_version": 1, "id": "1822a027f64a", "ts": "2026-09-25T17:52:03", "event": "observation", "node": "tools.shell.glob", "polarity": "weak", "note": "第 1 讲视频讲 glob 那段完全跟不上（F-018）；用 set -x 亲眼看到 shell 改写命令后才懂"}
+{"schema_version": 1, "id": "dbf6ceca080b", "ts": "2026-09-25T17:52:04", "event": "observation", "node": "tools.cmd.sed", "polarity": "weak", "note": "第 1 讲视频讲 sed 那段完全跟不上（F-018）"}
+{"schema_version": 1, "id": "4fa7c231f267", "ts": "2026-09-25T17:52:04", "event": "observation", "node": "tools.shell.roles", "polarity": "weak", "note": "起点：没有 shell 和操作系统基础，要从终端 / shell / 命令三个角色的分工讲起（2026-09-25）"}
+{"schema_version": 1, "id": "e341ed94eeef", "ts": "2026-09-25T17:52:49", "event": "observation", "node": "tools.shell.options", "polarity": "weak", "note": "以为 grep -l 会打印匹配的行：把选项当成修饰词，不知道它常常切换输出模式（learner.md 2026-09-25 晚）"}
+{"schema_version": 1, "id": "22394615335d", "ts": "2026-09-25T17:52:49", "event": "observation", "node": "tools.cmd.find", "polarity": "weak", "note": "find -exec 的 {} \\; 又卡住：\"谁读这个符号\"还没迁移到 find（learner.md 2026-09-25 晚）"}
+{"schema_version": 1, "id": "604b61f287aa", "ts": "2026-09-25T17:52:49", "event": "observation", "node": "tools.shell.metachars", "polarity": "weak", "note": "问为什么 ';' 不能直接写 ;：语法字符（; | >）和展开字符（* $ ~）两类的区分还没建立（learner.md 2026-09-25 晚二）"}
