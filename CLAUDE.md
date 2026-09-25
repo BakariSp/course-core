@@ -21,9 +21,11 @@
 
 | 文件 | 是什么 | 谁来写 |
 |---|---|---|
-| `progress/syllabus.yaml` | 学了哪些课（单元状态）、每个学科有哪些概念 | 学习者和导师都可以直接改 |
-| `progress/attempts.jsonl` | 每一次答题的记录，是掌握度的**唯一证据** | 只能通过答题网页或 `study.py` 追加，不能手改、不能删行 |
-| `progress.md` | 由上面两个文件生成的进度视图 | 只能由 `study.py` 生成 |
+| `progress/syllabus.yaml` | 学了哪些课（单元状态） | 学习者和导师都可以直接改 |
+| `knowledge/<学科>.yaml` | 知识图：知识点（概念 id）+ 先修关系；状态不写在这里 | 学习者和导师都可以改；新概念 id 加在这里 |
+| `data/study.db` | **证据**（每一次答题、检查点、观察……）和 agent 的运行、评分。掌握度的唯一依据 | 只能通过网页、`study.py` 写；数据库触发器拒绝修改和删除。不进 git |
+| `progress/evidence.jsonl`、`agents/*/evals/runs.jsonl` | 数据库的可读导出（进 git，看 diff 用） | 只能由 `study.py export` 生成 |
+| `progress.md` | 进度视图 | 只能由 `study.py status` 生成 |
 | `lessons/<topic>/<NN-slug>/` | 一套题：`quiz.yaml`、`key.yaml`、`code/`、`review.md` | 导师出题；学习者只在网页里作答 |
 
 题目由**检验器**判分：`choice`（单选/多选）、`fill`（多空填空）、`code`（pytest）、`terminal`（练习终端里跑真实 git）、`short`（导师批改）。
@@ -33,15 +35,17 @@
 
 学习者说"准备看 X"时，**不要自己写课前讲解**。流程：
 
-1. 跑 `python study.py agent run tutor-prep --unit <单元 id>`，读 `runs/agents/tutor-prep/<运行>/` 里的产出、评测结果和 `fetches.jsonl`。
-2. 自己审阅，写 `review.md`。评分模型的判断要抽查（到 `events.jsonl` 里核对它质疑的内容）。
+1. 跑 `python study.py agent run tutor-prep --unit <单元 id>`，读 `data/runs/tutor-prep/<运行>/` 里的产出（`output.md`）、输入（`input.json`）和读过的页面（`fetches.jsonl`，含读到的原文）。
+2. 自己审阅，结论用 `python study.py agent review tutor-prep --run <运行> --verdict publish|revise|reject --issue "层:问题" --note "..."` 记下来（层是 prompt / context / tools / model / runtime / eval）。
+   评分模型的判断要抽查（到 `fetches.jsonl` 里核对它质疑的内容）。
 3. 通过就先读 `output.md` 里的动手命令和参考做法，确认没问题后跑 `python study.py lab verify <运行>`（会在本机执行这些命令），
    再 `python study.py agent publish tutor-prep --run <运行>`，把课程页 `/?unit=<单元>` 给学习者。发布会把 agent 提议的知识节点并入 `knowledge/`。
-   学习者用过之后跑 `python study.py course-eval <单元> --write`，看预测和实际差在哪，决定下一次改什么。
-4. 不通过就先判断问题在哪一层（prompt / 环境工具 / 评测），一次只改一处，跑全部用例对比。
-   你的工作是改 `agents/` 里的 prompt 和评测，以及 `studykit/agent_env/` 里的环境；不是替 agent 写内容。
+   学习者用过之后跑 `python study.py course-eval <单元> --write`（记为那次运行的"学习结果"评分，是最终裁判），看预测和实际差在哪，决定下一次改什么。
+4. 不通过就先判断问题在哪一层（prompt / 上下文 / 工具 / 评测），一次只改一处，跑全部用例，用 `agent report` 按版本对比（它会列出两版差在哪一层）。
+   你的工作是改 `agents/` 里的 prompt 和评测，以及 `studykit/app/harness.py`（上下文配方、工具）和学科 spec 的规则；不是替 agent 写内容。
+   **改评测标准**（rubric、用例、评分器）要先在 `design/DECISIONS.md` 提议、学习者拍板——优化者不能自己改卷（D-022）。
 
-架构和迭代纪律见 [agents/README.md](agents/README.md)。学习者画像在 `progress/learner.md`，学习者可以直接改。
+架构和迭代纪律见 [agents/README.md](agents/README.md)，代码分层见 [docs/backend-core-design.md](docs/backend-core-design.md)。学习者画像在 `progress/learner.md`，学习者可以直接改。
 
 ## 学习者谈学习体验、提意见时
 
@@ -77,7 +81,7 @@
    - 旧概念 `weak: true` 的：按它的 `target_level` 出 1-2 道**变体**（换一个场景，不要原题重出）。
    - 快到 4 级的概念：出找 bug 题或 nanoteacher 映射题。
    - 每套大约 30-45 分钟：通常 6-8 道题，至少用 3 种检验器，第 4 级的题至少 1 道。
-4. 从 `templates/lesson/` 复制模板，建 `lessons/<topic>/<NN-slug>/`。新概念 id 加进 `syllabus.yaml` 对应学科的 `concepts`，并挂到对应单元的 `concepts` 列表上。
+4. 从 `templates/lesson/` 复制模板，建 `lessons/<topic>/<NN-slug>/`，`quiz.yaml` 里写 `unit: <单元 id>`。新概念 id 加进 `knowledge/<学科>.yaml`（写 `units: [<单元 id>]`），`python study.py kg check` 会报出拼错、没登记的概念。
 5. 答案、检查项、rubric 只放在 `key.yaml`。`quiz.yaml`、`code/exN.py` 和对话里都不能出现答案。
 6. 出完后自检：
    - `python -m pytest lessons/<topic>/<课时>/ -q`：代码题在未实现时必须是红的。
@@ -91,7 +95,7 @@
    `python study.py grade <topic>/<课时> <qid> --score <分> --note "<错在哪个概念>"`
 3. 代码题跑 `python study.py runs <topic>/<课时>` 看作答过程：跑了几次、每次卡在哪个测试、中间改了什么。
    跑了很多次才通过的，即使最终满分，也在 review 里指出反复出错的点，下次出题时当作薄弱点。
-4. 在课时目录下写 `review.md`：自动判分的题看 attempts 记录里的 response 和 feedback；每道题写对 / 部分对 / 错、错在哪个具体概念、正确思路。多用类比和表格。
+4. 在课时目录下写 `review.md`：自动判分的题看 `study.py weak` 和网页里的作答记录（response 和 feedback）；每道题写对 / 部分对 / 错、错在哪个具体概念、正确思路。多用类比和表格。
 5. 最后在对话里给出：这套题的总分、每个概念现在的掌握度（用 `study.py weak` 的结果）、1-3 个薄弱点、下次要重点练什么。`progress.md` 会自动更新。
 
 ## 规则
@@ -102,4 +106,6 @@
 - 引用 nanoteacher 时只读不写，那边的仓库有自己的 CLAUDE.md 规则。
 - curriculum.md 的顺序和取舍由学习者决定，要改先提出来。
 - 改 `studykit/` 或 `study.py` 要同时改 `tests/`，并跑 `python -m pytest tests -q`。修 bug 先写一个会红的测试。
-- 在答题网页上自己测试之前，先把学习者正在写的 `code/exN.py`、`progress/attempts.jsonl`、`progress/runs.jsonl` 备份到 scratchpad，测完原样恢复并核对。
+  依赖方向由 `tests/test_architecture.py` 强制：domain 不做 IO，接口层只调 app（见 docs/backend-core-design.md §4.2）。
+- 在答题网页上自己测试之前，先把学习者正在写的 `code/exN.py` 和 `data/study.db` 备份到 scratchpad，测完原样恢复并核对。
+  更好的做法是用临时数据目录启动：测试用 `build(Config(data=<临时目录>))`，不碰学习者的数据库。

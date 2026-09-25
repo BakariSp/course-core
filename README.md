@@ -73,14 +73,14 @@ bash scripts/check-shell-env.sh
 
 ```
 progress/syllabus.yaml    学了哪些课 —— 你可以直接改（比如标记看完、写笔记）
-progress/attempts.jsonl   每一次提交的记录（决定掌握度）—— 只由答题网页和 study.py 追加
-progress/runs.jsonl       代码题每次「运行测试」的代码和结果（作答过程）—— 只由答题网页追加
-progress/study_log.jsonl  课程页上的学习事件：打开小节、检查点、提示、终端命令、新词反馈、心跳 —— 只追加
 knowledge/<学科>.yaml      知识图：知识点 + 先修关系（D-020）—— 你和导师都可以改；状态不写在这里
-progress.md               由上面的文件自动生成的视图 —— 不要手改
+data/study.db             证据：每一次答题、代码运行、检查点、提示、终端命令、新词反馈、导师观察……（D-021）
+                          只追加，数据库触发器拒绝修改和删除；不进 git
+progress/evidence.jsonl   证据的可读导出（python study.py export），进 git
+progress.md               进度视图（python study.py status 生成）—— 不要手改
 ```
 
-**一份数据，多个视图（D-020）**：薄弱点、进度、已知词表、知识树都由上面的事件算出来，不手写。
+**一份证据，多个视图（D-020、D-021）**：所有证据用同一个形状（谁 · 做了什么 · 对什么 · 结果），掌握度、薄弱点、进度、已知词表、知识树、学习时长都由它算出来，不手写。
 学习时间也是：相邻两个事件间隔不超过 15 分钟就算同一次学习（D-016），`study.py time` 按天列出来。
 
 **掌握度分四级**：1 记忆 → 2 理解 → 3 应用 → 4 分析。每道题都标了等级。某个概念某一级最近 3 次的平均分 ≥ 70%，这一级就算通过；通过后超过 14 天没再练，会被标记为需复习。
@@ -90,7 +90,8 @@ progress.md               由上面的文件自动生成的视图 —— 不要�
 | 命令 | 作用 |
 |---|---|
 | `python study.py serve` | 启动答题网页（只监听本机） |
-| `python study.py status` | 重新生成 progress.md |
+| `python study.py status` | 生成 progress.md |
+| `python study.py export` | 把证据和 agent 运行记录导出成 JSONL（进 git） |
 | `python study.py log --concept dsa.hash --score 1 --note "LeetCode 1"` | 记录课外练习 |
 | `python study.py weak` | 输出学习状态（JSON 格式，给导师看的） |
 | `python study.py grade ...` | 导师批改简答题时用 |
@@ -103,17 +104,15 @@ progress.md               由上面的文件自动生成的视图 —— 不要�
 ## 目录
 
 ```
-study.py                   命令行
-studykit/
-  store.py                 答题记录、掌握度、progress.md
-  lessons.py               读取题目
-  checkers/                检验器（每种一个文件）
-  server.py                答题网页的后端
-  course.py                课程页：课程版本、学习事件、检查点、进度（D-010、D-013）
-  lab.py                   练习场：真实 bash、快照、还原、验证（D-014）
-  timeline.py              学习时间：从事件算出学习会话（D-016）
-  knowledge.py             学习者模型：知识图 + 证据 → 状态、薄弱点（D-020）
-  course_eval.py           课程评测：预测 vs 实际（D-019）
+study.py                   命令行入口
+studykit/                  分层见 docs/backend-core-design.md §4.2，依赖方向由 tests/test_architecture.py 强制
+  domain/                  纯规则，不做 IO：证据信封、掌握度、知识图、课程计划、进度、学习时长、harness 模型
+  app/                     用例（learning.py、harness.py）+ 端口（ports.py）
+  adapters/                端口的实现：SQLite、YAML 内容文件、pi（agent loop）、抓网页
+  specs/cs_practice/       学科 spec「代码学习」：code / terminal 检验器、练习场、课程计划附加规则（D-023）
+  web.py · cli.py · agent_tools.py   接口：网页、命令行、agent 的工具入口
+  bootstrap.py             组合根：把实现注入用例
+data/                      运行时数据（不进 git）：study.db、沙箱、练习场快照（不可重建）、agent 工作目录
 web/index.html             答题网页（每种检验器一个渲染函数）
 docs/question-format.md    检验器设计和题目格式
 templates/lesson/          一套题的模板

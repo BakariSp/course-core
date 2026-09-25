@@ -9,7 +9,7 @@ questions:
     prompt: 你的每一次答题记录，唯一可信的来源（source of truth）是哪个文件？
     options:
       - "`progress.md`"
-      - "`progress/attempts.jsonl`"
+      - "`data/study.db`（数据库）"
       - "`progress/syllabus.yaml`"
       - 每节课的 `review.md`
 
@@ -21,7 +21,7 @@ questions:
     prompt: 下面哪些文件是**你可以直接手改**的？
     options:
       - "`progress/syllabus.yaml`"
-      - "`progress/attempts.jsonl`"
+      - "`data/study.db`（数据库）"
       - "`progress.md`"
       - 课时里的 `code/ex1.py`
 

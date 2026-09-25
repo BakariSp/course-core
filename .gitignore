@@ -1,14 +1,17 @@
+# 运行时数据（D-021）：study.db、题目沙箱、练习场快照、agent 工作目录。
+# 不进 git；可读的备份是 python study.py export 导出的 progress/evidence.jsonl 和 agents/*/evals/runs.jsonl。
+# 注意 data/labs/ 里的练习场快照不可重建。
+data/
+# 旧版本的目录（已导入 data/，确认无误后可以删）
+.sandbox/
+runs/
 __pycache__/
 .pytest_cache/
 *.pyc
-# 终端题的练习现场，每道题一个沙箱目录，随时可以重建
-.sandbox/
 # API key 等本地密钥，永远不进 git
 .env
 .env.*
 *.env
 local.env
-# agent 每次运行的完整记录（事件流、抓取的网页），可重建；评测摘要在 agents/*/evals/results.jsonl
-runs/
 # pi 的专用配置目录（可能存有凭据）
 agents/_pi/home/

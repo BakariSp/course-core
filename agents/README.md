@@ -5,10 +5,10 @@
 ## 分层
 
 ```
-pi（agent 引擎，npm 全局安装，不改它的源码）
- └─ 由 runner 以最小权限启动：不读任何用户配置 / 上下文文件 / 技能，关闭全部内置工具
-     └─ agents/_pi/env_bridge.ts   薄适配器：把环境工具注册给 pi，调用时转发给 Python
-         └─ studykit/agent_env/    学习环境：工具、简报、运行记录、评测（Python，有测试）
+pi（agent loop，npm 全局安装，不改它的源码；借来的，可以换——studykit/adapters/pi.py 是唯一认识它的地方）
+ └─ 以最小权限启动：不读任何用户配置 / 上下文文件 / 技能，关闭全部内置工具
+     └─ agents/_pi/env_bridge.ts   薄适配器：把环境工具注册给 pi，调用时转发给 python -m studykit.agent_tools
+         └─ studykit/app/harness.py  harness（D-022）：上下文配方、工具、运行记录、评测、发布闸门、版本对比
 
 agents/<agent>/                    一个 agent = 一个文件夹，全是配置
   agent.yaml                       模型、开放哪些工具、输出要求、评测设置
@@ -16,7 +16,10 @@ agents/<agent>/                    一个 agent = 一个文件夹，全是配置
   task.md                          每次运行的任务模板
   evals/rubric.md                  评分标准
   evals/cases.yaml                 评测用例（每个单元"一定要做到的事"）
-  evals/results.jsonl              每次评测一行摘要（进 git，用来比较版本）
+  evals/runs.jsonl                 每次运行一行：版本组成、用量、全部评分（study.py export 生成，进 git）
+
+data/runs/<agent>/<运行>/          一次运行的工作目录（不进 git）：brief.md、input.json（冻结的输入）、
+                                   fetches.jsonl（读过的页面原文）、submissions.jsonl、output.json/.md、raw/（原始日志，可清理）
 ```
 
 agent 能做什么，完全由环境工具决定。`tutor-prep` 只有两个：
@@ -30,20 +33,26 @@ agent 能做什么，完全由环境工具决定。`tutor-prep` 只有两个：
 
 ```bash
 python study.py agent run tutor-prep --unit tools-01-shell       # 运行 + 自动评测
-python study.py agent eval tutor-prep [--run <运行目录名>]         # 重新评测（默认最近一次）
-python study.py agent report tutor-prep                           # 按 prompt 版本 / 环境版本汇总
-python study.py lab verify <运行目录名>                            # 导师读过命令后：把练习场从头走一遍（会在本机执行 agent 写的命令）
-python study.py agent publish tutor-prep --run <运行目录名>        # 自动检查全通过、练习场验证通过才能发布到 preps/
-python study.py course-eval tools-01-shell --write                # 学习者用过之后：预测 vs 实际，写进运行目录
+python study.py agent eval tutor-prep [--run <运行>]               # 重新评测（默认最近一次；新的评分追加，不覆盖）
+python study.py agent review tutor-prep --run <运行> --verdict revise --issue "prompt:给字数上限"   # 导师审阅（结构化）
+python study.py agent report tutor-prep                           # 按版本（Variant）汇总，列出相邻两版差在哪一层
+python study.py lab verify <运行>                                  # 导师读过命令后：把练习场从头走一遍（会在本机执行 agent 写的命令）
+python study.py agent publish tutor-prep --run <运行>              # 自动检查全通过、练习场验证通过才能发布
+python study.py course-eval tools-01-shell --write                # 学习者用过之后：预测 vs 实际，记为那次运行的学习结果评分
 ```
 
 需要 `local.env` 里有 `DEEPSEEK_API_KEY`（不进 git），以及 `npm install -g @earendil-works/pi-coding-agent`。
 
-## 评测的三层
+## 版本（Variant，D-022）
+
+一次运行用的"版本"= 岗位说明 + 任务模板 + **上下文配方**（`Harness.build_input` / `render_brief` 的源码）+ 工具（工具实现和计划检查规则的源码）+ 模型 + 运行时（pi 版本和桥接代码），整体一个哈希，
+各组成的哈希也分别存下来。改了任何一处就是新版本，`agent report` 会写出和上一版差在哪一层——"一次只改一层"可以直接检查。
+
+## 评测的层次（每一层都是一条 Grade，记着评分器的版本）
 
 1. **自动检查**（确定性，免费）：提交了没有、章节齐不齐、每个链接是否真的打开过、能不能打开、读了几页、长度、用例要求提到的事实。
 2. **评分模型**（更强的模型，按 rubric 打 1–5 分）：它看不到页面正文，所以怀疑"编造"时要列出原文引用，由程序到 agent 读过的页面里核对。
-3. **导师审阅**：写在运行目录的 `review.md`，决定发不发布、下一次改什么。
+3. **导师审阅**：`agent review`，结论（publish / revise / reject）+ 每个问题标在哪一层，喂回下一次迭代。
 4. **练习场验证**（D-014）：`lab verify` 按顺序跑每节的动手命令和参考做法，检查"做之前不通过、做之后通过"。
    它会执行 agent 写的命令，所以不在 agent 提交时自动跑，而是导师读过之后手动跑。
 5. **学习者实际使用**（D-019）：`course-eval` 把每个预测（分钟数、负荷、新词、检查点难度）和学习者用的时候的实际数据对上。

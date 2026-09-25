@@ -1,67 +1,111 @@
-import datetime as dt
+"""SQLite 存储：只追加由数据库强制；两个进程同时写不丢不坏（D-021）。"""
+import sqlite3
+import subprocess
+import sys
+import textwrap
 
-from studykit import store
+import pytest
 
-TODAY = dt.date(2026, 9, 25)
+from studykit.adapters.sqlite import MIGRATIONS, SqliteStore
+from studykit.domain.evidence import SYSTEM, Actor, Evidence, learner_actor
+from studykit.domain.harness import Grade, Run, RunStep, Variant
 
-
-def att(concept="os.sync.race", level=1, score=1.0, ts="2026-09-20T10:00:00", **kw):
-    rec = {"id": kw.pop("id", f"{ts}-{level}-{score}"), "ts": ts, "quiz": "os/03", "qid": "q1",
-           "concept": concept, "level": level, "score": score,
-           "result": "pending" if score is None else store.result_of(score)}
-    rec.update(kw)
-    return rec
-
-
-def test_mastery_is_highest_passed_level():
-    s = store.concept_stats([att(level=1), att(level=2, ts="2026-09-21T00:00:00")], TODAY)["os.sync.race"]
-    assert (s["mastery"], s["target_level"], s["weak"]) == (2, 3, False)
+ME = learner_actor("me")
 
 
-def test_only_recent_window_counts():
-    old_fails = [att(score=0, ts=f"2026-09-1{i}T00:00:00") for i in range(3)]
-    recent_passes = [att(score=1, ts=f"2026-09-2{i}T00:00:00") for i in range(3)]
-    assert store.concept_stats(old_fails + recent_passes, TODAY)["os.sync.race"]["mastery"] == 1
+def e(i, verb="opened", ts="2026-09-26T10:00:00", **kw):
+    base = dict(id=f"e{i}", ts=ts, learner="me", actor=ME, verb=verb, object_type="section", object_id="u#0",
+                unit="u", plan="p", section=0)
+    base.update(kw)
+    return Evidence(**base)
 
 
-def test_failing_lower_level_marks_weak_and_targets_it():
-    s = store.concept_stats([att(level=3, score=1), att(level=1, score=0, ts="2026-09-21T00:00:00")],
-                            TODAY)["os.sync.race"]
-    assert s["mastery"] == 3
-    assert s["failing_levels"] == [1]
-    assert s["target_level"] == 1
-    assert s["weak"]
+@pytest.fixture
+def store(tmp_path):
+    return SqliteStore(tmp_path / "study.db")
 
 
-def test_stale_after_two_weeks():
-    s = store.concept_stats([att(ts="2026-09-01T00:00:00")], TODAY)["os.sync.race"]
-    assert s["stale"] and s["weak"]
+def test_roundtrip_filters_and_order(store):
+    store.append(e(1, ts="2026-09-26T10:05:00"), e(2, nodes=("t.b", "t.a"), payload={"x": [1, "中"]}),
+                 e(3, unit="v", actor=Actor("agent", "tutor", "tutor", "abc")))
+    got = store.query("me", unit="u")
+    assert [x.id for x in got] == ["e2", "e1"]                        # 按时间，同时间按写入顺序
+    assert got[0].nodes == ("t.b", "t.a") and got[0].payload == {"x": [1, "中"]}   # 节点顺序保留
+    assert store.get("e3").actor == Actor("agent", "tutor", "tutor", "abc")
+    assert [x.id for x in store.query("me", verbs=["opened"], object_id="u#0")] == ["e2", "e3", "e1"]
+    assert store.query("someone-else") == []
 
 
-def test_pending_is_ignored_until_graded():
-    pending = att(level=2, score=None, id="p1")
-    assert store.concept_stats([pending], TODAY) == {}
-    graded = att(level=2, score=0.5, id="g1", supersedes="p1", ts="2026-09-21T00:00:00")
-    _, still_pending = store.split_attempts([pending, graded])
-    assert still_pending == []
-    assert store.concept_stats([pending, graded], TODAY)["os.sync.race"]["failing_levels"] == [2]
+def test_evidence_is_append_only(store, tmp_path):
+    store.append(e(1, nodes=("t.a",)))
+    with sqlite3.connect(tmp_path / "study.db") as c:
+        for sql in ("UPDATE evidence SET score = 1", "DELETE FROM evidence", "DELETE FROM evidence_node"):
+            with pytest.raises(sqlite3.DatabaseError, match="append-only"):
+                c.execute(sql)
 
 
-def test_runs_command_shows_failures_and_code_changes(env, capsys):
-    import study
-    fail = {"name": "test_empty", "outcome": "failed", "message": "ZeroDivisionError", "lines": [3]}
-    store.record_run(quiz="t/01-x", qid="q4", kind="run", code="a = 1\n", passed=1, total=2, failures=[fail])
-    store.record_run(quiz="t/01-x", qid="q4", kind="submit", code="a = 2\n", passed=2, total=2, failures=[])
-    study.main(["runs", "t/01-x", "q4"])
-    out = capsys.readouterr().out
-    assert "#1" in out and "通过 1/2" in out and "test_empty（第 3 行）" in out
-    assert "#2" in out and "提交" in out and "-a = 1" in out and "+a = 2" in out
+def test_a_batch_is_one_transaction(store):
+    with pytest.raises(sqlite3.IntegrityError):
+        store.append(e(1), e(1))                                        # 第二条主键冲突
+    assert store.query("me") == []                                      # 第一条也没写进去
 
 
-def test_progress_md_lists_concepts_and_pending(env):
-    store.record(quiz="t/01-x", qid="q1", concept="os.sync.race", level=1, score=0.0, result="fail")
-    store.record(quiz="t/01-x", qid="q2", concept="os.sync.race", level=2, score=None, result="pending")
-    store.write_progress_md()
-    md = store.PROGRESS_MD.read_text("utf-8")
-    assert "`os.sync.race`" in md and "第 1 级有错" in md
-    assert "t/01-x q2" in md
+def test_one_grade_per_answer(store):
+    a = e(1, verb="answered", object_type="question", object_id="t/01-x#q2", pending=True, payload={"response": "x"})
+    grade = lambda i: e(i, verb="graded", object_type="question", object_id="t/01-x#q2", caused_by="e1", score=0.5,  # noqa: E731
+                        actor=Actor("agent", "tutor"))
+    store.append(a, grade(2))
+    with pytest.raises(sqlite3.IntegrityError):
+        store.append(grade(3))
+    with pytest.raises(sqlite3.IntegrityError):                         # 不能指向不存在的作答
+        store.append(e(4, verb="graded", caused_by="nope", score=1.0))
+
+
+def test_two_processes_writing_at_once_lose_nothing(tmp_path):
+    path = tmp_path / "study.db"
+    SqliteStore(path)
+    script = textwrap.dedent(f"""
+        import sys
+        from studykit.adapters.sqlite import SqliteStore
+        from studykit.domain.evidence import Evidence, learner_actor
+        s = SqliteStore(__import__("pathlib").Path({str(path)!r}))
+        for i in range(150):
+            s.append(Evidence(f"{{sys.argv[1]}}-{{i}}", "2026-09-26T10:00:00", "me", learner_actor("me"),
+                              "opened", "section", "u#0", payload={{"blob": "x" * 5000}}))
+    """)
+    procs = [subprocess.Popen([sys.executable, "-c", script, tag]) for tag in ("a", "b")]
+    assert [p.wait(timeout=120) for p in procs] == [0, 0]
+    rows = SqliteStore(path).query("me")
+    assert len(rows) == 300 and all(len(r.payload["blob"]) == 5000 for r in rows)
+
+
+def test_plans_are_versioned_and_current_is_the_latest_publication(store):
+    store.publish("u", {"provenance": {"run": "r1"}, "title": "v1"}, "2026-09-25T10:00:00", SYSTEM)
+    store.publish("u", {"provenance": {"run": "r2"}, "title": "v2"}, "2026-09-26T10:00:00", SYSTEM)
+    assert store.current("u")["title"] == "v2" and store.version("u", "r1")["title"] == "v1"
+    store.publish("u", {"provenance": {"run": "r1"}, "title": "v1"}, "2026-09-27T10:00:00", SYSTEM)   # 回滚到 v1
+    assert store.current("u")["title"] == "v1" and store.units() == ["u"]
+    assert store.current("nope") is None
+    with pytest.raises(ValueError):
+        store.publish("u", {"title": "没有版本号"}, "2026-09-27T10:00:00", SYSTEM)
+
+
+def test_runs_and_grades(store, tmp_path):
+    v = Variant("tutor-prep", {"model": "m"})
+    run = Run("20260926-100000-u", "tutor-prep", v.id, "u", "me", "batch", "2026-09-26T10:00:00", {"known_terms": ["pwd"]},
+              tokens=5, tool_calls={"fetch_url": {"calls": 1, "errors": 0}})
+    store.add_run(run, v, [RunStep(0, "tool", "fetch_url", summary="ok", detail={"args": {"url": "x"}})])
+    assert store.run(run.id) == run and store.runs("tutor-prep") == [run] and store.variant(v.id) == v
+    assert store.steps(run.id)[0].detail == {"args": {"url": "x"}}
+    store.add_grade(Grade("g1", "2026-09-26T10:01:00", run.id, "check", "c1", "system", 1.0, "pass", {"a": {"score": 1.0}}))
+    assert [g.id for g in store.grades(agent="tutor-prep")] == ["g1"] and store.grades(run.id)[0].dims == {"a": {"score": 1.0}}
+    with sqlite3.connect(tmp_path / "study.db") as c:
+        with pytest.raises(sqlite3.DatabaseError, match="append-only"):
+            c.execute("UPDATE grade SET score = 0")
+
+
+def test_refuses_a_database_newer_than_the_code(tmp_path):
+    with sqlite3.connect(tmp_path / "study.db") as c:
+        c.execute(f"PRAGMA user_version = {len(MIGRATIONS) + 1}")
+    with pytest.raises(RuntimeError, match="比代码新"):
+        SqliteStore(tmp_path / "study.db")

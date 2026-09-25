@@ -13,7 +13,7 @@
                 │
    check() ─────┤  判分 → Verdict（score 0–1 或"待批改"，逐条反馈）
                 │
-   记录 → attempts.jsonl → 掌握度 → progress.md   （这一段与检验器种类无关）
+   记录一条 answered 证据 → 掌握度 → progress.md   （这一段与检验器种类无关）
 ```
 
 | 检验器 | 界面 | 判分 | 适合的等级 |
@@ -24,8 +24,9 @@
 | `terminal` | 受限的练习终端，跑真实的 git | 自动：结束时仓库状态满足几条检查 | 3–4 |
 | `short` | 文本框 | 导师按 rubric 批改 | 2–4 |
 
-代码在 `studykit/checkers/`（模型）和 `web/index.html` 的 `RENDERERS`（界面）。
-新增检验器：写一个 `Checker` 子类并 `@register`，在 `RENDERERS` 里加一个同名渲染函数，在本文档里补一节，并给它写测试。
+代码：通用的 choice / fill / short 在 `studykit/domain/assessment.py`；要起进程的 code / terminal 属于学科 spec，在 `studykit/specs/cs_practice/`。界面在 `web/index.html` 的 `RENDERERS`。
+新增检验器：实现 `Checker` 协议（view / act / check），放进对应学科 spec 的 `checkers`（学什么都成立的放 domain），在 `RENDERERS` 里加一个同名渲染函数，在本文档里补一节，并给它写测试。
+检验器不写存储：判分过程中要记下的事（比如每次跑测试）放进返回值的 `records`，由服务层写成证据。
 
 ## 掌握度等级
 
@@ -107,7 +108,7 @@ lessons/<topic>/<NN-slug>/
 - 测试在未实现时必须是红的，并且要覆盖边界情况，不能只测最简单的例子。
 - 测试文件用 `from exN import ...` 导入。
 - 网页里的「运行测试」和「提交」都会把网页里的代码写回 `exN.py`。
-- 每次运行和提交都会连同代码快照记进 `progress/runs.jsonl`（作答过程）。它不参与掌握度计算，
+- 每次运行和提交都会连同代码快照记成一条 `ran_tests` 证据（作答过程），提交时挂到这次作答上。它不参与掌握度计算，
   导师批改时用 `python study.py runs <课时> [qid]` 看每次的结果和代码改动。
 - 测试结果按测试逐条显示；报错如果发生在学习者的代码里，会给出行号并在编辑器里标红。
   写测试时让测试名说清楚在测什么（如 `test_empty_is_zero`），学习者只看得到测试名和报错信息。
@@ -142,7 +143,7 @@ lessons/<topic>/<NN-slug>/
 - 可以用：大部分 git 子命令，以及 `ls`、`cat`、`echo 文本 > 文件`（`>>` 追加）、`touch`、`rm`、`mkdir`、`pwd`、`help`、`clear`。
 - 不支持：管道、`cd`、其他程序。
 - 被屏蔽的：`git config`、`git -c`、`push/pull/fetch/clone`、`rebase --exec`、`bisect run`、`--output`、`--no-index` 这类能执行任意命令或碰到沙箱外文件的用法。
-- 每道题的现场在 `.sandbox/<lesson>/<qid>/`，用的是独立的 git 配置，不会碰到你自己的 git 设置。
+- 每道题的现场在 `data/sandbox/<lesson>/<qid>/`，用的是独立的 git 配置，不会碰到你自己的 git 设置。
 
 ### short
 

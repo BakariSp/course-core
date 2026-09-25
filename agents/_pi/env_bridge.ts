@@ -1,9 +1,9 @@
 /**
  * pi 适配器：把 cs-study 学习环境的工具注册给 pi。这里没有业务逻辑，只做转发。
  *
- * 工具的定义和实现都在 Python（studykit/agent_env/tools.py）。这个文件启动时问 Python
+ * 工具的定义和实现都在 Python（studykit/app/harness.py，入口 studykit/agent_tools.py）。这个文件启动时问 Python
  * 要工具清单，模型每次调用工具时再把参数交给 Python 执行。
- * 由 runner（studykit/agent_env/runner.py）通过环境变量告诉它：用哪个 Python、仓库在哪、本次运行目录、开放哪些工具。
+ * 由 harness（studykit/adapters/pi.py）通过环境变量告诉它：用哪个 Python、仓库在哪、本次运行目录、开放哪些工具。
  */
 import { execFileSync } from "node:child_process";
 import { Type } from "@earendil-works/pi-ai";
@@ -15,7 +15,7 @@ const RUN_DIR = process.env.STUDY_RUN_DIR ?? "";
 const TOOLS = process.env.STUDY_TOOLS ?? "";
 
 function py(args: string[], input?: string): string {
-	return execFileSync(PYTHON, ["-m", "studykit.agent_env", ...args], {
+	return execFileSync(PYTHON, ["-m", "studykit.agent_tools", ...args], {
 		cwd: ROOT,
 		input,
 		encoding: "utf-8",

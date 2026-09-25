@@ -2,10 +2,10 @@ schema_version: 1
 answers:
   q1:
     answer: B
-    explain: attempts.jsonl 只追加不改写，记录每次答题的原始证据。progress.md 是从它算出来的视图；syllabus.yaml 记的是你看了哪些课，不是答题记录。
+    explain: 数据库里的证据表只追加不改写（触发器拒绝修改），记录每次答题的原始证据。progress.md 是从它算出来的视图；syllabus.yaml 记的是你看了哪些课，不是答题记录。
   q2:
     answer: [A, D]
-    explain: syllabus.yaml 是给人改的；code/ex1.py 是你写答案的地方。attempts.jsonl 只能由程序追加，progress.md 每次都会被重新生成，手改的内容会被覆盖。
+    explain: syllabus.yaml 是给人改的；code/ex1.py 是你写答案的地方。数据库只能由程序追加（手改会被触发器拒绝），progress.md 每次都会被重新生成，手改的内容会被覆盖。
   q3:
     blanks: [[理解], [分析]]
     explain: 记忆 → 理解 → 应用 → 分析，越往后越接近"能在陌生代码里判断对错"。
