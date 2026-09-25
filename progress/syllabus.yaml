@@ -12,7 +12,7 @@ topics:
     title: 开发工具
     concepts: {}
     units:
-      - {id: tools-01-shell, title: Shell, status: watching, notes: "练习环境：Git Bash 已验证可用；WSL Ubuntu 待装（需管理员权限）"}
+      - {id: tools-01-shell, title: Shell, status: watching, notes: "练习环境：Git Bash 已验证可用；WSL Ubuntu 待装（需管理员权限）。零基础：glob/sed 段完全听不懂，需从「终端/shell/命令三个角色」讲起；出题只考到「谁是读者」「引号改变读者」这一层，不考正则本身。"}
       - {id: tools-02-git, title: Git 与版本控制, status: todo}
       - {id: tools-03-debug, title: 调试与性能分析, status: todo}
 
