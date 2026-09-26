@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import re
 
+from studykit.domain.artifact import Finding, section_address
 from studykit.domain.plan import sections_of
-from studykit.domain.plan_check import PlanLimits
+from studykit.domain.plan_check import EVALUATOR, PlanLimits
+from studykit.specs.cs_practice.safety import command_safety
 
 # WHY: 这些是 shell 语法里跟在别的词后面的关键字，出现在行首不代表是一个新命令。
 _NOT_COMMANDS = {"then", "do", "done", "fi", "else", "elif", "esac", "in", "{", "}", "(", ")", "!"}
@@ -32,10 +34,10 @@ def inline_commands(markdown: str) -> set[str]:
     return words
 
 
-def declared_commands(plan: dict, limits: PlanLimits) -> list[str]:
+def declared_commands(plan: dict, limits: PlanLimits) -> list[Finding]:
     """讲解和动手里用到的命令，要么学习者已经会，要么在本节或前面的节列进了 terms（D-017）。"""
     errors, known = [], set(limits.known_terms)
-    for i, s in enumerate(sections_of(plan), 1):
+    for i, s in enumerate(sections_of(plan)):
         terms = s.get("terms") or []
         known |= {str(t.get("id")) for t in terms} | {str(t.get("term", "")).lower() for t in terms}
         used = inline_commands(s.get("explain", "")) | inline_commands(s.get("mission", ""))
@@ -43,12 +45,17 @@ def declared_commands(plan: dict, limits: PlanLimits) -> list[str]:
             used |= command_words(t.get("command", ""))
         undeclared = sorted(w for w in used if w not in known)
         if undeclared:
-            errors.append(f"第 {i} 节「{s.get('title', '')}」：用到了学习者还不认识的命令 {', '.join(undeclared)}。"
-                          "要么列进这一节的 terms（给一句话解释），要么换成已经学过的命令")
+            errors.append(Finding(section_address(i), f"第 {i + 1} 节「{s.get('title', '')}」：用到了学习者还不认识的命令 "
+                                  f"{', '.join(undeclared)}。要么列进这一节的 terms（给一句话解释），要么换成已经学过的命令",
+                                  EVALUATOR))
     return errors
 
 
-def lab_defined(plan: dict, limits: PlanLimits) -> list[str]:
+def lab_defined(plan: dict, limits: PlanLimits) -> list[Finding]:
+    return [Finding("/lab", what, EVALUATOR) for what in _lab_problems(plan)]
+
+
+def _lab_problems(plan: dict) -> list[str]:
     has_task = any(c.get("type") == "lab" for s in sections_of(plan) for c in s.get("checkpoint") or [])
     lab = plan.get("lab")
     if has_task and not lab:
@@ -89,7 +96,7 @@ def lab_checkpoint(where: str, c: dict) -> list[str]:
     return errors
 
 
-RULES = [declared_commands, lab_defined]
+RULES = [declared_commands, lab_defined, command_safety]
 CHECKPOINT_RULES = {"lab": lab_checkpoint}
 
 # ---------- 给 agent 看的 schema 片段 ----------

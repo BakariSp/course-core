@@ -1,5 +1,7 @@
 """课程计划的硬性检查（agent 提交时就跑，不通过退回去让它改）+ 给导师审阅的 Markdown 版本。
 
+每个问题都是一条带地址的发现（D-035），修复时只改那一处。
+
 core 只检查学什么都成立的东西：预算、每节新词数、必填项、知识节点、检查点的通用字段、出处。
 学科相关的规则（cs-practice：练习场、"用到的命令必须先声明"）由学科 spec 通过 rules 传进来。
 INVARIANT: 时间预算、每节新词数是硬约束，超了不收（F-014、F-019）。
@@ -11,8 +13,9 @@ import re
 from dataclasses import dataclass, field
 from typing import Callable
 
+from studykit.domain.artifact import Finding, checkpoint_address, section_address
 from studykit.domain.ids import NODE_ID_RE
-from studykit.domain.plan import plan_minutes, plan_sessions, sections_of
+from studykit.domain.plan import plan_minutes, plan_parts, plan_sessions, sections_of
 
 # WHY: 中文里链接常被全角括号、引号、句号包着（如「（https://…）」），这些字符不能算进 URL，
 # 否则核对出处和检查能否打开都会误报。整个环境只用这一个提取函数。
@@ -50,8 +53,10 @@ class PlanLimits:
         return self.unit.split("-")[0]
 
 
-# 学科规则：(计划, 限制) → 错误列表；检查点规则：(位置描述, 检查点) → 错误列表
-PlanRule = Callable[[dict, PlanLimits], list[str]]
+EVALUATOR = "plan_check"
+
+# 学科规则：(计划, 限制) → 发现（自己给地址）；检查点规则：(位置描述, 检查点) → 文字（地址由调用方给）
+PlanRule = Callable[[dict, PlanLimits], list[Finding]]
 CheckpointRule = Callable[[str, dict], list[str]]
 
 
@@ -94,86 +99,100 @@ def _check_checkpoint(where: str, c: dict, node_ids: set[str], limits: PlanLimit
     return errors
 
 
-def check_plan(plan: dict, limits: PlanLimits, rules: list[PlanRule] = (),
-               checkpoint_rules: dict[str, CheckpointRule] | None = None) -> list[str]:
+def plan_findings(plan: dict, limits: PlanLimits, rules: list[PlanRule] = (),
+                  checkpoint_rules: dict[str, CheckpointRule] | None = None) -> list[Finding]:
+    """环境检查（D-035）：每个问题都带地址，修复时只改那一处。"""
+    out: list[Finding] = []
+    add = lambda address, what: out.append(Finding(address, what, EVALUATOR))  # noqa: E731
     if not isinstance(plan, dict):
-        return ["plan 必须是一个对象"]
-    errors = []
+        return [Finding("", "plan 必须是一个对象", EVALUATOR)]
     for key in ("title", "summary"):
         if not str(plan.get(key) or "").strip():
-            errors.append(f"缺少 {key}")
+            add("/" + key, f"缺少 {key}")
     if not plan.get("sources"):
-        errors.append("至少要有一个出处（sources，整个单元列一次）")
+        add("/sources", "至少要有一个出处（sources，整个单元列一次）")
     sections = sections_of(plan)
     if not sections:
-        errors.append("至少要有一个 part 和一个 section")
+        add("", "至少要有一个 part 和一个 section")
 
     proposed = {n.get("id"): n for n in plan.get("nodes") or []}
     for nid, n in proposed.items():
         if not NODE_ID_RE.match(str(nid or "")):
-            errors.append(f"nodes：id 格式不对：{nid}（小写，点分层，如 {limits.topic}.cmd.grep）")
+            add("/nodes", f"nodes：id 格式不对：{nid}（小写，点分层，如 {limits.topic}.cmd.grep）")
         elif not nid.startswith(limits.topic + "."):
-            errors.append(f"nodes：{nid} 要以学科 {limits.topic}. 开头")
+            add("/nodes", f"nodes：{nid} 要以学科 {limits.topic}. 开头")
         if nid in limits.existing_nodes:
-            errors.append(f"nodes：{nid} 已经在知识图里了，直接用，不要重复提议")
+            add("/nodes", f"nodes：{nid} 已经在知识图里了，直接用，不要重复提议")
         if not str(n.get("desc") or "").strip():
-            errors.append(f"nodes：{nid} 缺少 desc")
+            add("/nodes", f"nodes：{nid} 缺少 desc")
     node_ids = set(limits.existing_nodes) | set(proposed)
     for nid, n in proposed.items():
         for r in n.get("requires") or []:
             if r not in node_ids:
-                errors.append(f"nodes：{nid} 的先修 {r} 不存在（知识图里没有，也没有提议）")
+                add("/nodes", f"nodes：{nid} 的先修 {r} 不存在（知识图里没有，也没有提议）")
 
     known = set(limits.known_terms)
-    for i, s in enumerate(sections, 1):
-        name = f"第 {i} 节「{s.get('title', '')}」"
+    for i, s in enumerate(sections):
+        at = section_address(i)
+        name = f"第 {i + 1} 节「{s.get('title', '')}」"
         m = s.get("minutes")
         if not isinstance(m, int) or isinstance(m, bool) or m <= 0:
-            errors.append(f"{name}：minutes 必须是正整数")
+            add(at, f"{name}：minutes 必须是正整数")
         elif m > limits.session_minutes:
-            errors.append(f"{name}：{m} 分钟超过单次学习上限 {limits.session_minutes} 分钟，拆成几节")
+            add(at, f"{name}：{m} 分钟超过单次学习上限 {limits.session_minutes} 分钟，拆成几节")
         for key in ("goal", "explain"):
             if not str(s.get(key) or "").strip():
-                errors.append(f"{name}：缺少 {key}")
+                add(at, f"{name}：缺少 {key}")
         if len(str(s.get("explain") or "")) < 120:
-            errors.append(f"{name}：explain 太短，要把这一节讲清楚，学习者只读这里就能学会")
+            add(at, f"{name}：explain 太短，要把这一节讲清楚，学习者只读这里就能学会")
         if not s.get("try"):
-            errors.append(f"{name}：至少要有一条动手（try）")
+            add(at, f"{name}：至少要有一条动手（try）")
         for t in s.get("try") or []:
             if not str(t.get("command") or "").strip() or not str(t.get("expect") or "").strip():
-                errors.append(f"{name}：每条动手都要有 command 和 expect")
+                add(at, f"{name}：每条动手都要有 command 和 expect")
         if s.get("pitfalls") or s.get("sources"):
-            errors.append(f"{name}：不要再写 pitfalls / sources。常见坑写进检查点的 traps（答错时才出现），出处写在单元的 sources 里")
+            add(at, f"{name}：不要再写 pitfalls / sources。常见坑写进检查点的 traps（答错时才出现），出处写在单元的 sources 里")
         terms = s.get("terms") or []
         new_terms = [t for t in terms if str(t.get("id")) not in known and str(t.get("term", "")).lower() not in known]
         if len(new_terms) > limits.max_new_terms:
-            errors.append(f"{name}：新词 {len(new_terms)} 个，超过每节上限 {limits.max_new_terms} 个。"
-                          "新东西太多学习者记不住：把这一节拆成两节，或者把次要的词挪到后面的节")
+            add(at, f"{name}：新词 {len(new_terms)} 个，超过每节上限 {limits.max_new_terms} 个。"
+                    "新东西太多学习者记不住：把这一节拆成两节，或者把次要的词挪到后面的节")
         for t in terms:
             if not all(str(t.get(k) or "").strip() for k in ("id", "term", "explain")):
-                errors.append(f"{name}：每个新词都要有 id / term / explain")
+                add(at, f"{name}：每个新词都要有 id / term / explain")
             elif t["id"] not in node_ids:
-                errors.append(f"{name}：新词 {t['term']} 的 id {t['id']} 不在知识图里，要在 nodes 里提议")
+                add(at, f"{name}：新词 {t['term']} 的 id {t['id']} 不在知识图里，要在 nodes 里提议")
         known |= {str(t.get("id")) for t in terms} | {str(t.get("term", "")).lower() for t in terms}
         items = s.get("checkpoint") or []
         if not 1 <= len(items) <= 3:
-            errors.append(f"{name}：检查点要 1–3 道题，现在 {len(items)} 道")
-        for j, c in enumerate(items, 1):
-            errors += _check_checkpoint(f"{name} 检查点第 {j} 题", c, node_ids, limits, checkpoint_rules or {})
+            add(at, f"{name}：检查点要 1–3 道题，现在 {len(items)} 道")
+        for j, c in enumerate(items):
+            for what in _check_checkpoint(f"{name} 检查点第 {j + 1} 题", c, node_ids, limits, checkpoint_rules or {}):
+                add(checkpoint_address(i, j), what)
 
     total = plan_minutes(plan)
     if total > limits.unit_budget_minutes:
-        errors.append(f"总时长 {total} 分钟超过单元预算 {limits.unit_budget_minutes} 分钟。"
-                      "砍掉次要的小节放进 later，不要压缩每节的分钟数来凑数")
+        add("", f"总时长 {total} 分钟超过单元预算 {limits.unit_budget_minutes} 分钟。"
+                "砍掉次要的小节放进 later，不要压缩每节的分钟数来凑数")
     outcomes = plan.get("outcomes") or []
     if not 3 <= len(outcomes) <= 5:
-        errors.append(f"outcomes 要 3-5 条，现在是 {len(outcomes)} 条")
+        add("/outcomes", f"outcomes 要 3-5 条，现在是 {len(outcomes)} 条")
     for url in sorted(plan_urls(plan)):
         if url_key(url) not in limits.grounded:
-            errors.append(f"链接没有打开过：{url}。只能引用你用 fetch_url 打开过的页面")
+            add("", f"链接没有打开过：{url}。只能引用你用 fetch_url 打开过的页面")
     for rule in rules:
-        errors += rule(plan, limits)
-    return errors
+        out += rule(plan, limits)
+    return out
+
+
+def render_by_address(plan: dict) -> str:
+    """课程计划按地址逐块列出（给评审模型和修复用：它们的发现和修改都要落在这些地址上）。"""
+    titles = {f"/sections/{i}": s.get("title", "") for i, s in enumerate(sections_of(plan))}
+    blocks = []
+    for addr, value in plan_parts(plan).items():
+        head = f"## {addr}" + (f" · 第 {int(addr.split('/')[2]) + 1} 节 {titles[addr]}" if addr in titles else "")
+        blocks.append(f"{head}\n\n```json\n{json.dumps(value, ensure_ascii=False, indent=1)}\n```")
+    return "\n\n".join(blocks)
 
 
 def render_plan_md(plan: dict, session_minutes: int = 45) -> str:

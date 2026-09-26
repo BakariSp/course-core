@@ -147,6 +147,40 @@ MIGRATIONS = [
     DROP INDEX one_grade_per_answer;
     CREATE UNIQUE INDEX one_grade_per_grader ON evidence(caused_by, actor_id) WHERE verb = 'graded';
     """,
+    # D-033：版本组成的内容（prompt 各部件、任务模板、工具和上下文配方的源码、rubric）按哈希存一份，永远取得回来
+    """
+    CREATE TABLE blob (
+      hash    TEXT PRIMARY KEY,
+      content TEXT NOT NULL
+    );
+    CREATE TRIGGER blob_no_update BEFORE UPDATE ON blob BEGIN SELECT RAISE(ABORT, 'blobs are immutable'); END;
+    CREATE TRIGGER blob_no_delete BEFORE DELETE ON blob BEGIN SELECT RAISE(ABORT, 'blobs are immutable'); END;
+    """,
+    # D-035 / PRD_V2 阶段 A：产出循环的两个评分者——评审模型（reviewer）和循环的结论（loop）。
+    # SQLite 改不了 CHECK，只能重建表；旧行原样搬过去（DROP TABLE 不触发"不许删"的触发器）。
+    """
+    CREATE TABLE grade_new (
+      id             TEXT PRIMARY KEY,
+      ts             TEXT NOT NULL,
+      run            TEXT NOT NULL REFERENCES run(id),
+      grader         TEXT NOT NULL CHECK (grader IN ('check', 'reviewer', 'practice_verify', 'loop', 'judge', 'claim_check',
+                                                     'review', 'outcome')),
+      grader_version TEXT NOT NULL,
+      actor          TEXT NOT NULL,
+      score          REAL CHECK (score IS NULL OR score BETWEEN 0 AND 1),
+      verdict        TEXT NOT NULL,
+      dims           TEXT NOT NULL,
+      issues         TEXT NOT NULL,
+      refs           TEXT NOT NULL,
+      detail         TEXT NOT NULL
+    );
+    INSERT INTO grade_new SELECT * FROM grade;
+    DROP TABLE grade;
+    ALTER TABLE grade_new RENAME TO grade;
+    CREATE INDEX grade_by_run ON grade(run, grader, ts);
+    CREATE TRIGGER grade_no_update BEFORE UPDATE ON grade BEGIN SELECT RAISE(ABORT, 'grades are append-only'); END;
+    CREATE TRIGGER grade_no_delete BEFORE DELETE ON grade BEGIN SELECT RAISE(ABORT, 'grades are append-only'); END;
+    """,
 ]
 
 
@@ -295,6 +329,25 @@ class SqliteStore:
         with self._conn() as c:
             r = c.execute("SELECT * FROM variant WHERE id = ?", (variant_id,)).fetchone()
         return Variant(r["agent"], json.loads(r["parts"])) if r else None
+
+    def add_variant(self, variant: Variant, first_seen: str) -> None:
+        with self._tx() as c:
+            c.execute("INSERT OR IGNORE INTO variant (id, agent, parts, first_seen) VALUES (?,?,?,?)",
+                      (variant.id, variant.agent, _j(variant.parts), first_seen))
+
+    def variants(self, agent: str) -> list[tuple[Variant, str]]:
+        with self._conn() as c:
+            return [(Variant(r["agent"], json.loads(r["parts"])), r["first_seen"])
+                    for r in c.execute("SELECT * FROM variant WHERE agent = ? ORDER BY first_seen, rowid", (agent,))]
+
+    def put_blobs(self, blobs: dict[str, str]) -> None:
+        with self._tx() as c:
+            c.executemany("INSERT OR IGNORE INTO blob (hash, content) VALUES (?,?)", list(blobs.items()))
+
+    def blob(self, key: str) -> str | None:
+        with self._conn() as c:
+            r = c.execute("SELECT content FROM blob WHERE hash = ?", (key,)).fetchone()
+        return r["content"] if r else None
 
     def add_grade(self, g: Grade) -> None:
         with self._tx() as c:

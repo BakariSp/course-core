@@ -40,6 +40,54 @@ def plan_sessions(plan: dict, session_minutes: int) -> list[list[int]]:
     return sessions
 
 
+# ---------- 按地址切分和替换（D-035：定点修复） ----------
+
+def plan_parts(plan: dict) -> dict[str, object]:
+    """课程计划切成可比较的"部分"：每一节 /sections/i（全书顺序）、练习场 /lab、其余每个顶层字段 /<字段>。
+    parts（部分的标题和小节归属）算作 /parts，小节内容不在里面。"""
+    out: dict[str, object] = {f"/sections/{i}": s for i, s in enumerate(sections_of(plan))}
+    for k, v in plan.items():
+        if k == "parts":
+            out["/parts"] = [{**{kk: vv for kk, vv in p.items() if kk != "sections"}, "sections": len(p.get("sections") or [])}
+                             for p in v or []]
+        elif k != "provenance":
+            out[f"/{k}"] = v
+    return out
+
+
+def plan_addresses(plan: dict) -> set[str]:
+    """课程计划里所有合法的地址（检验器只能指这些地方）。"""
+    out = {"", *plan_parts(plan)}
+    for i, s in enumerate(sections_of(plan)):
+        out |= {f"/sections/{i}/checkpoint/{j}" for j in range(len(s.get("checkpoint") or []))}
+    return out
+
+
+def replace_part(plan: dict, address: str, value) -> dict:
+    """返回替换了一个部分的新计划（不改原计划）。地址是 repair_unit 给出的修复单位：""、/sections/i 或 /<顶层字段>。"""
+    if address == "":
+        if not isinstance(value, dict):
+            raise CourseError("整份替换要给一个完整的课程计划对象")
+        return copy.deepcopy(value)
+    out = copy.deepcopy(plan)
+    segs = address.strip("/").split("/")
+    if segs[0] == "sections" and len(segs) == 2 and segs[1].isdigit():
+        i = int(segs[1])
+        for p in out.get("parts") or []:
+            n = len(p.get("sections") or [])
+            if i < n:
+                if not isinstance(value, dict):
+                    raise CourseError(f"{address} 要是一个小节对象")
+                p["sections"][i] = copy.deepcopy(value)
+                return out
+            i -= n
+        raise CourseError(f"没有这一节：{address}")
+    if len(segs) == 1 and segs[0] and segs[0] not in ("parts", "provenance", "sections"):
+        out[segs[0]] = copy.deepcopy(value)
+        return out
+    raise CourseError(f"不能按这个地址替换：{address}")
+
+
 def plan_id(plan: dict) -> str:
     return (plan.get("provenance") or {}).get("run") or "draft"
 

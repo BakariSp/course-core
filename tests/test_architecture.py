@@ -52,7 +52,9 @@ def _within(name: str, prefix: str) -> bool:
     return name == prefix or name.startswith(prefix + ".")
 
 
-SHARED = ("studykit.domain.errors", "studykit.domain.ids")      # 两个领域共用的内核
+# 两个领域共用的内核。artifact（产出物与发现，D-035）是检验器和生成者之间唯一的接口：
+# 学习域的课程计划检查产出它，harness 域的评审模型解析也产出它
+SHARED = ("studykit.domain.errors", "studykit.domain.ids", "studykit.domain.artifact")
 
 
 def _crosses_domains(mod: str, name: str) -> bool:

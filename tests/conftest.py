@@ -46,12 +46,19 @@ class FakeRuntime:
 
     def __init__(self):
         self.script = []          # [(工具名, 参数)]
+        self.scripts = []         # 每次运行一份脚本（生成、修复……），按顺序用完后再用 script
         self.judge_reply = ""
+        self.review_reply = '{"unsafe": [], "findings": []}'
+        self.reviews = []         # 评审模型每次拿到的输入（review_input.md）
+        self.runs = []            # 每次运行开放的工具
         self.harness = None
 
-    def run(self, agent: AgentDef, workspace: Path, model: dict, tools: list[str], timeout: int) -> RawRun:
+    def run(self, agent: AgentDef, workspace: Path, model: dict, tools: list[str], timeout: int,
+            system_prompt: Path | None = None) -> RawRun:
+        self.system_prompt = system_prompt
+        self.runs.append(tools)
         steps = []
-        for name, args in self.script:
+        for name, args in (self.scripts.pop(0) if self.scripts else self.script):
             try:
                 text, ok = self.harness.call_tool(workspace, name, args), True
             except Exception as e:  # noqa: BLE001
@@ -61,6 +68,9 @@ class FakeRuntime:
         return RawRun(steps, 0, 1.5)
 
     def complete(self, model, system, prompt_file, workspace, timeout):
+        if "安全闸门" in system:                  # 评审模型（agents/tutor-prep/reviewer.md）
+            self.reviews.append(prompt_file.read_text(encoding="utf-8"))
+            return self.review_reply
         return self.judge_reply
 
 

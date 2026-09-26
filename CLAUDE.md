@@ -31,19 +31,19 @@
 题目由**检验器**判分：`choice`（单选/多选）、`fill`（多空填空）、`code`（pytest）、`terminal`（练习终端里跑真实 git）、`short`（导师批改）。
 各检验器的写法和掌握度等级见 [docs/question-format.md](docs/question-format.md)，出题前先读。
 
-## 助教 agent（课前讲解、找资料）
+## 备课（课前讲解、练习场）：系统自己跑，你不在流程里（PRD_V2、D-037）
 
-学习者说"准备看 X"时，**不要自己写课前讲解**。流程：
+学习者说"准备看 X"时，**不要自己写课前讲解，也不要手动审阅、验证、发布**。备课是产出循环（D-035，`studykit/app/prep.py`）：
+生成 → 自动检查（含命令安全的固定规则）→ 评审模型读命令（安全闸门）→ 在临时目录跑练习场 → 评审模型看质量 → 只修被指出的部分，
+最多 3 轮 / $1；通过就发布（学习者已经开始学的单元，新版本等学习者在面板上确认）。
 
-1. 跑 `python study.py agent run tutor-prep --unit <单元 id>`，读 `data/runs/tutor-prep/<运行>/` 里的产出（`output.md`）、输入（`input.json`）和读过的页面（`fetches.jsonl`，含读到的原文）。
-2. 自己审阅，结论用 `python study.py agent review tutor-prep --run <运行> --verdict publish|revise|reject --issue "层:问题" --note "..."` 记下来（层是 prompt / context / tools / model / runtime / eval）。
-   评分模型的判断要抽查（到 `fetches.jsonl` 里核对它质疑的内容）。
-3. 通过就先读 `output.md` 里的动手命令和参考做法，确认没问题后跑 `python study.py lab verify <运行>`（会在本机执行这些命令），
-   再 `python study.py agent publish tutor-prep --run <运行>`，把课程页 `/?unit=<单元>` 给学习者。发布会把 agent 提议的知识节点并入 `knowledge/`。
-   学习者用过之后跑 `python study.py course-eval <单元> --write`（记为那次运行的"学习结果"评分，是最终裁判），看预测和实际差在哪，决定下一次改什么。
-4. 不通过就先判断问题在哪一层（prompt / 上下文 / 工具 / 评测），一次只改一处，跑全部用例，用 `agent report` 按版本对比（它会列出两版差在哪一层）。
+1. 学习者在备课面板（`/?panel=1`）点「备课」，或者跑 `python study.py prepare <单元>`（`--from <运行>` 从已有的一次运行接着检验和修复）。
+2. 停在"需要你决定"时，面板和命令输出会列出卡住的发现（地址 + 哪个检验器 + 证据）。这时你是**开发者的编码助手**：
+   先判断问题在哪一层（prompt / 上下文 / 工具 / 模型 / 检验器），一次只改一处，跑全部用例，用 `agent report` 按版本对比。
    你的工作是改 `agents/` 里的 prompt 和评测，以及 `studykit/app/harness.py`（上下文配方、工具）和学科 spec 的规则；不是替 agent 写内容。
-   **改评测标准**（rubric、用例、评分器）要先在 `design/DECISIONS.md` 提议、学习者拍板——优化者不能自己改卷（D-022）。
+3. 抽查评审模型的判断（`data/runs/tutor-prep/<运行>/review_input.md` 和 Grade 里的 findings，到 `fetches.jsonl` 里核对），发现评审错了是**检验器**的问题。
+   **改评测标准**（rubric、用例、评分器、评审模型的 prompt）要先在 `design/DECISIONS.md` 提议、学习者拍板——优化者不能自己改卷（D-022）。
+4. 学习者用过之后跑 `python study.py course-eval <单元> --write`（学习结果，最终裁判），看预测和实际差在哪。
 
 架构和迭代纪律见 [agents/README.md](agents/README.md)，代码分层见 [docs/backend-core-design.md](docs/backend-core-design.md)。学习者画像在 `progress/learner.md`，学习者可以直接改。
 

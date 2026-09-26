@@ -335,7 +335,6 @@ main.wide { max-width: 1560px; }
 .pn-table tr.on td { background: var(--accent-soft); }
 .pn-who { display: inline-block; font-size: 11.5px; padding: 0 7px; border-radius: 999px; border: 1px solid var(--border); margin-left: 6px; }
 .pn-who.learner { color: var(--ok); border-color: var(--ok); }
-.pn-who.tutor { color: var(--warn); border-color: var(--warn); }
 .pn-who.agent { color: var(--accent); border-color: var(--accent); }
 .pn-detail { margin-top: 18px; }
 .pn-detail h3 { margin: 18px 0 6px; font-size: 15px; }
@@ -1639,8 +1638,7 @@ async function showLog() {
 }
 
 // ---------- 备课面板（D-032）：课程清单 × 学习进度 × 备课流水线 × agent 看到的上下文 ----------
-const WHO = { learner: "该你", tutor: "等导师", agent: "agent 在跑" };
-const LAYER = { prompt: "prompt", context: "上下文", tools: "工具", model: "模型", runtime: "运行环境", eval: "评测" };
+const WHO = { learner: "该你", agent: "系统在跑" };
 async function showPanel() {
   document.title = "备课面板";
   document.getElementById("app").classList.add("wide");
@@ -1648,10 +1646,10 @@ async function showPanel() {
   let timer = null;
   fill(document.getElementById("top"),
     $("h1", {}, "备课面板"),
-    $("div", { class: "source" }, "课程清单里每个单元：学到哪了、备课走到哪一步、在等谁；点一行看 agent 读到了什么 · ",
+    $("div", { class: "source" }, "课程清单里每个单元：学到哪了、备课走到哪一步；点一行看每一轮检验和 agent 读到了什么 · ",
       $("a", { href: "?log=1" }, "学习记录"), " · ", $("a", { href: "/" }, "全部课程")));
-  const list = $("div"), detail = $("div", { class: "pn-detail" });
-  document.getElementById("app").replaceChildren(list, detail);
+  const list = $("div"), detail = $("div", { class: "pn-detail" }), versionsBox = $("div", { class: "pn-detail" });
+  document.getElementById("app").replaceChildren(list, detail, versionsBox);
 
   const study = u => {
     const s = { todo: "没开始", watching: "在学", done: `学完 ${u.done_on}` }[u.status] || u.status;
@@ -1662,9 +1660,16 @@ async function showPanel() {
   };
 
   async function prepare(u) {
-    if (!confirm(`让 agent 给「${u.title}」备课？\n大约 12 分钟、$0.25。它只能打开课程清单里的网站、提交课程计划，不会在你电脑上执行命令。\n生成完之后由导师审阅、验证练习场、发布。`)) return;
+    const again = u.course && u.course.passed > 0 ? "\n你已经开始学这个单元：新版本通过后要你确认才会替换。" : "";
+    if (!confirm(`给「${u.title}」备课？\n系统会：生成 → 检验（自动检查、评审模型读命令、在临时目录里跑一遍练习场）→ 只修被指出的地方，最多 3 轮 / $1。\n通过就直接发布；卡住了会停下来告诉你卡在哪。${again}`)) return;
     try { await api("/api/panel/prepare", { unit: u.id }); } catch (e) { return alert(e.message); }
     selected = u.id; load();
+  }
+
+  async function publish(u) {
+    if (!confirm(`把「${u.title}」换成新版本？\n进度按版本记：新版本从第 1 节开始算，旧版本的答题记录都保留。`)) return;
+    try { await api("/api/panel/publish", { unit: u.id }); } catch (e) { return alert(e.message); }
+    load();
   }
 
   async function load() {
@@ -1685,8 +1690,9 @@ async function showPanel() {
             u.prep.behind ? $("div", { class: "hint" }, "课程页上还是旧的那一版") : null,
             u.prep.job_error ? $("div", { class: "error" }, "上次生成出错：" + u.prep.job_error) : null),
           $("td", { class: "wide-only hint" }, u.prep.next),
-          $("td", {}, u.prep.stage === "preparing" ? $("span", { class: "hint" }, "生成中…")
-            : $("button", { onclick: () => prepare(u) }, u.prep.stage === "todo" ? "生成课程" : "重新生成"))))))));
+          $("td", {}, u.prep.stage === "preparing" ? $("span", { class: "hint" }, "备课中…")
+            : u.prep.stage === "ready" ? $("button", { onclick: () => publish(u) }, "换成新版本")
+            : $("button", { onclick: () => prepare(u) }, u.prep.stage === "todo" ? "备课" : "重新备课"))))))));
     if (selected) showUnit(selected);
   }
 
@@ -1695,24 +1701,25 @@ async function showPanel() {
     try { [d, ctx] = await Promise.all([api(`/api/panel/unit?id=${id}`), api(`/api/panel/context?id=${id}`)]); }
     catch (e) { return fill(detail, $("p", { class: "error" }, e.message)); }
     const show = v => typeof v === "string" ? v : JSON.stringify(v, null, 2);
-    const verdict = g => !g ? "—" : g.verdict || "—";
+    const VERDICT = { pass: "✓ 通过", fail: "✗ 有阻断", accepted: "✓ 放行", escalated: "✗ 需要你决定" };
+    const cell = g => !g ? $("td", { class: "hint" }, "—（没跑到）")
+      : $("td", {}, VERDICT[g.verdict] || g.verdict, ...(g.problems || []).map(x => $("div", { class: "hint" }, x)),
+        ...(g.warnings || []).map(x => $("div", { class: "hint" }, "注意：" + x)));
     fill(detail,
       $("h2", {}, `${id} · ${d.prep.label}`),
       $("p", {}, $("b", {}, "下一步："), d.prep.next),
-      Object.keys(d.open_issues).length ? $("div", {}, $("h3", {}, "导师最近一次审阅里要改的（按层）"),
-        $("ul", { class: "pn-issues" }, Object.entries(d.open_issues).flatMap(([layer, xs]) =>
-          xs.map(x => $("li", {}, $("b", {}, `[${LAYER[layer] || layer}] `), x))))) : null,
-      $("h3", {}, `备课记录（${d.runs.length} 次）`),
+      d.prep.stuck?.length ? $("div", {}, $("h3", {}, "卡在这些地方"),
+        $("ul", { class: "pn-issues" }, d.prep.stuck.map(x => $("li", {}, x)))) : null,
+      $("h3", {}, `备课记录（${d.runs.length} 次运行；修复也是一次运行）`),
+      $("p", { class: "hint" }, "每一轮按顺序检验，前面有阻断就不跑后面的：自动检查 → 评审模型读命令（安全闸门）→ 练习场实跑 → 评审模型看质量。"),
       d.runs.length ? $("table", { class: "pn-table" },
-        $("tr", {}, $("th", {}, "运行"), $("th", {}, "自动检查"), $("th", {}, "评分"), $("th", {}, "导师审阅"), $("th", {}, "练习场验证"), $("th", { class: "wide-only" }, "用时 / 花费")),
+        $("tr", {}, $("th", {}, "运行"), $("th", {}, "自动检查"), $("th", {}, "评审模型"), $("th", {}, "练习场实跑"), $("th", {}, "这一轮的结论"), $("th", { class: "wide-only" }, "用时 / 花费")),
         d.runs.map(r => $("tr", {},
-          $("td", {}, r.id.slice(0, 15), r.published ? $("div", { class: "hint" }, "★ 课程页在用这一版") : null,
+          $("td", {}, r.id.slice(0, 15) + (r.repair_of ? " · 修复" : ""), r.published ? $("div", { class: "hint" }, "★ 课程页在用这一版") : null,
             $("div", { class: "hint" }, `版本 ${r.variant}`)),
-          $("td", {}, verdict(r.check), ...(r.check?.failed || []).map(x => $("div", { class: "hint" }, x))),
-          $("td", {}, r.judge?.avg ?? "—", r.judge?.top_issue ? $("div", { class: "hint" }, r.judge.top_issue) : null),
-          $("td", {}, verdict(r.review), r.review?.issues?.length ? $("ul", { class: "pn-issues hint" },
-            r.review.issues.map(i => $("li", {}, `[${LAYER[i.layer] || i.layer}] ${i.what}`))) : null),
-          $("td", {}, verdict(r.verify), ...(r.verify?.problems || []).map(x => $("div", { class: "hint" }, x))),
+          cell(r.check), cell(r.reviewer), cell(r.verify),
+          r.loop ? $("td", {}, VERDICT[r.loop.verdict] || r.loop.verdict, $("div", { class: "hint" }, `${r.loop.rounds} 轮 · $${r.loop.spent_usd}`))
+            : $("td", { class: "hint" }, "—"),
           $("td", { class: "wide-only hint" }, `${r.minutes} 分钟 · $${r.cost_usd}`)))) : $("p", { class: "hint" }, "还没有备课记录。"),
       $("h3", {}, "agent 备课时读到的输入"),
       $("p", { class: "hint" }, ctx.last_run
@@ -1728,7 +1735,24 @@ async function showPanel() {
         $("pre", {}, pr.text))));
   }
 
+  // 版本（D-033）：每个调用 LLM 的地方，每一版和上一版比改了哪些部件
+  async function showVersions() {
+    let v;
+    try { v = await api("/api/panel/versions"); } catch (e) { return fill(versionsBox, $("p", { class: "error" }, e.message)); }
+    const CH = { added: "新增", removed: "删掉", changed: "改了" };
+    fill(versionsBox, $("h2", {}, "prompt 版本"),
+      $("p", { class: "hint" }, "每个调用 LLM 的地方各有一条版本历史。版本 = prompt 各部件 + 任务模板 + 工具 / 上下文代码 + 模型；每个部件的每一版内容都存在数据库里（D-033）。D-033 之前的版本只记了哈希，内容取不回来。"),
+      v.agents.map(a => $("section", {},
+        $("h3", {}, `${a.title} `, $("span", { class: "hint" }, `${a.agent} · ${a.versions.length} 个版本`)),
+        a.versions.length ? $("div", {}, a.versions.slice().reverse().map(x => $("details", { class: "pn-block" },
+          $("summary", {}, $("code", {}, x.variant), ` · ${x.first_seen} · 跑了 ${x.runs} 次 · `,
+            x.changed.length ? x.changed.map(c => `${CH[c.change] || c.change} ${c.part}`).join("、") : "第一版"),
+          x.changed.map(c => $("div", {}, $("b", {}, `${CH[c.change] || c.change} ${c.part}`), $("pre", {}, c.diff || "（无文本差异）"))))))
+          : $("p", { class: "hint" }, "还没有记录。"))));
+  }
+
   await load();
+  showVersions();
 }
 
 const UNIT = params.get("unit");

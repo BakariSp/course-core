@@ -193,3 +193,216 @@ nodes:
     - tools.shell.roles
     units:
     - tools-01-shell
+  tools.cmd.git:
+    title: git
+    desc: 版本控制的程序，用法是 git <子命令> <参数>。
+    kind: term
+    units:
+    - tools-02-git
+  tools.git.repo:
+    title: 仓库（repository）
+    desc: 一个普通目录 + 旁边的 .git 目录；这个目录的全部历史都存在 .git 里。
+    kind: concept
+    requires:
+    - tools.cmd.git
+    units:
+    - tools-02-git
+  tools.cmd.git.init:
+    title: git init
+    desc: 把当前目录变成仓库：只多出一个 .git（-b main 顺便把主线名字定成 main），已有文件不动。
+    kind: term
+    requires:
+    - tools.git.repo
+    - tools.shell.cwd
+    units:
+    - tools-02-git
+  tools.cmd.git.status:
+    title: git status
+    desc: 不修改任何东西，只报告：哪些改动在暂存区、哪些没暂存、哪些文件还没被记录（untracked）。
+    kind: term
+    requires:
+    - tools.git.repo
+    units:
+    - tools-02-git
+  tools.cmd.python:
+    title: python
+    desc: 启动 Python 程序：python check.py 让 Python 执行这个文件；脚本用退出码报告成败。
+    kind: term
+    requires:
+    - tools.shell.roles
+    - tools.shell.exitcode
+    units:
+    - tools-02-git
+  tools.git.snapshot:
+    title: 快照与提交（commit）
+    desc: Git 记录历史的方式：一次记下当时所有被跟踪文件的完整内容，一份快照就是一次提交。
+    kind: concept
+    requires:
+    - tools.git.repo
+    units:
+    - tools-02-git
+  tools.git.staging:
+    title: 暂存区（staging area）
+    desc: 工作区和下一次提交之间的一块中间地带，一份“下次要装什么”的清单。
+    kind: concept
+    requires:
+    - tools.git.snapshot
+    units:
+    - tools-02-git
+  tools.cmd.git.add:
+    title: git add
+    desc: 把指定路径的当前内容放进暂存区（可以一次给多个路径）。
+    kind: term
+    requires:
+    - tools.git.staging
+    units:
+    - tools-02-git
+  tools.cmd.git.commit:
+    title: git commit
+    desc: 把暂存区里的内容做成一次提交（快照）；-m 后面跟这次提交的消息。
+    kind: term
+    requires:
+    - tools.git.staging
+    units:
+    - tools-02-git
+  tools.cmd.git.reset:
+    title: git reset <路径>
+    desc: 把路径从暂存区拿回工作区：不进这次提交了，但改动还在。
+    kind: term
+    requires:
+    - tools.git.staging
+    units:
+    - tools-02-git
+  tools.cmd.git.log:
+    title: git log
+    desc: 打印历史（谁、什么时候、为什么）；--oneline 一行一条，--graph --all 画出分叉。
+    kind: term
+    requires:
+    - tools.git.snapshot
+    units:
+    - tools-02-git
+  tools.git.revision:
+    title: 提交哈希（指名一个提交）
+    desc: 按内容算出来的十六进制指纹，可以只用前几位来指名某一个提交。
+    kind: concept
+    requires:
+    - tools.git.snapshot
+    units:
+    - tools-02-git
+  tools.git.head:
+    title: HEAD
+    desc: Git 里表示“我现在站在哪个提交上”的特殊名字；HEAD~1 是往前一次提交。
+    kind: concept
+    requires:
+    - tools.git.revision
+    units:
+    - tools-02-git
+  tools.cmd.git.show:
+    title: git show
+    desc: 打印某一次提交的消息和它改了什么（补丁）。
+    kind: term
+    requires:
+    - tools.cmd.git.log
+    - tools.git.revision
+    units:
+    - tools-02-git
+  tools.cmd.git.diff:
+    title: git diff
+    desc: 比较文件内容；不带参数时只显示还没进暂存区的改动（全都要看用 git diff HEAD）。
+    kind: term
+    requires:
+    - tools.git.staging
+    units:
+    - tools-02-git
+  tools.git.branch:
+    title: 分支（branch）
+    desc: 指向某个提交的一个可移动的名字；历史的分叉靠它，主线通常叫 main。
+    kind: concept
+    requires:
+    - tools.git.head
+    units:
+    - tools-02-git
+  tools.cmd.git.branch:
+    title: git branch
+    desc: 列出所有分支（带 * 的是当前所在）；git branch <名字> 创建新分支但不切过去。
+    kind: term
+    requires:
+    - tools.git.branch
+    units:
+    - tools-02-git
+  tools.cmd.git.switch:
+    title: git switch
+    desc: 切到另一个分支：目录里的文件会变成那个分支的样子。
+    kind: term
+    requires:
+    - tools.git.branch
+    units:
+    - tools-02-git
+  tools.cmd.git.merge:
+    title: git merge
+    desc: 把指定分支的改动合进当前所在的分支；两边改了同一行时会停下来说有冲突。
+    kind: term
+    requires:
+    - tools.git.branch
+    units:
+    - tools-02-git
+  tools.git.conflict:
+    title: 合并冲突与冲突标记
+    desc: <<<<<<<、=======、>>>>>>> 三行把两边的版本围起来，等你自己决定留哪个；删掉标记并 git add 才算解决。
+    kind: concept
+    requires:
+    - tools.cmd.git.merge
+    units:
+    - tools-02-git
+  tools.cmd.git.blame:
+    title: git blame
+    desc: 逐行打印文件：每一行最后一次是被哪个提交改的（哈希）、谁改的、什么时候。
+    kind: term
+    requires:
+    - tools.cmd.git.log
+    - tools.git.revision
+    units:
+    - tools-02-git
+  tools.cmd.git.log-s:
+    title: git log -S
+    desc: 按内容找历史：找出让某段文字出现或消失的那些提交（用 -- 限定路径）。
+    kind: term
+    requires:
+    - tools.cmd.git.log
+    units:
+    - tools-02-git
+  tools.cmd.git.bisect:
+    title: git bisect
+    desc: 在已知的好提交和坏提交之间二分查找：start 开始，bad / good 报告每次结果，reset 回到原处。
+    kind: term
+    requires:
+    - tools.git.revision
+    - tools.shell.exitcode
+    units:
+    - tools-02-git
+  tools.cmd.git.bisect-run:
+    title: git bisect run
+    desc: 让 Git 每换一个版本就自动跑一条命令，按退出码（0 好、非 0 坏）判断，直到找出第一个坏提交。
+    kind: term
+    requires:
+    - tools.cmd.git.bisect
+    - tools.shell.exitcode
+    units:
+    - tools-02-git
+  tools.cmd.git.restore:
+    title: git restore
+    desc: 把文件恢复成上次提交的样子，未提交的改动会丢掉。
+    kind: term
+    requires:
+    - tools.git.snapshot
+    - tools.cmd.git.status
+    units:
+    - tools-02-git
+  tools.git.gitignore:
+    title: .gitignore
+    desc: 仓库根目录里的忽略清单，一行一个模式；只管还没被跟踪的文件，也不会删掉你的文件。
+    kind: concept
+    requires:
+    - tools.cmd.git.status
+    units:
+    - tools-02-git

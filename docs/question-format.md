@@ -35,7 +35,7 @@
 - 交卷前每道题都看不到对错，也没有单题的「提交」；作答草稿存在浏览器里，刷新不丢。
 - 代码题可以「运行测试」（看得到测试结果），**每题最多 5 次**，次数由后端记，用完编辑器锁定。改上限：整套题写 `max_runs: N`，或者某道题单独写 `max_runs: N`。
 - 页面底部一个「交卷」按钮，后端一次判完整卷：每道题照常记一条 `answered`，另记一条 `submitted_exam` 把它们串起来。
-- 简答题由 LLM 批改（`agents/short-grader/`：`grader.yaml` 选模型，`SYSTEM.md` 是批改员的说明），按 `key.yaml` 的 rubric 逐条给分和理由，记为 actor `short-grader` 的 `graded`，**就是最终分**。每次调用的输入和原始回复在 `data/runs/short-grader/`。
+- 简答题由 LLM 批改（`agents/short-grader/`：`grader.yaml` 选模型、列出 prompt 部件，`SYSTEM.md` 是批改员的说明；版本和每一版内容记进数据库，D-033），按 `key.yaml` 的 rubric 逐条给分和理由，记为 actor `short-grader` 的 `graded`，**就是最终分**。每次调用的输入和原始回复在 `data/runs/short-grader/`。
   LLM 失败（模型不可用、回复格式不对）时这道题保持待批改，导师用 `study.py grade` 批。导师也可以对 LLM 批过的题再 `grade` 一次覆盖它（两条都留着，掌握度只算最后一次）。
 - rubric 每条末尾写这一条的满分，如 `（0.5）`，各条加起来是 1；不写分值的条目是加分项（总分封顶 1）。
 

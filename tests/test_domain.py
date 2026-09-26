@@ -3,11 +3,12 @@ import datetime as dt
 
 import pytest
 
-from studykit.domain import course_eval, knowledge, mastery, plan, plan_check, progress, timeline
+from studykit.domain import artifact, course_eval, knowledge, mastery, plan, plan_check, progress, timeline
 from studykit.domain.assessment import CORE_CHECKERS, grade_choice_checkpoint, grade_fill_checkpoint
 from studykit.domain.errors import CourseError, InvalidEvidence, InvalidId
 from studykit.domain.evidence import Actor, Evidence, Verb, VerbRegistry, learner_actor
-from studykit.domain.harness import Grade, Run, Variant, prep_stage, verify_claims, parse_judge, rubric_ids
+from studykit.domain.harness import (Run, Variant, assemble_prompt, parse_judge, part_diffs, prep_stage,
+                                     rubric_ids, verify_claims)
 from studykit.domain.ids import LessonRef, NodeId, UnitId
 
 from tests.conftest import plan_v2
@@ -369,32 +370,40 @@ def _run(rid, submitted=True):
     return Run(rid, "tutor-prep", "v", "u", "me", "batch", rid, {}, submitted=submitted)
 
 
-def _g(rid, grader, verdict="", **kw):
-    return Grade(f"{rid}-{grader}", "t", rid, grader, "1", "x", verdict=verdict, **kw)
-
-
-@pytest.mark.parametrize("grades, published, running, stage, who", [
-    (None, None, False, "todo", "learner"),                                          # 还没有运行
-    ([], None, True, "preparing", "agent"),
-    ([_g("r1", "check", "fail")], None, False, "failed", "tutor"),
-    ([_g("r1", "check", "pass")], None, False, "review", "tutor"),
-    ([_g("r1", "check", "pass"), _g("r1", "practice_verify", "fail")], None, False, "review", "tutor"),
-    ([_g("r1", "check", "pass"), _g("r1", "review", "revise")], None, False, "revise", "tutor"),
-    ([_g("r1", "check", "fail"), _g("r1", "review", "revise")], None, False, "revise", "tutor"),   # 审过了：看审阅结论
-    ([_g("r1", "check", "pass"), _g("r1", "review", "publish")], None, False, "verify", "tutor"),
-    ([_g("r1", "check", "pass"), _g("r1", "review", "publish"), _g("r1", "practice_verify", "pass")], None, False,
-     "ready", "tutor"),
-    ([_g("r1", "check", "pass")], "r1", False, "published", "learner"),
-    (None, "手工发布", False, "published", "learner"),                          # 发布过，但没有运行记录（早期的计划）
-])
-def test_prep_stage_says_where_the_unit_is_and_who_is_next(grades, published, running, stage, who):
-    runs = [] if grades is None else [_run("r1")]
-    s = prep_stage(runs, {"r1": grades or []}, published, running)
-    assert (s["stage"], s["who"]) == (stage, who) and s["next"]
+# 各阶段的判断见 tests/test_prep.py（PRD_V2：备课全程不经过导师）
 
 
 def test_prep_stage_follows_the_latest_run_and_notes_the_older_published_one():
     runs = [_run("20260926-100000-u"), _run("20260926-120000-u", submitted=False)]
     s = prep_stage(runs, {}, "20260926-100000-u", False)
-    assert s["stage"] == "failed" and s["run"] == "20260926-120000-u"
+    assert s["stage"] == "escalated" and s["run"] == "20260926-120000-u"
     assert s["published_run"] == "20260926-100000-u" and s["behind"]            # 学习者在用的是旧的那一版
+
+
+# ---------- prompt 版本（D-033） ----------
+
+def test_prompt_parts_assemble_verbatim_and_versions_diff_part_by_part():
+    assert assemble_prompt([("role", "你是助教\n"), ("rules", "# 规则\n- 一\n")]) == "你是助教\n# 规则\n- 一\n"
+    blobs = {"r1": "# 规则\n- 一\n", "r2": "# 规则\n- 一\n- 二\n", "x": "你是助教\n"}
+    a = Variant("t", {"prompt:role": "x", "prompt:rules": "r1", "model": "m1", "tools": "gone"})
+    b = Variant("t", {"prompt:role": "x", "prompt:rules": "r2", "model": "m2", "prompt:examples": "x", "tools": "gone2"})
+    d = {x["part"]: x for x in part_diffs(a, b, blobs.get)}
+    assert set(d) == {"prompt:rules", "model", "prompt:examples", "tools"}           # 没变的部件不列
+    assert d["prompt:rules"]["change"] == "changed" and "+- 二" in d["prompt:rules"]["diff"]
+    assert d["model"]["diff"] == "- m1\n+ m2"                                        # 不是存下来的文本：直接比值
+    assert d["prompt:examples"]["change"] == "added"
+    assert "没有存下来" in d["tools"]["diff"]                                           # D-033 之前的版本只有哈希
+
+
+# ---------- 产出循环：带地址的发现（D-035） ----------
+
+def test_finding_addresses_point_into_the_artifact():
+    assert artifact.section_address(4) == "/sections/4"
+    assert artifact.checkpoint_address(4, 1) == "/sections/4/checkpoint/1"
+    assert artifact.within("/sections/4/checkpoint/1", "/sections/4")
+    assert artifact.within("/sections/4", "")                                # 空地址 = 整份产出物
+    assert not artifact.within("/sections/40", "/sections/4")                # 不能按字符串前缀误判
+    f = artifact.Finding("/sections/0", "minutes 太大", "plan_check", evidence="60 > 45")
+    assert artifact.Finding.from_dict(f.as_dict()) == f and f.severity == "block"
+    with pytest.raises(ValueError):
+        artifact.Finding("/x", "y", "z", severity="maybe")

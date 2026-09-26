@@ -11,6 +11,7 @@ WHY: 真实 bash 能访问整台电脑，这和学习者自己打开 Git Bash �
 """
 from __future__ import annotations
 
+import json
 import os
 import queue
 import re
@@ -23,6 +24,7 @@ import uuid
 from pathlib import Path
 
 from studykit.domain.errors import DomainError
+from studykit.domain.artifact import Finding, blocking, checkpoint_address, section_address
 from studykit.domain.plan import sections_of
 from studykit.specs.cs_practice.terminal import TerminalError, evaluate
 
@@ -229,34 +231,42 @@ class BashPractice:
         remove_tree(workdir, [workdir.parent])
         workdir.mkdir(parents=True)
         write_files(workdir, (plan.get("lab") or {}).get("files") or [])
-        report, problems, warnings = [], [], []
-        for i, s in enumerate(sections_of(plan), 1):
+        report, found = [], []
+        block = lambda addr, what, evidence="": found.append(Finding(addr, what, "lab_verify", "block", evidence))  # noqa: E731
+        warn = lambda addr, what, evidence="": found.append(Finding(addr, what, "lab_verify", "warn", evidence))  # noqa: E731
+        for i0, s in enumerate(sections_of(plan)):
+            i = i0 + 1
             sec = {"section": i, "title": s.get("title", ""), "try": [], "checkpoints": []}
             labs = [(j, c) for j, c in enumerate(s.get("checkpoint") or [], 1) if c.get("type") == "lab"]
             for j, c in labs:
                 start = check_in(bash, workdir, c.get("checks") or [])
                 if start and all(ok for ok, _, _ in start):
-                    problems.append(f"第 {i} 节检查点 {j}：练习场里本来就满足，什么都不做就能通过")
+                    block(checkpoint_address(i0, j - 1), f"第 {i} 节检查点 {j}：练习场里本来就满足，什么都不做就能通过",
+                          "；".join(d for _, d, _ in start))
             for t in s.get("try") or []:
                 rc, out = run_in(bash, workdir, t["command"])
                 sec["try"].append({"command": t["command"], "rc": rc, "output": out[-600:]})
                 if rc != 0:
-                    warnings.append(f"第 {i} 节动手命令退出码 {rc}：{t['command']}（如果是故意演示报错可以忽略）")
+                    warn(section_address(i0), f"第 {i} 节动手命令退出码 {rc}：{t['command']}（如果是故意演示报错可以忽略）", out[-600:])
             for j, c in labs:
                 before = check_in(bash, workdir, c.get("checks") or [])
                 if before and all(ok for ok, _, _ in before):
                     # WHY: 动手步骤直接把任务做完了，检查点就只证明"照着敲了"，证明不了懂（F-025）。
-                    problems.append(f"第 {i} 节检查点 {j}：照着动手步骤敲完就已经通过了——动手在演示，检查点应该换一个对象让学习者自己做")
+                    block(checkpoint_address(i0, j - 1),
+                          f"第 {i} 节检查点 {j}：照着动手步骤敲完就已经通过了——动手在演示，检查点应该换一个对象让学习者自己做")
                 outs = [run_in(bash, workdir, cmd) for cmd in c.get("solution") or []]
                 after = check_in(bash, workdir, c.get("checks") or [])
                 failed = [d for ok, d, _ in after if not ok]
                 if failed:
-                    problems.append(f"第 {i} 节检查点 {j}：按参考做法做完仍然没通过：{'；'.join(failed)}")
+                    # 证据：没通过的那几条检查怎么写的 + 参考做法的输出
+                    block(checkpoint_address(i0, j - 1), f"第 {i} 节检查点 {j}：按参考做法做完仍然没通过：{'；'.join(failed)}",
+                          "\n".join([json.dumps(k, ensure_ascii=False) for ok, _, k in after if not ok]
+                                    + [o[-300:] for _, o in outs if o.strip()]))
                 sec["checkpoints"].append({"idx": j, "passed_before": [ok for ok, _, _ in before],
                                            "passed_after": [ok for ok, _, _ in after],
                                            "solution_rc": [rc for rc, _ in outs]})
             report.append(sec)
-        return {"ok": not problems, "problems": problems, "warnings": warnings, "sections": report}
+        return {"ok": not blocking(found), "findings": [f.as_dict() for f in found], "sections": report}
 
 
 # ---------- 学习者的终端：每个单元一个常驻的 bash ----------

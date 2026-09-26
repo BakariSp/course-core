@@ -110,3 +110,16 @@ def test_refuses_a_database_newer_than_the_code(tmp_path):
         c.execute(f"PRAGMA user_version = {len(MIGRATIONS) + 1}")
     with pytest.raises(RuntimeError, match="比代码新"):
         SqliteStore(tmp_path / "study.db")
+
+
+def test_blobs_and_variants_are_content_addressed_and_immutable(store):
+    """D-033：每个版本组成的内容按哈希存一次，之后永远能取回；同样的内容再存不会变。"""
+    store.put_blobs({"h1": "第一版规则", "h2": "b"})
+    store.put_blobs({"h1": "第一版规则"})
+    assert store.blob("h1") == "第一版规则" and store.blob("nope") is None
+    v = Variant("a", {"prompt:role": "h1", "model": "m"})
+    store.add_variant(v, "2026-09-26T10:00:00")
+    store.add_variant(v, "2026-09-26T11:00:00")                        # 第二次见到：first_seen 不变
+    assert store.variants("a") == [(v, "2026-09-26T10:00:00")]
+    with sqlite3.connect(store.path) as c, pytest.raises(sqlite3.DatabaseError):
+        c.execute("UPDATE blob SET content = 'x' WHERE hash = 'h1'")

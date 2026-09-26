@@ -23,6 +23,7 @@ from studykit.app.harness import Harness
 from studykit.app.learning import Assessment, Course, Deps, LearnerModel
 from studykit.app.observe import Observer
 from studykit.app.panel import Panel
+from studykit.app.prep import CoursePrep
 from studykit.app.ports import AgentRuntime, Clock, Fetcher, IdGen, JobRunner, PracticeEnv, Spec
 from studykit.domain.assessment import CORE_CHECKERS, CORE_CHECKPOINTS
 from studykit.domain.evidence import VerbRegistry
@@ -53,6 +54,7 @@ class App:
     harness: Harness
     observer: Observer
     practice: PracticeEnv | None
+    prep: CoursePrep
     panel: Panel
 
     def close(self) -> None:
@@ -89,8 +91,9 @@ def build(config: Config | None = None, *, clock: Clock | None = None, ids: IdGe
     harness = Harness(runs=store, runtime=runtime, fetcher=fetcher or UrllibFetcher(), content=content, course=course,
                       learner=learner, specs=enabled, clock=clock, ids=ids, root=config.root,
                       workspace=config.data / "runs", learner_id=config.learner)
-    grader = LlmShortGrader(runtime, config.root, config.data / "runs", clock)
-    panel = Panel(content=content, harness=harness, course=course, runs=store, plans=store, evidence=store,
+    grader = LlmShortGrader(runtime, config.root, config.data / "runs", clock, harness.versions)
+    prep = CoursePrep(harness, course, store)
+    panel = Panel(content=content, harness=harness, prep=prep, course=course, runs=store, plans=store, evidence=store,
                   jobs=jobs or ThreadJobs(), learner_id=config.learner)
     return App(config, store, content, Assessment(deps, checkers, config.data / "sandbox", config.root, grader),
-               course, learner, harness, Observer(store, verbs, config.learner), practice, panel)
+               course, learner, harness, Observer(store, verbs, config.learner), practice, prep, panel)

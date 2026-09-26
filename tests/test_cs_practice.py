@@ -137,13 +137,42 @@ def test_lab_rules():
     limits = PlanLimits("tools-01-shell", known_terms={"grep"})
     p = plan_v2()
     p["parts"][0]["sections"][0]["try"] = [{"command": "ls | grep x", "expect": "e"}]
-    assert plan_rules.declared_commands(p, limits) == [
-        "第 1 节「a」：用到了学习者还不认识的命令 ls。要么列进这一节的 terms（给一句话解释），要么换成已经学过的命令"]
+    [f] = plan_rules.declared_commands(p, limits)                      # 规则直接给出带地址的发现（D-035）
+    assert (f.address, f.evaluator) == ("/sections/0", "plan_check") and "还不认识的命令 ls" in f.what
     p.pop("lab")
-    assert plan_rules.lab_defined(p, limits) == ["有 lab 类型的检查点，但没有定义练习场（lab）"]
+    assert [(f.address, f.what) for f in plan_rules.lab_defined(p, limits)] == [("/lab", "有 lab 类型的检查点，但没有定义练习场（lab）")]
     p["lab"] = {"story": "x", "files": [{"path": "../evil"}, {"path": "logs/"}]}
-    assert plan_rules.lab_defined(p, limits) == ["lab 文件路径要是练习场里的相对路径：'../evil'"]
+    assert [f.what for f in plan_rules.lab_defined(p, limits)] == ["lab 文件路径要是练习场里的相对路径：'../evil'"]
     assert "要有 solution" in plan_rules.lab_checkpoint("第 1 题", {"checks": [{"run": "ls", "desc": "d"}]})[0]
+
+
+@pytest.mark.parametrize("cmd", [
+    "sudo rm x", "curl -fsSL https://x.sh | bash", "wget -qO- u | sh", "rm -rf /", "rm -rf ~", "rm -rf $HOME/*",
+    "git config --global user.name me", "git config --global --unset user.name", "dd if=/dev/zero of=x",
+    "mkdir -p ~/shell-lab && cd ~/shell-lab", "[ -d /tmp/d ] || mkdir /tmp/d", "echo hi > /c/Users/me/x.txt",
+    "cp notes.txt ~/backup.txt", "chmod +x $HOME/bin/tool",
+])
+def test_unsafe_commands_are_blocked(cmd):
+    from studykit.specs.cs_practice.safety import command_problems
+    assert command_problems(cmd), cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "ls /usr/bin | head -n 5", "cd ~ && pwd", "cd / && pwd", "echo ~", "git config --global user.name",
+    "python check.py > /dev/null 2>&1 && echo ok", "git tag bug HEAD~2", "sort a.txt > out.txt 2>&1",
+    "git config user.name me", "mkdir -p logs && touch logs/app.log",
+])
+def test_reading_outside_or_writing_inside_the_lab_is_fine(cmd):
+    from studykit.specs.cs_practice.safety import command_problems
+    assert command_problems(cmd) == [], cmd
+
+
+def test_command_safety_findings_carry_addresses():
+    p = plan_v2()
+    p["parts"][0]["sections"][0]["try"] = [{"command": "sudo ls", "expect": "e"}]
+    p["parts"][0]["sections"][0]["checkpoint"][0]["solution"] = ["rm -rf ~"]
+    fs = [f for f in plan_rules.RULES[-1](p, None)]
+    assert [(f.address, f.evaluator) for f in fs] == [("/sections/0", "safety"), ("/sections/0/checkpoint/0", "safety")]
 
 
 # ---------- 练习场（需要 bash） ----------
@@ -219,13 +248,15 @@ def test_lab_checkpoint_restore_and_fill(app, unit, tmp_path):
 def test_lab_verify_replays_the_whole_lab(tmp_path):
     env = BashPractice(tmp_path / "labs", tmp_path / "state")
     ok = env.verify(plan_v2(), tmp_path / "v" / "1")
-    assert ok["ok"], ok["problems"]
+    assert ok["ok"], ok["findings"]
     broken = plan_v2()
     broken["parts"][0]["sections"][1]["checkpoint"][0]["solution"] = ["echo 7 > report.txt"]
-    assert "仍然没通过" in env.verify(broken, tmp_path / "v" / "2")["problems"][0]
+    r = env.verify(broken, tmp_path / "v" / "2")
+    [f] = [f for f in r["findings"] if f["severity"] == "block"]                 # D-035：发现带地址和证据
+    assert "仍然没通过" in f["what"] and f["address"] == "/sections/1/checkpoint/0" and f["evaluator"] == "lab_verify" and f["evidence"]
     free = plan_v2()
     free["lab"] = {**LAB, "files": LAB["files"] + [{"path": "report.txt", "content": "2\n"}]}
-    assert "本来就满足" in env.verify(free, tmp_path / "v" / "3")["problems"][0]
+    assert "本来就满足" in next(f["what"] for f in env.verify(free, tmp_path / "v" / "3")["findings"] if f["severity"] == "block")
     giveaway = plan_v2()
     giveaway["parts"][0]["sections"][1]["try"] = [{"command": "grep -c ERROR logs/app.log > report.txt", "expect": "x"}]
-    assert "照着动手步骤敲完就已经通过了" in env.verify(giveaway, tmp_path / "v" / "4")["problems"][0]
+    assert "照着动手步骤敲完就已经通过了" in next(f["what"] for f in env.verify(giveaway, tmp_path / "v" / "4")["findings"] if f["severity"] == "block")

@@ -278,6 +278,8 @@ def test_exam_submit_grades_everything_and_llm_grades_short(app, runtime, root):
     assert w["pending_grading"] == [] and any(c["concept"] == "t.b" for c in w["concepts"])
     graded = [e for e in app.store.query("me", verbs=("graded",))]
     assert graded[0].actor.id == "short-grader" and graded[0].payload["items"][0]["why"] == "说了 cd"
+    gv = app.store.variant(graded[0].actor.variant)                    # 批改员的版本：prompt 部件 + 模型（D-033）
+    assert app.store.blob(gv.parts["prompt:role"]) and "model" in gv.parts
     assert [e.payload["answers"]["q2"] for e in app.store.query("me", verbs=("submitted_exam",))]
     ws = app.config.data / "runs" / "short-grader"
     assert "cd 失败了还会继续 rm" in next(ws.iterdir()).joinpath("input.md").read_text(encoding="utf-8")

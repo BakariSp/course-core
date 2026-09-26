@@ -105,14 +105,15 @@ class PiRuntime:
         return {**os.environ, **load_local_env(self.local_env), "PI_CODING_AGENT_DIR": str(self.home),
                 "PI_SKIP_VERSION_CHECK": "1", "PI_TELEMETRY": "0", **extra}
 
-    def run(self, agent: AgentDef, workspace: Path, model: dict, tools: list[str], timeout: int) -> RawRun:
+    def run(self, agent: AgentDef, workspace: Path, model: dict, tools: list[str], timeout: int,
+            system_prompt: Path) -> RawRun:
         cmd = self._cmd() + [
             "--mode", "json", "--no-session",
             "--no-context-files", "--no-skills", "--no-prompt-templates", "--no-extensions", "--no-approve",
             "--no-builtin-tools", "-e", str(self.bridge), "--tools", ",".join(tools),
             "--provider", model["provider"], "--model", model["id"],
             *(["--thinking", model["thinking"]] if model.get("thinking") else []),
-            "--system-prompt", str(agent.file("system_prompt")),
+            "--system-prompt", str(system_prompt),
             "@brief.md", "按简报完成任务，最后提交。",
         ]
         env = self._env({"STUDY_PYTHON": self.python, "STUDY_ROOT": str(self.root or Path.cwd()),

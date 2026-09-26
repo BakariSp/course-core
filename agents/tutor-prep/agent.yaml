@@ -9,9 +9,23 @@ model:
   id: deepseek-flash
   thinking: medium
 
-system_prompt: SYSTEM.md      # 岗位说明
+prompt:                       # system prompt 的部件，按顺序原样拼接（D-033）；每个部件的每一版内容都存进数据库
+  - {part: role, file: prompt/role.md}             # 职责：你是谁、交什么
+  - {part: principles, file: prompt/principles.md} # 最重要的几件事
+  - {part: learner, file: prompt/learner.md}       # 怎么读简报里的学习者信息
+  - {part: tools, file: prompt/tools.md}           # 能用哪些工具
+  - {part: workflow, file: prompt/workflow.md}     # 工作步骤
+  - {part: rules, file: prompt/rules.md}           # 硬性规则（含语气：D-026 先给定义）
 task: task.md                 # 每次运行的任务模板（runner 填入单元信息和时间预算后作为简报）
 tools: [fetch_url, submit_plan]   # 只开放这些环境工具；pi 自带的读写文件、shell 全部关闭
+
+repair:                       # 定点修复（D-035）：同一套 system prompt，换任务模板和提交工具
+  task: repair.md
+  tools: [fetch_url, submit_repair]
+
+review:                       # 评审模型（D-035）：兼任命令的安全闸门（D-030），放行后系统才自动跑 lab verify
+  model: {provider: deepseek, id: deepseek-v4-pro}   # 和生成模型分开，避免偏向自己的写法
+  prompt: reviewer.md         # 评分标准沿用 eval.rubric
 
 output:
   format: plan                # 结构化课程计划，schema 见 studykit/agent_env/tools.py 的 PLAN_SCHEMA

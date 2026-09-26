@@ -104,16 +104,27 @@ def test_valid_plan_is_accepted_and_rendered(app, ws):
 ])
 def test_plan_requirements(app, ws, bad, expected):
     call(app, ws, "fetch_url", url=SRC)
-    errors = app.harness.check_plan(ws, plan_of(section(**bad)))
+    errors = [f.what for f in app.harness.plan_findings(ws, plan_of(section(**bad)))]
     assert any(expected in e for e in errors), errors
     with pytest.raises(ToolError):
         call(app, ws, "submit_plan", plan=plan_of(section(**bad)))
     assert not (ws / "output.json").exists()
 
 
+def test_plan_check_reports_findings_with_addresses(app, ws):
+    """D-035：环境检查的每个问题都指向计划里的一个位置，修复时只改那一处。"""
+    call(app, ws, "fetch_url", url=SRC)
+    plan = plan_of(section(minutes=60), section("管道", checkpoint=[checkpoint(hints=["只有一级"])]),
+                   nodes=NODES + [{"id": "tools.x", "title": "x", "desc": "", "kind": "term"}])
+    found = {(f.address, f.evaluator) for f in app.harness.plan_findings(ws, plan)}
+    assert ("/sections/0", "plan_check") in found                        # 超过单次上限
+    assert ("/sections/1/checkpoint/0", "plan_check") in found           # 提示不是 3 级
+    assert ("/nodes", "plan_check") in found                             # 提议的节点缺 desc
+
+
 def test_budget_links_terms_and_nodes(app, ws):
     call(app, ws, "fetch_url", url=SRC)
-    errs = lambda p: "\n".join(app.harness.check_plan(ws, p))  # noqa: E731
+    errs = lambda p: "\n".join(f.what for f in app.harness.plan_findings(ws, p))  # noqa: E731
     assert "超过单元预算" in errs(plan_of(*[section(f"节{i}", 40) for i in range(5)]))       # 200 > 180（F-014）
     assert "没有打开过" in errs(plan_of(section(), sources=[{"title": "x", "url": "https://missing.csail.mit.edu/2020/"}]))
     terms = [{"id": f"tools.cmd.c{i}", "term": f"c{i}", "explain": "x"} for i in range(6)]
@@ -129,7 +140,8 @@ def test_budget_links_terms_and_nodes(app, ws):
 
 
 def test_schema_includes_spec_fields(app):
-    [fetch, submit] = app.harness.tool_schemas()
+    fetch, submit, repair = app.harness.tool_schemas()
+    assert repair["name"] == "submit_repair" and repair["parameters"]["required"] == ["parts"]
     cp = submit["parameters"]["properties"]["plan"]["properties"]["parts"]["items"]["properties"]["sections"]["items"][
         "properties"]["checkpoint"]["items"]["properties"]
     assert cp["type"]["enum"] == ["choice", "fill", "lab"] and "solution" in cp
@@ -172,7 +184,8 @@ def test_run_records_input_steps_and_variant(app, runtime, fetcher):
     assert [s.tool for s in steps if s.kind == "tool"] == ["fetch_url", "submit_plan", "submit_plan"]
     assert "没有通过检查" in steps[1].summary                          # 运行中被退回、自己改了（自我修正）
     v = app.store.variant(run.variant)
-    assert set(v.parts) == {"system_prompt", "task", "tools", "context", "model", "runtime"} and v.parts["runtime"] == "fake-1"
+    assert {"task", "tools", "context", "model", "runtime", "prompt:role", "prompt:rules"} <= set(v.parts)
+    assert v.parts["runtime"] == "fake-1"
     assert app.harness.resolve("tutor-prep").id == run.id
     with pytest.raises(DomainError):
         app.harness.resolve("tutor-prep", "nope")
@@ -181,19 +194,18 @@ def test_run_records_input_steps_and_variant(app, runtime, fetcher):
 def test_evaluate_publish_gate_and_outcome(app, runtime, fetcher, clock):
     plan = plan_of(section(), section("b"), section("c"), section("d"))
     run = _run(app, runtime, fetcher, plan)
-    with pytest.raises(DomainError, match="先评测"):
-        app.harness.publish(run)
     grades = app.harness.evaluate(run)
     check, judge, claims = grades
     assert check.grader == "check" and check.dims["plan_valid"]["score"] == 1.0
     assert judge.detail["avg"] == 4 and judge.score == 0.75 and judge.issues == [{"layer": "prompt", "what": "给字数上限"}]
     assert claims.detail["claims"][0]["found_in_pages"]
     assert "评分" in app.harness.format_eval(grades)
-    if check.verdict != "pass":                                       # 用例要求提到 Git Bash，这份计划没提
-        assert "Git Bash" in check.dims["mention:Git Bash"]["reason"]
-        with pytest.raises(DomainError, match="自动检查没通过"):
-            app.harness.publish(run)
-        app.store.add_grade(Grade("g-ok", clock.now().isoformat(), run.id, "check", "v", "system", 1.0, "pass", {}))
+    assert "Git Bash" in check.dims["mention:Git Bash"]["reason"]        # 用例要求提到 Git Bash，这份计划没提
+    assert {"address": "/sections/0", "evaluator": "check"}.items() <= next(
+        f for f in check.detail["findings"] if "Git Bash" in f["what"]).items()   # 没有位置的要求，指到第 1 节
+    with pytest.raises(DomainError, match="没有通过产出循环"):                  # 发布闸门 = 产出循环放行（test_prep.py）
+        app.harness.publish(run)
+    app.store.add_grade(Grade("g-ok", clock.now().isoformat(), run.id, "loop", "v", "system", None, "accepted", {}))
     added = app.harness.publish(run)
     assert added == ["tools.cmd.pwd", "tools.shell.cwd"]
     page = app.course.page("tools-01-shell")
@@ -202,17 +214,6 @@ def test_evaluate_publish_gate_and_outcome(app, runtime, fetcher, clock):
     outcome = app.harness.grade_outcome(app.course.evaluate("tools-01-shell"))
     assert outcome.grader == "outcome" and outcome.run == run.id and outcome.dims["first_try_rate"] == 1.0
     assert "| `" + run.variant + "` |" in app.harness.report("tutor-prep")
-
-
-def test_lab_plans_need_practice_verification(app, runtime, fetcher, clock):
-    from tests.conftest import LAB
-    lab_cp = checkpoint(type="lab", checks=[{"file": "r.txt", "equals": "2", "desc": "d"}], solution=["echo 2 > r.txt"])
-    run = _run(app, runtime, fetcher, plan_of(section(checkpoint=[lab_cp]), section("b"), section("c"), section("d"), lab=LAB))
-    app.store.add_grade(Grade("g1", clock.now().isoformat(), run.id, "check", "v", "system", 1.0, "pass", {}))
-    with pytest.raises(DomainError, match="lab verify"):
-        app.harness.publish(run)
-    app.store.add_grade(Grade("g2", clock.now().isoformat(), run.id, "practice_verify", "v", "system", 1.0, "pass", {}))
-    app.harness.publish(run)
 
 
 def test_review_is_structured(app, runtime, fetcher):
@@ -251,3 +252,35 @@ def test_pi_events_become_steps():
     steps = steps_from_events(lines)
     assert [(s.kind, s.tool, s.ok) for s in steps] == [("model", "", True), ("tool", "fetch_url", False), ("error", "", False)]
     assert steps[0].tokens == 100 and steps[0].detail == {"tool_calls": ["fetch_url"]} and steps[1].detail == {"args": {"url": "u"}}
+
+
+# ---------- prompt 版本（D-033） ----------
+
+def test_every_prompt_part_is_versioned_with_its_content(app, runtime, fetcher, root, clock):
+    plan = plan_of(section(), section("b"), section("c"), section("d"))
+    r1 = _run(app, runtime, fetcher, plan)
+    agent_dir = root / "agents" / "tutor-prep"
+    v1 = app.store.variant(r1.variant)
+    names = [k for k in v1.parts if k.startswith("prompt:")]
+    assert names == ["prompt:role", "prompt:principles", "prompt:learner", "prompt:tools", "prompt:workflow", "prompt:rules"]
+    ws = app.harness.dir("tutor-prep", r1.id)
+    assert runtime.system_prompt == ws / "system.md"                  # agent 读的就是这份拼好的
+    parts = "".join((agent_dir / "prompt" / f"{n.split(':')[1]}.md").read_text(encoding="utf-8") for n in names)
+    assert (ws / "system.md").read_text(encoding="utf-8") == parts
+    for k in ("prompt:rules", "task", "context", "tools"):
+        assert app.store.blob(v1.parts[k])                            # 每个文本组成的内容都存下来了
+    assert app.store.blob(v1.parts["prompt:rules"]) == (agent_dir / "prompt" / "rules.md").read_text(encoding="utf-8")
+
+    judge = next(g for g in app.harness.evaluate(r1) if g.grader == "judge")
+    jv = app.store.variant(judge.grader_version)                      # 评分模型也有版本，内容可以取回
+    assert {"system", "rubric", "model"} <= set(jv.parts) and app.store.blob(jv.parts["rubric"])
+
+    rules = agent_dir / "prompt" / "rules.md"
+    rules.write_text(rules.read_text(encoding="utf-8") + "- 新规则：不写死哈希\n", encoding="utf-8")
+    clock.tick()
+    r2 = _run(app, runtime, fetcher, plan)
+    d = app.harness.versions.diff(r1.variant, r2.variant)
+    assert [p["part"] for p in d["parts"]] == ["prompt:rules"] and "+- 新规则：不写死哈希" in d["parts"][0]["diff"]
+    hist = app.harness.versions.history("tutor-prep")
+    assert [x["variant"] for x in hist][-2:] == [r1.variant, r2.variant] and hist[-1]["runs"] == 1
+    assert [p["part"] for p in hist[-1]["changed"]] == ["prompt:rules"]  # 和上一版比改了什么

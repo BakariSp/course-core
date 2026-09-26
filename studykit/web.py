@@ -58,6 +58,10 @@ def make_handler(app: App, token: str, port: int):
             return app.panel.unit(one("id"))
         if path == "/api/panel/context":
             return app.panel.context(one("id"))
+        if path == "/api/panel/versions":
+            return app.panel.versions()
+        if path == "/api/panel/version_text":
+            return {"text": app.panel.version_text(one("variant"), one("part"))}
         if path == "/api/log":
             return app.learner.journal()
         if path == "/api/kg":
@@ -83,6 +87,8 @@ def make_handler(app: App, token: str, port: int):
             return app.course.record(body["unit"], body.get("section"), body["event"], body.get("minutes"), **extra)
         if path == "/api/panel/prepare":
             return app.panel.prepare(body["unit"])
+        if path == "/api/panel/publish":
+            return app.panel.publish(body["unit"])
         if path == "/api/unit/check":
             return app.course.check(body["unit"], body["section"], body["idx"], body.get("response"))
         if path == "/api/unit/hint":

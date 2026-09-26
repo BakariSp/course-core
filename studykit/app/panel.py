@@ -1,8 +1,8 @@
 """备课控制面板（D-032）：课程清单 × 学习进度 × 备课流水线 × agent 看到的上下文。
 
 INVARIANT: 这里只读已有的记录（syllabus、课程计划、证据、Run、Grade）并投影出来，不存任何东西；
-唯一的写操作是 prepare()——开始一次 agent 运行，结果照常由 harness 写进 Run / Grade。
-审阅、练习场验证、发布不在这里：lab verify 会在本机执行 agent 写的命令，要导师先读过（D-008、D-030）。
+写操作只有两个：prepare()——在后台跑一次备课（产出循环：生成 → 检验 → 定点修复 → 通过就发布，见 app/prep.py），
+和 publish()——学习者确认"已经学过的单元换成新版本"。
 """
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from collections import defaultdict
 
 from studykit.app.harness import Harness
 from studykit.app.learning import Course
+from studykit.app.prep import CoursePrep
 from studykit.app.ports import Content, EvidenceStore, JobRunner, PlanStore, RunStore
 from studykit.domain import harness as h
 from studykit.domain.errors import DomainError
@@ -29,13 +30,16 @@ BLOCKS = [
     ("budget", "时间预算", "progress/settings.yaml", True, "unit_budget_minutes / session_minutes / max_new_terms"),
     ("hosts", "能打开的网站（白名单）", "curriculum.md 里出现过的链接", True, "在课程清单里加链接，这个网站就能打开"),
 ]
-BUDGET_KEYS = ("unit_budget_minutes", "session_minutes", "max_new_terms")
+# 调用 LLM 的地方（D-033）：每个都有自己的版本历史
+CALL_SITES = [(AGENT, "备课 agent（生成 + 定点修复）"), (f"{AGENT}#reviewer", "备课的评审模型（安全闸门 + 质量，D-035）"),
+              (f"{AGENT}#judge", "备课的评分模型（打分，只进统计）"), ("short-grader", "简答题批改")]
+BUDGET_KEYS =("unit_budget_minutes", "session_minutes", "max_new_terms")
 
 
 class Panel:
-    def __init__(self, *, content: Content, harness: Harness, course: Course, runs: RunStore, plans: PlanStore,
-                 evidence: EvidenceStore, jobs: JobRunner, learner_id: str):
-        self.content, self.harness, self.course = content, harness, course
+    def __init__(self, *, content: Content, harness: Harness, prep: CoursePrep, course: Course, runs: RunStore,
+                 plans: PlanStore, evidence: EvidenceStore, jobs: JobRunner, learner_id: str):
+        self.content, self.harness, self.prep, self.course = content, harness, prep, course
         self.runs, self.plans, self.evidence, self.jobs = runs, plans, evidence, jobs
         self.learner_id = learner_id
 
@@ -71,13 +75,7 @@ class Panel:
         runs, grades = self._runs_by_unit().get(unit, []), self._grades_by_run()
         prep = self._prep(unit, runs, grades)
         rows = [self._run_row(r, grades.get(r.id, []), prep["published_run"]) for r in reversed(runs)]
-        latest_review = rows[0]["review"] if rows else None
-        issues: dict[str, list[str]] = defaultdict(list)
-        if latest_review and latest_review["verdict"] != "publish":
-            for i in latest_review["issues"]:
-                issues[i.get("layer") or "?"].append(i.get("what", ""))
-        return {"unit": unit, "prep": prep, "job": self.jobs.status(self._key(unit)), "runs": rows,
-                "open_issues": dict(issues)}
+        return {"unit": unit, "prep": prep, "job": self.jobs.status(self._key(unit)), "runs": rows}
 
     # ---------- agent 看到的上下文 ----------
 
@@ -93,11 +91,24 @@ class Panel:
         if runs:                                              # 和上一次运行时冻结的输入比，哪几块变了
             before = {**runs[-1].input, "budget": {k: runs[-1].input.get(k) for k in BUDGET_KEYS}}
             changed = [k for k, *_ in BLOCKS if before.get(k) != values.get(k)]
-        prompts = [{"title": "系统 prompt（agent 的工作规则）", "source": f"agents/{AGENT}/SYSTEM.md",
-                    "text": agent.file("system_prompt").read_text(encoding="utf-8")},
-                   {"title": "任务模板（上面各块填进这里，就是简报）", "source": f"agents/{AGENT}/task.md", "text": task}]
+        # system prompt 的每个部件一块，按拼接顺序（D-033）；最后是任务模板
+        prompts = [{"title": f"system prompt 部件 · {i['part']}", "source": f"agents/{AGENT}/{i['file']}",
+                    "text": (agent.dir / i["file"]).read_text(encoding="utf-8")} for i in agent.spec.get("prompt") or []]
+        prompts.append({"title": "任务模板（上面各块填进这里，就是简报）", "source": f"agents/{AGENT}/task.md", "text": task})
         return {"unit": unit, "blocks": blocks, "brief": self.harness.render_brief(task, data), "prompts": prompts,
                 "changed_since_last_run": changed, "last_run": runs[-1].id if runs else None}
+
+    # ---------- 版本（D-033）：每个调用 LLM 的地方，每一版改了什么 ----------
+
+    def versions(self) -> dict:
+        return {"agents": [{"agent": name, "title": title, "versions": self.harness.versions.history(name)}
+                           for name, title in CALL_SITES]}
+
+    def version_text(self, variant: str, part: str) -> str:
+        text = self.harness.versions.text(variant, part)
+        if text is None:
+            raise DomainError(f"版本 {variant} 没有存下 {part} 的内容")
+        return text
 
     # ---------- 写：开始一次备课 ----------
 
@@ -105,13 +116,13 @@ class Panel:
         self.harness.build_input(unit)                        # 单元不存在就在这里报错，不开线程
         key = self._key(unit)
 
-        def job():
-            run = self.harness.run(AGENT, unit)
-            self.harness.evaluate(run)
-
-        if not self.jobs.start(key, job):
+        if not self.jobs.start(key, lambda: self.prep.prepare(unit)):
             raise DomainError(f"{unit} 已经在生成了，等这一次跑完")
         return self.jobs.status(key) or {}
+
+    def publish(self, unit: str) -> dict:
+        """学习者确认：已经开始学的单元，换成最近一次通过检验的新版本。"""
+        return {"added_nodes": self.prep.publish(unit)}
 
     # ---------- 内部 ----------
 
@@ -163,13 +174,16 @@ class Panel:
             gs = [g for g in grades if g.grader == grader]
             return gs[-1] if gs else None
 
-        check, judge, review, verify = last("check"), last("judge"), last("review"), last("practice_verify")
+        check, reviewer, verify, loop = last("check"), last("reviewer"), last("practice_verify"), last("loop")
+        blocks = lambda g: [f["what"] for f in (g.detail.get("findings") or [] if g else []) if f["severity"] == "block"]  # noqa: E731
         return {
             "id": run.id, "started": run.started, "variant": run.variant, "submitted": run.submitted,
             "minutes": round(run.seconds / 60, 1), "cost_usd": round(run.cost_usd, 3), "published": run.id == published,
-            "check": check and {"verdict": check.verdict,
-                                "failed": [d["reason"] for d in check.dims.values() if d.get("score", 1) < 1]},
-            "judge": judge and {"avg": judge.detail.get("avg"), "top_issue": judge.detail.get("top_issue", "")},
-            "review": review and {"verdict": review.verdict, "note": review.detail.get("note", ""), "issues": review.issues},
-            "verify": verify and {"verdict": verify.verdict, "problems": verify.detail.get("problems", [])},
+            "repair_of": (run.input.get("repair") or {}).get("of"),
+            "check": check and {"verdict": check.verdict, "problems": blocks(check)},
+            "reviewer": reviewer and {"verdict": reviewer.verdict, "problems": blocks(reviewer),
+                                      "warnings": [f["what"] for f in reviewer.detail.get("findings") or [] if f["severity"] == "warn"]},
+            "verify": verify and {"verdict": verify.verdict, "problems": blocks(verify)},
+            "loop": loop and {"verdict": loop.verdict, "spent_usd": loop.detail.get("spent_usd"),
+                              "rounds": len(loop.detail.get("rounds") or [])},
         }

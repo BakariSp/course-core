@@ -12,7 +12,10 @@
     python study.py kg summary|related <单元>|show <节点>|check   学习者模型的分级查询（D-020）
     python study.py kg observe <节点> weak|ok "原话"   导师观察：把"哪里没跟上"记到具体节点上
     python study.py course-eval <单元> [--plan <版本>] [--write]   课程评测：预测 vs 实际（D-019）
+    python study.py prepare <单元> [--from <运行>]   备课：生成 → 检验 → 定点修复 → 通过就发布（D-035，PRD_V2 阶段 A）
     python study.py agent run|eval|review|report|publish ...   助教 agent（D-022）
+    python study.py agent versions tutor-prep            每一版改了哪些组成（D-033；tutor-prep#judge、short-grader 同理）
+    python study.py agent diff tutor-prep --a 1584 --b ecc2   两个版本逐部件的 diff（版本号写前几位就行）
     python study.py agent review tutor-prep --verdict revise --issue "prompt:字数上限" --note "..."   导师审阅（结构化）
     python study.py lab verify [<运行>]      把课程计划的练习场从头走一遍（会执行 agent 写的命令，先审阅）
 """
@@ -136,9 +139,32 @@ def cmd_agent(app, args) -> None:
         issues = [dict(zip(("layer", "what"), i.split(":", 1))) for i in args.issue or []]
         h.review(h.resolve(args.agent, args.run), args.verdict, args.note or "", [{k: v.strip() for k, v in i.items()} for i in issues])
         print("已记录审阅。")
+    elif args.action == "versions":
+        for v in h.versions.history(args.agent):
+            changed = "、".join(c["part"] for c in v["changed"]) or "—"
+            print(f"{v['variant']}  {v['first_seen']}  跑了 {v['runs']} 次  改了：{changed}")
+    elif args.action == "diff":
+        if not (args.a and args.b):
+            sys.exit("diff 要写 --a 和 --b（版本号前几位）")
+        d = h.versions.diff(args.a, args.b, agent=args.agent)
+        print(f"{d['a']} → {d['b']}")
+        for part in d["parts"]:
+            print(f"\n== {part['part']}（{part['change']}）==\n{part['diff']}")
     elif args.action == "publish":
         added = h.publish(h.resolve(args.agent, args.run))
         print("已发布。" + (f"知识图新增 {len(added)} 个节点：{', '.join(added)}" if added else ""))
+
+
+def cmd_prepare(app, args) -> None:
+    r = app.prep.prepare(args.unit, start_from=args.start_from, model=args.model)
+    for i, rd in enumerate(r["rounds"], 1):
+        blocks = [f for f in rd["findings"] if f["severity"] == "block"]
+        print(f"第 {i} 轮  {rd['run']}  ${rd['cost_usd']}  " + (f"{len(blocks)} 个阻断" if blocks else "通过"))
+        for f in blocks:
+            print(f"    [{f['evaluator']}] {f['address'] or '整份'}：{f['what'][:160]}")
+    state = {"accepted": "通过", "escalated": "需要你决定"}[r["status"]]
+    print(f"{state}，共 ${r['spent_usd']}。" + ("已发布：/?unit=" + r["unit"] if r["published"]
+                                               else "没有发布（已经开始学的单元要你确认）" if r["status"] == "accepted" else ""))
 
 
 def cmd_lab(app, args) -> None:
@@ -148,10 +174,8 @@ def cmd_lab(app, args) -> None:
         cps = " ".join(f"检查点{c['idx']}：做之前 {sum(c['passed_before'])}/{len(c['passed_before'])} → 做之后 "
                        f"{sum(c['passed_after'])}/{len(c['passed_after'])}" for c in sec["checkpoints"])
         print(f"第 {sec['section']} 节 {sec['title']}  动手 {tries or '—'}  {cps}")
-    for w in result["warnings"]:
-        print("注意：" + w)
-    for p in result["problems"]:
-        print("问题：" + p)
+    for f in result["findings"]:
+        print(("问题" if f["severity"] == "block" else "注意") + f"（{f['address'] or '整份'}）：" + f["what"])
     print("通过" if result["ok"] else "没通过")
     if not result["ok"]:
         sys.exit(1)
@@ -178,7 +202,7 @@ def parser() -> argparse.ArgumentParser:
     r.add_argument("--no-diff", action="store_true", help="不显示代码改动")
     r.set_defaults(func=cmd_runs)
     ag = sub.add_parser("agent", help="运行 / 评测 / 发布助教 agent 的产出")
-    ag.add_argument("action", choices=["run", "eval", "review", "report", "publish"])
+    ag.add_argument("action", choices=["run", "eval", "review", "report", "publish", "versions", "diff"])
     ag.add_argument("agent", help="agents/ 下的 agent 名，如 tutor-prep")
     ag.add_argument("--unit", help="run：单元 id，如 tools-01-shell")
     ag.add_argument("--run", help="eval / publish：运行 id，默认最近一次")
@@ -188,6 +212,8 @@ def parser() -> argparse.ArgumentParser:
     ag.add_argument("--verdict", choices=["publish", "revise", "reject"], help="review：结论")
     ag.add_argument("--issue", action="append", help='review：问题，写成 "层:内容"，层是 prompt/context/tools/model/runtime/eval，可写多次')
     ag.add_argument("--note", help="review：补充说明")
+    ag.add_argument("--a", help="diff：旧版本号（前几位即可）")
+    ag.add_argument("--b", help="diff：新版本号（前几位即可）")
     ag.set_defaults(func=cmd_agent)
     t = sub.add_parser("time", help="学习时间：每天学了多久、学了什么")
     t.add_argument("action", nargs="?", choices=["report", "add"], default="report")
@@ -207,6 +233,11 @@ def parser() -> argparse.ArgumentParser:
     ce.add_argument("--plan", help="课程版本（运行 id），默认当前发布的")
     ce.add_argument("--write", action="store_true", help="记为产出这版课程的那次运行的学习结果评分")
     ce.set_defaults(func=cmd_course_eval)
+    pr = sub.add_parser("prepare", help="备课：生成 → 检验 → 定点修复 → 通过就发布")
+    pr.add_argument("unit")
+    pr.add_argument("--from", dest="start_from", help="从已有的一次 tutor-prep 运行接着检验和修复（不重新生成）")
+    pr.add_argument("--model", help="临时换生成模型")
+    pr.set_defaults(func=cmd_prepare)
     lb = sub.add_parser("lab", help="练习场")
     lb.add_argument("action", choices=["verify"])
     lb.add_argument("run", nargs="?", help="tutor-prep 的运行 id，默认最近一次")

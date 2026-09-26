@@ -2,8 +2,7 @@
 import pytest
 
 from studykit.domain.errors import DomainError
-from studykit.domain.harness import Grade
-from tests.test_harness import SRC, JUDGE, plan_of, section
+from tests.test_harness import SRC, plan_of, section
 
 
 def _add_unit(root, uid="tools-02-git", title="Git"):
@@ -28,22 +27,17 @@ def test_overview_maps_curriculum_to_study_and_prep_status(app, unit, root):
     assert git["prep"]["stage"] == "todo" and git["prep"]["who"] == "learner"
 
 
-def test_prepare_runs_the_agent_in_the_background_and_the_stage_follows(app, root, runtime, fetcher):
+def test_prepare_runs_the_loop_in_the_background_and_the_stage_follows(app, root, runtime, fetcher):
     _add_unit(root)
     fetcher.pages = {SRC: "讲义 " * 10}
     runtime.script = [("fetch_url", {"url": SRC}), ("submit_plan", {"plan": plan_of(*[section(f"s{i}") for i in range(4)])})]
-    runtime.judge_reply = JUDGE
     job = app.panel.prepare("tools-02-git")
     assert job["state"] == "done"
     detail = app.panel.unit("tools-02-git")
-    [run] = detail["runs"]
-    assert run["submitted"] and run["check"]["verdict"] in ("pass", "fail") and run["judge"]["avg"] == 4
-    assert detail["prep"]["stage"] in ("review", "failed") and detail["prep"]["who"] == "tutor"
-    app.store.add_grade(Grade("rv", "t", run["id"], "review", "tutor", "tutor", None, "revise",
-                              issues=[{"layer": "context", "what": "已知词表只有标题"}], detail={"note": "改一处"}))
-    detail = app.panel.unit("tools-02-git")
-    assert detail["prep"]["stage"] == "revise"
-    assert detail["open_issues"] == {"context": ["已知词表只有标题"]}   # 最近一次审阅里没解决的问题，按层分组
+    # 这份计划过不了自动检查（没有动手型检查点、没提 Git Bash）；假 agent 不会修，3 轮后停在"需要你决定"
+    assert detail["prep"]["stage"] == "escalated" and detail["prep"]["who"] == "learner" and detail["prep"]["stuck"]
+    assert len(detail["runs"]) == 3 and detail["runs"][0]["loop"]["verdict"] == "escalated"
+    assert detail["runs"][0]["check"]["problems"]
     with pytest.raises(DomainError):
         app.panel.prepare("tools-99-nope")
 
@@ -55,4 +49,22 @@ def test_context_shows_every_input_block_where_it_comes_from_and_the_exact_brief
     assert blocks["learner"]["source"] == "progress/learner.md" and "产品经理" in blocks["learner"]["value"]
     assert blocks["known_titles"]["editable"] is False                   # 从证据算出来的，不能手改
     assert "零基础" in ctx["brief"] and "产品经理" in ctx["brief"]         # agent 实际读到的完整简报
-    assert {p["source"] for p in ctx["prompts"]} == {"agents/tutor-prep/SYSTEM.md", "agents/tutor-prep/task.md"}
+    sources = [p["source"] for p in ctx["prompts"]]                     # 每个 prompt 部件一块，按拼接顺序（D-033）
+    assert sources[0] == "agents/tutor-prep/prompt/role.md" and sources[-1] == "agents/tutor-prep/task.md"
+    assert "agents/tutor-prep/prompt/rules.md" in sources
+
+
+def test_versions_list_each_llm_call_site_with_what_changed(app, root, runtime, fetcher, clock):
+    fetcher.pages = {SRC: "讲义 " * 10}
+    runtime.script = [("fetch_url", {"url": SRC}), ("submit_plan", {"plan": plan_of(*[section(f"s{i}") for i in range(4)])})]
+    app.panel.prepare("tools-01-shell")
+    rules = root / "agents" / "tutor-prep" / "prompt" / "rules.md"
+    rules.write_text(rules.read_text(encoding="utf-8") + "- 多一条\n", encoding="utf-8")
+    clock.tick()
+    app.panel.prepare("tools-01-shell")
+    v = app.panel.versions()
+    agents = {a["agent"]: a for a in v["agents"]}
+    assert {"tutor-prep", "tutor-prep#reviewer", "tutor-prep#judge"} <= set(agents)   # 评审模型也是被版本管理的调用点
+    last = agents["tutor-prep"]["versions"][-1]
+    assert [c["part"] for c in last["changed"]] == ["prompt:rules"] and "+- 多一条" in last["changed"][0]["diff"]
+    assert app.panel.version_text(last["variant"], "prompt:rules").endswith("- 多一条\n")

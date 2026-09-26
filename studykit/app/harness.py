@@ -4,6 +4,8 @@
     brief.md          渲染好的简报（给模型的上下文）
     input.json        冻结的输入数据：生成时学习者会什么、预算、白名单……（永久：课程评测要用）
     fetches.jsonl     agent 读过的页面（含读到的文字，核对出处用）
+    grounded.jsonl    修复运行：从上一轮继承的"打开过的页面"（出处可以继续用）
+    current.json      修复运行：修复前的课程计划
     submissions.jsonl 每次提交：接受 / 退回 + 原因（运行中自我修正的记录）
     output.json/.md   产出（课程计划 + 给导师审阅的 Markdown）
     raw/              agent loop 的原始日志，可以过期清理
@@ -24,10 +26,12 @@ import yaml
 from studykit.app.learning import Course, LearnerModel
 from studykit.app.ports import (AgentDef, AgentRuntime, Clock, Content, Fetcher, FetchError, IdGen, RunStore, Spec)
 from studykit.app.paths import safe_path
+from studykit.app.versions import Versions, load_prompt, prompt_texts
 from studykit.domain import course_eval, harness as h, plan_check
-from studykit.domain.errors import DomainError
+from studykit.domain.artifact import Finding, blocking, repair_scope, within
+from studykit.domain.errors import CourseError, DomainError
 from studykit.domain.ids import UnitId
-from studykit.domain.plan import PLAN_SCHEMA_VERSION, plan_minutes, sections_of
+from studykit.domain.plan import PLAN_SCHEMA_VERSION, plan_addresses, plan_minutes, replace_part, sections_of
 
 MAX_TEXT = 15000          # fetch_url 一次最多返回多少字
 MAX_LINKS = 80
@@ -70,6 +74,7 @@ class Harness:
         self.runs, self.runtime, self.fetcher, self.content = runs, runtime, fetcher, content
         self.course, self.learner, self.specs, self.clock, self.ids = course, learner, specs, clock, ids
         self.root, self.workspace, self.learner_id = root, workspace, learner_id
+        self.versions = Versions(runs, clock)
 
     # ---------- agent 定义与版本 ----------
 
@@ -86,17 +91,22 @@ class Harness:
         return m
 
     def variant(self, agent: AgentDef, model: dict) -> h.Variant:
-        """一次运行用的版本组合。上下文配方和工具是代码，按源码算哈希：改了就是新版本（H1）。"""
+        """一次运行用的版本组合（D-022），每个文本组成的内容都存下来（D-033）。
+        上下文配方和工具是代码，存的是源码：改了代码就是新版本（H1）。"""
         spec_rules = [r for s in self.specs for r in (*s.plan_rules, *s.checkpoint_rules.values())]
-        return h.Variant(agent.name, {
-            "system_prompt": h.content_hash(agent.file("system_prompt").read_bytes()),
-            "task": h.content_hash(agent.file("task").read_bytes()),
-            "tools": h.content_hash(agent.spec.get("tools"), _src(Harness.call_tool, Harness._fetch_url,
-                                                                  Harness._submit_plan, plan_check), _src(*spec_rules)),
-            "context": _src(Harness.build_input, Harness.render_brief),
-            "model": f"{model['provider']}/{model['id']}" + (f":{model['thinking']}" if model.get("thinking") else ""),
-            "runtime": self.runtime.version,
-        })
+        src = lambda *objs: "\n\n".join(inspect.getsource(o) for o in objs)  # noqa: E731
+        texts = {
+            **prompt_texts(load_prompt(agent.dir, agent.spec)),
+            "task": agent.file("task").read_text(encoding="utf-8"),
+            **({"repair": (agent.dir / agent.spec["repair"]["task"]).read_text(encoding="utf-8")} if agent.spec.get("repair") else {}),
+            "tools": "\n\n".join([json.dumps([agent.spec.get("tools"), (agent.spec.get("repair") or {}).get("tools")], ensure_ascii=False),
+                                   src(Harness.call_tool, Harness._fetch_url, Harness._submit_plan, Harness._submit_repair, plan_check),
+                                   src(*spec_rules) if spec_rules else ""]),
+            "context": src(Harness.build_input, Harness.render_brief),
+        }
+        labels = {"model": f"{model['provider']}/{model['id']}" + (f":{model['thinking']}" if model.get("thinking") else ""),
+                  "runtime": self.runtime.version}
+        return self.versions.record(agent.name, texts, labels)
 
     # ---------- 上下文配方 ----------
 
@@ -155,18 +165,79 @@ class Harness:
         variant = self.variant(agent, m)
         data = self.build_input(unit)
         started = self.clock.now()
-        run_id = f"{started:%Y%m%d-%H%M%S}-{unit}"
+        run_id = self._new_id(name, f"{started:%Y%m%d-%H%M%S}-{unit}")
         ws = self.dir(name, run_id)
         ws.mkdir(parents=True)
         (ws / "brief.md").write_text(self.render_brief(agent.file("task").read_text(encoding="utf-8"), data), encoding="utf-8")
         (ws / "input.json").write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-        raw = self.runtime.run(agent, ws, m, list(agent.spec["tools"]), timeout)
+        (ws / "system.md").write_text(h.assemble_prompt(load_prompt(agent.dir, agent.spec)), encoding="utf-8")
+        raw = self.runtime.run(agent, ws, m, list(agent.spec["tools"]), timeout, ws / "system.md")
+        return self._record(name, run_id, variant, unit, data, started, raw, ws)
+
+    def repair(self, prev: h.Run, findings: list[Finding], model: str | None = None, timeout: int = 900) -> h.Run:
+        """定点修复（D-035）：同一个 agent、同一份冻结的输入，只重写发现指向的部分。修复也是一次运行，能回放。
+
+        INVARIANT: 修复只能提交"要重写的部分"里的地址（submit_repair 在结构上保证），其余部分逐字不变。
+        """
+        agent = self.agent(prev.agent)
+        prev_ws = self.dir(prev.agent, prev.id)
+        if not (prev_ws / "output.json").exists():            # 上一次没交出计划：没有可修的东西，重新生成
+            return self.run(prev.agent, prev.unit, model, timeout)
+        plan = json.loads((prev_ws / "output.json").read_text(encoding="utf-8"))
+        m = self.model(agent, model)
+        variant = self.variant(agent, m)
+        info = prev.input.get("repair") or {}
+        rnd = int(info.get("round", 0)) + 1
+        allowed = repair_scope(findings)
+        data = {**{k: v for k, v in prev.input.items() if k != "repair"},
+                "repair": {"of": prev.id, "root": info.get("root", prev.id), "round": rnd, "allowed": allowed,
+                           "findings": [f.as_dict() for f in findings]}}
+        started = self.clock.now()
+        run_id = self._new_id(prev.agent, f"{started:%Y%m%d-%H%M%S}-{prev.unit}-r{rnd}")
+        ws = self.dir(prev.agent, run_id)
+        ws.mkdir(parents=True)
+        (ws / "input.json").write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        (ws / "current.json").write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
+        with (ws / "grounded.jsonl").open("w", encoding="utf-8") as f:
+            for rec in self._fetched(prev_ws):
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        task = (agent.dir / agent.spec["repair"]["task"]).read_text(encoding="utf-8")
+        (ws / "brief.md").write_text(self.render_repair(task, data, plan), encoding="utf-8")
+        (ws / "system.md").write_text(h.assemble_prompt(load_prompt(agent.dir, agent.spec)), encoding="utf-8")
+        raw = self.runtime.run(agent, ws, m, list(agent.spec["repair"]["tools"]), timeout, ws / "system.md")
+        return self._record(prev.agent, run_id, variant, prev.unit, data, started, raw, ws)
+
+    @staticmethod
+    def render_repair(task: str, data: dict, plan: dict) -> str:
+        titles = {f"/sections/{i}": f"第 {i + 1} 节 {s.get('title', '')}" for i, s in enumerate(sections_of(plan))}
+        found = []
+        for f in data["repair"]["findings"]:
+            sev = "阻断" if f["severity"] == "block" else "警告"
+            found.append(f"- `{f['address'] or '（整份）'}`（{f['evaluator']}，{sev}）：{f['what']}")
+            if f.get("evidence"):
+                found.append("  证据：\n  ```\n  " + f["evidence"][-800:].replace("\n", "\n  ") + "\n  ```")
+        allowed = [(f"- `{a}`" + (f"（{titles[a]}）" if a in titles else "")) if a
+                   else '- 整份计划（地址写 ""，给出完整的课程计划）' for a in data["repair"]["allowed"]]
+        # WHY: 用 replace 而不是 format：课程计划的 JSON 里全是花括号
+        return (task.replace("{unit_id}", data["unit"]).replace("{unit_title}", data["unit_title"])
+                .replace("{findings}", "\n".join(found)).replace("{allowed}", "\n".join(allowed))
+                .replace("{plan}", plan_check.render_by_address(plan)))
+
+    def _record(self, name: str, run_id: str, variant: h.Variant, unit: str, data: dict, started, raw, ws: Path) -> h.Run:
         s = h.summarize(raw.steps)
         run = h.Run(run_id, name, variant.id, unit, self.learner_id, "batch", started.isoformat(timespec="seconds"),
                     data, raw.seconds, raw.exit_code, (ws / "output.json").exists(), s["tokens"], s["cost_usd"],
                     s["tool_calls"], s["errors"], s["final_text"])
         self.runs.add_run(run, variant, raw.steps)
         return run
+
+    def _new_id(self, agent: str, base: str) -> str:
+        """同一秒里开了两次运行（修复失败后马上重新生成）时加序号，不覆盖已有的运行目录。"""
+        run_id, n = base, 1
+        while self.dir(agent, run_id).exists():
+            n += 1
+            run_id = f"{base}-{n}"
+        return run_id
 
     def dir(self, agent: str, run_id: str) -> Path:
         return safe_path(self.workspace, f"{agent}/{run_id}")
@@ -196,6 +267,14 @@ class Harness:
                               "required": ["url"]}},
             "submit_plan": {"description": "提交这个单元的课程计划（结构化）。环境会检查时间预算、每节的新词数、检查点、知识节点、链接是否打开过；不通过会返回错误，改完再提交。",
                             "parameters": {"type": "object", "properties": {"plan": schema}, "required": ["plan"]}},
+            "submit_repair": {"description": "定点修复时提交：只给出简报里「要重写的部分」，每个地址一项，value 是这一部分修改后的完整内容。"
+                                             "环境把它们换进原计划（其余部分不变）再检查；不通过会返回错误，改完再提交。",
+                              "parameters": {"type": "object", "properties": {"parts": {"type": "array", "items": {
+                                  "type": "object", "properties": {
+                                      "address": {"type": "string", "description": "要重写的地址，如 /sections/3、/lab；整份重写写空字符串"},
+                                      "value": {"type": "object", "description": "小节地址给整个小节对象；/lab 给 lab 对象；"
+                                                "其他顶层字段（/sources、/outcomes、/nodes、/title……）给 {\"<字段名>\": 新值}；整份重写给完整的课程计划"}},
+                                  "required": ["address", "value"]}}}, "required": ["parts"]}},
         }
         return [{"name": n, **t} for n, t in tools.items() if names is None or n in names]
 
@@ -204,11 +283,18 @@ class Harness:
             return self._fetch_url(ws, args.get("url", ""), args.get("start", 0))
         if name == "submit_plan":
             return self._submit_plan(ws, args.get("plan") or {})
+        if name == "submit_repair":
+            return self._submit_repair(ws, args.get("parts"))
         raise ToolError(f"没有这个工具：{name}")
 
     def _log(self, ws: Path, name: str, rec: dict) -> None:
         with (ws / name).open("a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+    @staticmethod
+    def _fetched(ws: Path) -> list[dict]:
+        """这次运行"打开过"的页面：从上一轮继承的 + 这一轮读的（只算打开成功的）。"""
+        return [f for f in _read_jsonl(ws / "grounded.jsonl") + _read_jsonl(ws / "fetches.jsonl") if f.get("ok")]
 
     def _input(self, ws: Path) -> dict:
         return json.loads((ws / "input.json").read_text(encoding="utf-8"))
@@ -256,22 +342,56 @@ class Harness:
         i = self._input(ws)
         grounded = set()
         # INVARIANT: 只算打开成功的页面，不算页面上出现过的链接——没打开过的页面，agent 不知道里面是什么。
-        for f in _read_jsonl(ws / "fetches.jsonl"):
-            if f.get("ok"):
-                grounded |= {plan_check.url_key(f["url"]), plan_check.url_key(f.get("final_url", f["url"]))}
+        for f in self._fetched(ws):
+            grounded |= {plan_check.url_key(f["url"]), plan_check.url_key(f.get("final_url", f["url"]))}
         types = (*plan_check.CORE_CHECKPOINT_TYPES, *(k for s in self.specs for k in s.checkpoints))
         return plan_check.PlanLimits(i["unit"], i["unit_budget_minutes"], i["session_minutes"], i["max_new_terms"],
                                      {t.lower() for t in i["known_terms"]}, dict(i["existing_nodes"]), grounded, tuple(types))
 
-    def check_plan(self, ws: Path, plan: dict) -> list[str]:
-        return plan_check.check_plan(plan, self.limits(ws), [r for s in self.specs for r in s.plan_rules],
-                                     {k: r for s in self.specs for k, r in s.checkpoint_rules.items()})
+    def plan_findings(self, ws: Path, plan: dict) -> list[Finding]:
+        """环境检查（D-035）：每个问题带地址。agent 提交时看到的是它们的文字。"""
+        return plan_check.plan_findings(plan, self.limits(ws), [r for s in self.specs for r in s.plan_rules],
+                                        {k: r for s in self.specs for k, r in s.checkpoint_rules.items()})
 
     def _submit_plan(self, ws: Path, plan: dict) -> str:
-        errors = self.check_plan(ws, plan)
+        errors = [f.what for f in self.plan_findings(ws, plan)]
         self._log(ws, "submissions.jsonl", {"accepted": not errors, "errors": errors, "minutes": plan_minutes(plan or {})})
         if errors:
             raise ToolError("课程计划没有通过检查，请修改后重新提交：\n- " + "\n- ".join(errors))
+        (ws / "output.json").write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
+        (ws / "output.md").write_text(plan_check.render_plan_md(plan, self._input(ws)["session_minutes"]), encoding="utf-8")
+        return "已收到，检查通过。任务完成，不需要再做别的。"
+
+    def _submit_repair(self, ws: Path, parts) -> str:
+        info = self._input(ws).get("repair")
+        if not info:
+            raise ToolError("这次运行不是修复，用 submit_plan 提交")
+        allowed = info["allowed"]
+        if not isinstance(parts, list) or not parts or not all(isinstance(p, dict) for p in parts):
+            raise ToolError("parts 要是非空数组，每项是 {address, value}")
+        plan = json.loads((ws / "current.json").read_text(encoding="utf-8"))
+        seen = set()
+        for p in parts:
+            addr, value = str(p.get("address") or ""), p.get("value")
+            if "" not in allowed and addr not in allowed:
+                raise ToolError(f"{addr or '（整份）'} 不在要重写的部分里，只能改：{', '.join(allowed)}")
+            name = addr.strip("/")
+            if addr and not addr.startswith("/sections/") and addr != "/lab" and isinstance(value, dict) and set(value) == {name}:
+                value = value[name]                           # 顶层字段包在 {"<字段名>": 新值} 里
+            try:
+                plan = replace_part(plan, addr, value)
+            except CourseError as e:
+                raise ToolError(str(e)) from e
+            seen.add(addr)
+        missing = [] if "" in allowed else [a for a in allowed if a not in seen]
+        if missing:
+            raise ToolError("这些部分还没有给出修改后的内容：" + ", ".join(missing))
+        # 只算落在要重写的部分里（或整份）的问题：别处原有的问题这一轮改不了，由下一轮检验再指出
+        errors = [f.what for f in self.plan_findings(ws, plan)
+                  if any(within(f.address, a) or within(a, f.address) for a in allowed)]
+        self._log(ws, "submissions.jsonl", {"accepted": not errors, "errors": errors, "parts": sorted(seen)})
+        if errors:
+            raise ToolError("修改后的计划没有通过检查，请修改后重新提交：\n- " + "\n- ".join(errors))
         (ws / "output.json").write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
         (ws / "output.md").write_text(plan_check.render_plan_md(plan, self._input(ws)["session_minutes"]), encoding="utf-8")
         return "已收到，检查通过。任务完成，不需要再做别的。"
@@ -298,12 +418,13 @@ class Harness:
         items = []
         add = lambda i, desc, ok, detail="": items.append((i, desc, bool(ok), detail))  # noqa: E731
         out = ws / "output.json"
+        found: list[Finding] = []
         add("submitted", "按时提交了结果", out.exists(), "" if out.exists() else f"exit={run.exit_code}")
         if out.exists():
             plan = json.loads(out.read_text(encoding="utf-8"))
             limits = self.limits(ws)
-            problems = self.check_plan(ws, plan)
-            add("plan_valid", "课程计划通过环境检查", not problems, "；".join(problems))
+            found = self.plan_findings(ws, plan)
+            add("plan_valid", "课程计划通过环境检查", not found, "；".join(f.what for f in found))
             secs = sections_of(plan)
             add("shape", "4–8 个小节", 4 <= len(secs) <= 8, f"{len(secs)} 节")
             items_ = [c for s in secs for c in s.get("checkpoint") or []]
@@ -324,17 +445,24 @@ class Harness:
                 except FetchError as e:
                     dead.append(f"{u}（{e.status or '打不开'}）")
             add("reachable", "链接都能打开", not dead, "；".join(dead))
-            pages = {plan_check.url_key(f["url"]) for f in _read_jsonl(ws / "fetches.jsonl") if f.get("ok")}
+            pages = {plan_check.url_key(f["url"]) for f in self._fetched(ws)}
             add("researched", "至少读了 2 个页面再写", len(pages) >= 2, f"打开成功 {len(pages)} 个页面")
             md = (ws / "output.md").read_text(encoding="utf-8").lower()
             case = self._case(agent, run.unit)
             for s in case.get("must_mention") or []:
                 add(f"mention:{s}", f"提到「{s}」", s.lower() in md)
+                if s.lower() not in md and secs:
+                    # WHY: "全文要提到 X"没有天然的位置。指到第 1 节（认识练习场、确认环境），不指整份——整份的发现会放开整份重写
+                    found.append(Finding("/sections/0", f"全文没有提到「{s}」（评测用例要求）：在第 1 节讲环境的地方补上", "check"))
             for s in case.get("must_not_mention") or []:
                 add(f"avoid:{s}", f"没有出现「{s}」", s.lower() not in md)
         score, dims = h.check_results(items)
         version = h.content_hash(_src(Harness._check), self._case(agent, run.unit))
-        return self._grade(run, "check", version, "system", score=score, verdict="pass" if score == 1 else "fail", dims=dims)
+        # 发现 = 环境检查的（带地址）+ 用例要求的（指到第 1 节）+ 其余没过的检查项（没有位置，指整份）
+        found += [Finding("", d["reason"], "check") for k, d in dims.items()
+                  if d["score"] < 1 and k != "plan_valid" and not k.startswith("mention:")]
+        return self._grade(run, "check", version, "system", score=score, verdict="pass" if score == 1 else "fail", dims=dims,
+                           detail={"findings": [f.as_dict() for f in found]})
 
     def _case(self, agent: AgentDef, unit: str) -> dict:
         path = agent.dir / agent.spec["eval"]["cases"]
@@ -344,7 +472,7 @@ class Harness:
     def _judge(self, run: h.Run, agent: AgentDef, ws: Path) -> list[h.Grade]:
         rubric = (agent.dir / agent.spec["eval"]["rubric"]).read_text(encoding="utf-8")
         jm = agent.spec["eval"]["judge_model"]
-        fetched = [f for f in _read_jsonl(ws / "fetches.jsonl") if f.get("ok")]
+        fetched = self._fetched(ws)
         (ws / "judge_input.md").write_text("\n\n".join([
             "# 评分标准\n\n" + rubric,
             "# 助教拿到的简报\n\n" + (ws / "brief.md").read_text(encoding="utf-8"),
@@ -353,7 +481,8 @@ class Harness:
         ]), encoding="utf-8")
         data = h.parse_judge(self.runtime.complete(jm, h.JUDGE_SYSTEM, ws / "judge_input.md", ws, 600), h.rubric_ids(rubric))
         model = f"{jm['provider']}/{jm['id']}"
-        judge = self._grade(run, "judge", h.content_hash(rubric, jm, h.JUDGE_SYSTEM), model,
+        jv = self.versions.record(f"{agent.name}#judge", {"system": h.JUDGE_SYSTEM, "rubric": rubric}, {"model": model})
+        judge = self._grade(run, "judge", jv.id, model,
                             score=round((data["avg"] - 1) / 4, 3), dims=data["scores"],
                             issues=[{"layer": "prompt", "what": data.get("suggestion", "")}] if data.get("suggestion") else [],
                             detail={"avg": data["avg"], "top_issue": data.get("top_issue", "")})
@@ -362,6 +491,34 @@ class Harness:
                             score=sum(c["found_in_pages"] for c in checks) / len(checks) if checks else None,
                             refs=[judge.id], detail={"claims": checks})
         return [judge, claim]
+
+    def reviewer(self, run: h.Run) -> h.Grade:
+        """评审模型（D-035）：兼任命令的安全闸门（D-030）和质量评审，给出带地址的发现。同一次运行只评一次（结果存在 Grade 里）。"""
+        done = self._latest(run, "reviewer")
+        if done is not None:
+            return done
+        agent = self.agent(run.agent)
+        ws = self.dir(run.agent, run.id)
+        plan = json.loads((ws / "output.json").read_text(encoding="utf-8"))
+        conf = agent.spec["review"]
+        system = (agent.dir / conf["prompt"]).read_text(encoding="utf-8")
+        rubric = (agent.dir / agent.spec["eval"]["rubric"]).read_text(encoding="utf-8")
+        fetched = self._fetched(ws)
+        (ws / "review_input.md").write_text("\n\n".join([
+            "# 评分标准\n\n" + rubric,
+            "# 助教拿到的简报\n\n" + (ws / "brief.md").read_text(encoding="utf-8"),
+            "# 助教实际打开过的页面\n\n" + ("\n".join(f"- {f.get('title') or '(无标题)'} — {f['url']}" for f in fetched) or "（没有）"),
+            "# 课程计划（按地址）\n\n" + plan_check.render_by_address(plan),
+        ]), encoding="utf-8")
+        model = f"{conf['model']['provider']}/{conf['model']['id']}"
+        rv = self.versions.record(f"{agent.name}#reviewer", {"system": system, "rubric": rubric}, {"model": model})
+        try:
+            found = h.parse_review(self.runtime.complete(conf["model"], system, ws / "review_input.md", ws, 600),
+                                   plan_addresses(plan))
+        except Exception as e:  # noqa: BLE001  评审失败 = 没被放行：安全闸门不能默认通过
+            found = [Finding("", f"评审模型没有给出可用的结论：{e}", "reviewer_safety")]
+        return self._grade(run, "reviewer", rv.id, model, verdict="fail" if blocking(found) else "pass",
+                           detail={"findings": [f.as_dict() for f in found]})
 
     def review(self, run: h.Run, verdict: str, note: str, issues: list[dict], actor: str = "tutor") -> h.Grade:
         """导师审阅（结构化）：结论 + 问题出在哪一层，喂回下一次迭代（D-022）。"""
@@ -399,18 +556,12 @@ class Harness:
 
     def publish(self, run: h.Run) -> list[str]:
         """把通过检查的产出发布给学习者。返回并入知识图的新节点。"""
-        check = self._latest(run, "check")
-        if check is None:
-            raise DomainError(f"先评测再发布：python study.py agent eval {run.agent} --run {run.id}")
-        if check.verdict != "pass":
-            raise DomainError("自动检查没通过，不能发布：" + "；".join(d["reason"] for d in check.dims.values() if d["score"] < 1))
+        # INVARIANT: 只有产出循环放行的运行能发布（D-035）：自动检查、评审模型（含命令安全）、练习场实跑都没有阻断。
+        loop = self._latest(run, "loop")
+        if loop is None or loop.verdict != "accepted":
+            raise DomainError(f"这次运行没有通过产出循环，不能发布：{run.id}")
         ws = self.dir(run.agent, run.id)
         plan = json.loads((ws / "output.json").read_text(encoding="utf-8"))
-        if plan.get("lab"):
-            # INVARIANT: 有练习场的课程，导师审阅命令后跑过 lab verify 并通过，才能发布（D-014）。
-            v = self._latest(run, "practice_verify")
-            if v is None or v.verdict != "pass":
-                raise DomainError(f"练习场还没验证通过：先读 {ws / 'output.md'} 里的命令，再运行 python study.py lab verify {run.id}")
         judge = self._latest(run, "judge")
         plan = {"schema_version": PLAN_SCHEMA_VERSION, "unit": run.unit, **plan,
                 "provenance": {"agent": run.agent, "variant": run.variant, "run": run.id,

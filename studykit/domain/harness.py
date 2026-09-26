@@ -1,6 +1,7 @@
 """harness 域（D-022）：agent 的每次工作都能被评测、被归因、被迭代。
 
-    Variant   一个可运行的版本组合：岗位说明 + 任务模板 + 上下文配方 + 模型 + 工具 + 运行时，整体一个哈希
+    Variant   一个可运行的版本组合：prompt 各部件 + 任务模板 + 上下文配方 + 模型 + 工具 + 运行时，整体一个哈希
+              （D-033：文本组成的内容按哈希另存一份，任意两版可以逐部件比出 diff）
     Run       一个 Variant 在一个输入上跑一次：冻结的输入、统一格式的步骤、产出、用量
     RunStep   一步：模型输出一次 / 调用一次工具（和具体的 agent loop 无关）
     Grade     对一次 Run 的一个评分：check / judge / claim_check / practice_verify / review / outcome
@@ -11,12 +12,16 @@ INVARIANT: 每个 Grade 记着评分器的版本；评分标准变了，分数�
 """
 from __future__ import annotations
 
+import difflib
 import hashlib
 import json
 import re
+from typing import Callable
 from dataclasses import dataclass, field
 
-GRADERS = ("check", "judge", "claim_check", "practice_verify", "review", "outcome")
+from studykit.domain.artifact import SEVERITIES, Finding
+
+GRADERS = ("check", "reviewer", "practice_verify", "loop", "judge", "claim_check", "review", "outcome")
 
 
 def content_hash(*parts) -> str:
@@ -29,7 +34,7 @@ def content_hash(*parts) -> str:
 @dataclass(frozen=True)
 class Variant:
     agent: str
-    parts: dict                  # 组成 → 内容哈希（或模型 id），如 {"system_prompt": "1a8d…", "model": "deepseek/flash"}
+    parts: dict                  # 组成 → 内容哈希（或模型 id），如 {"prompt:rules": "1a8d…", "model": "deepseek/flash"}
 
     @property
     def id(self) -> str:
@@ -38,6 +43,39 @@ class Variant:
     def diff(self, other: "Variant") -> list[str]:
         """两个版本差在哪些组成上（"一次只改一层"的检验）。"""
         return sorted(k for k in set(self.parts) | set(other.parts) if self.parts.get(k) != other.parts.get(k))
+
+
+LABEL_PARTS = ("model", "runtime")     # 这两个组成记的是名字本身，其余组成记的是内容哈希
+
+
+def assemble_prompt(parts: list[tuple[str, str]]) -> str:
+    """prompt 部件按顺序原样拼接（D-033）。不加分隔符：部件文件自己决定怎么衔接，拼回来和写的时候一字不差。"""
+    return "".join(text for _, text in parts)
+
+
+def part_diffs(a: Variant, b: Variant, blob: Callable[[str], str | None]) -> list[dict]:
+    """两个版本逐个组成比较（D-033）：[{part, change: added|removed|changed, diff}]，没变的不列。
+
+    blob(哈希) 取回存下来的文本；模型、运行时（LABEL_PARTS）记的是名字，直接比值。
+    D-033 之前的版本只记了哈希、没存内容，这种组成只能说"变了"。
+    """
+    out = []
+    for k in [*a.parts, *(k for k in b.parts if k not in a.parts)]:
+        old, new = a.parts.get(k), b.parts.get(k)
+        if old == new:
+            continue
+        change = "added" if old is None else "removed" if new is None else "changed"
+        if k in LABEL_PARTS:
+            out.append({"part": k, "change": change, "diff": f"- {old or ''}\n+ {new or ''}"})
+            continue
+        ta, tb = (blob(old) if old else ""), (blob(new) if new else "")
+        if ta is None or tb is None:
+            diff = "（这一版的内容没有存下来，只知道它变了）"
+        else:
+            diff = "".join(difflib.unified_diff(ta.splitlines(keepends=True), tb.splitlines(keepends=True),
+                                                "a/" + k, "b/" + k, n=2))
+        out.append({"part": k, "change": change, "diff": diff})
+    return out
 
 
 @dataclass
@@ -103,49 +141,71 @@ class Grade:
 
 # ---------- 备课阶段（D-032）：从运行和评分推出来，不存 ----------
 
-# 阶段 → （给人看的名字，下一步做什么，该谁做）
+# 阶段 → （给人看的名字，下一步做什么，该谁做）。INVARIANT: 没有"导师"——备课全程由系统跑，卡住了才找学习者（PRD_V2）。
 PREP_STAGES = {
-    "todo": ("还没备课", "点「生成课程」让 agent 备课", "learner"),
-    "preparing": ("生成中", "等 agent 查资料、写课程计划（约 12 分钟）", "agent"),
-    "failed": ("没通过自动检查", "导师看哪一项没过，改 prompt / 上下文 / 工具中的一处，再重新生成", "tutor"),
-    "review": ("待导师审阅", "导师读产出、核对评分模型的质疑，判断发布还是修改", "tutor"),
-    "revise": ("需要修改", "导师按审阅列出的问题只改一处，再重新生成", "tutor"),
-    "verify": ("待验证练习场", "导师读过命令后跑 lab verify（会在本机执行）", "tutor"),
-    "ready": ("可以发布", "导师发布，课程页换成这一版", "tutor"),
+    "todo": ("还没备课", "点「备课」：系统生成、检验、定点修复，通过就发布", "learner"),
+    "preparing": ("备课中", "生成 → 检验 → 定点修复（最多 3 轮 / $1），通过就发布", "agent"),
+    "escalated": ("需要你决定", "修复轮数或花费用完了还有问题：看卡住的地方，决定重新备课，或者让开发助手改 prompt", "learner"),
+    "ready": ("新版本等你确认", "这个单元你已经开始学了，新版本要你确认才替换", "learner"),
     "published": ("已发布", "去课程页学", "learner"),
 }
 
 
 def prep_stage(runs: list[Run], grades: dict[str, list[Grade]], published_run: str | None, running: bool) -> dict:
-    """一个单元的备课走到哪一步。只看最近一次运行；学习者在用的可能是更早发布的那一版（behind）。
+    """一个单元的备课走到哪一步。只看最近一次运行（修复也是一次运行）；学习者在用的可能是更早发布的那一版（behind）。
 
     runs 按时间顺序；grades = 运行 id → 它的全部评分（按时间顺序，同一种评分以最后一条为准）。
+    最近一次运行没有产出循环的结论（loop），说明它没走完循环（出错中断、或者是旧流程的运行），按"需要你决定"算。
     """
     latest = runs[-1] if runs else None
-
-    def last(grader: str) -> Grade | None:
-        gs = [g for g in grades.get(latest.id, []) if g.grader == grader] if latest else []
-        return gs[-1] if gs else None
-
+    loops = [g for g in grades.get(latest.id, []) if g.grader == "loop"] if latest else []
+    loop = loops[-1] if loops else None
+    stuck: list[str] = []
     if running:
         stage = "preparing"
     elif latest is None:
         stage = "published" if published_run else "todo"
     elif latest.id == published_run:
         stage = "published"
-    elif last("review") is not None and last("review").verdict != "publish":
-        stage = "revise"                                   # 导师审过了：以审阅结论为准（哪怕自动检查也没过）
-    elif not latest.submitted or (last("check") is None or last("check").verdict != "pass"):
-        stage = "failed"
-    elif last("review") is None:
-        stage = "review"
-    elif last("practice_verify") is None or last("practice_verify").verdict != "pass":
-        stage = "verify"
-    else:
+    elif loop is not None and loop.verdict == "accepted":
         stage = "ready"
+    else:
+        stage = "escalated"
+        stuck = [f["what"] for f in (loop.detail.get("blocking") if loop else []) or []]
     label, nxt, who = PREP_STAGES[stage]
     return {"stage": stage, "label": label, "next": nxt, "who": who, "run": latest.id if latest else None,
-            "published_run": published_run, "behind": bool(published_run and latest and latest.id != published_run)}
+            "published_run": published_run, "behind": bool(published_run and latest and latest.id != published_run),
+            "stuck": stuck}
+
+
+# ---------- 评审模型（reviewer，D-035）：带地址的发现 ----------
+
+def parse_review(text: str, addresses: set[str]) -> list[Finding]:
+    """评审模型的回答 → 发现。unsafe（不安全的命令）一律阻断；地址不合法的，退到最近的合法上级（都不合法就是整份）。
+
+    格式：{"unsafe": [{"address", "command", "why"}], "findings": [{"address", "severity", "what", "rubric"?}（rubric = 违反的评分标准 id）]}
+    """
+    m = re.search(r"\{.*\}", text or "", re.DOTALL)
+    if not m:
+        raise ValueError("评审模型没有输出 JSON")
+    data = json.loads(m.group(0))
+
+    def fix(addr) -> str:
+        a = str(addr or "").strip()
+        while a and a not in addresses:
+            a = a.rsplit("/", 1)[0]
+        return a
+
+    out = [Finding(fix(u.get("address")), f"命令不安全：{u.get('why', '')}：{str(u.get('command', ''))[:120]}",
+                   "reviewer_safety", "block", str(u.get("command", "")))
+           for u in data.get("unsafe") or []]
+    for f in data.get("findings") or []:
+        sev = f.get("severity") if f.get("severity") in SEVERITIES else "warn"
+        what = str(f.get("what") or "").strip()
+        if what:
+            rubric = str(f.get("rubric") or "").strip()
+            out.append(Finding(fix(f.get("address")), f"[{rubric}] {what}" if rubric else what, "reviewer", sev))
+    return out
 
 
 # ---------- 自动检查（确定性） ----------
