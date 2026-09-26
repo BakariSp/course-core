@@ -180,6 +180,8 @@ class Panel:
             "id": run.id, "started": run.started, "variant": run.variant, "submitted": run.submitted,
             "minutes": round(run.seconds / 60, 1), "cost_usd": round(run.cost_usd, 3), "published": run.id == published,
             "repair_of": (run.input.get("repair") or {}).get("of"),
+            "stage": "repair" if run.input.get("repair") else run.input.get("stage") or "plan",   # 备课分步（D-038）
+            "index": run.input.get("index"),
             "check": check and {"verdict": check.verdict, "problems": blocks(check)},
             "reviewer": reviewer and {"verdict": reviewer.verdict, "problems": blocks(reviewer),
                                       "warnings": [f["what"] for f in reviewer.detail.get("findings") or [] if f["severity"] == "warn"]},

@@ -1,15 +1,20 @@
 """备课 = 课程计划的产出循环（PRD_V2 阶段 A，D-035 第 3 步）：生成 → 检验 → 定点修复 → 自动发布，不经过导师。
+生成是分步的（阶段 B，D-038）：大纲 → 一节一节写 → 拼成课程计划。
 
 agent loop 和评审模型是假的（FakeRuntime）；lab verify 在真实 bash 里跑。
 """
+import copy
+import dataclasses
 import json
+import time
 
 import pytest
 
 from studykit.domain.artifact import Finding, repair_scope, repair_unit
 from studykit.domain.errors import CourseError
 from studykit.domain.harness import Grade, Run, parse_review, prep_stage
-from studykit.domain.plan import plan_addresses, plan_parts, replace_part
+from studykit.domain.plan import assemble, fill_stub, plan_addresses, plan_parts, replace_part, sections_of
+from studykit.domain.plan_check import PlanLimits, outline_findings, section_findings
 from tests.conftest import LAB
 from tests.test_cs_practice import needs_bash
 from tests.test_harness import OTHER, SRC, checkpoint, plan_of, section
@@ -24,10 +29,10 @@ def lab_cp(i, value="2", solution=None):
 
 
 def good_plan():
-    s0 = section("认识练习场", explain="打开 Git Bash，确认终端能用。" * 10)
+    s0 = section("认识练习场", explain="打开 Git Bash，确认终端能用。" * 10, mission="认领练习场")
     terms = [{"id": "tools.cmd.pwd", "term": "pwd", "explain": "打印当前目录"},
              {"id": "tools.cmd.echo", "term": "echo", "explain": "打印参数"}]
-    return plan_of(s0, *[section(f"s{i}", terms=terms, checkpoint=[lab_cp(i)]) for i in (1, 2, 3)], lab=LAB,
+    return plan_of(s0, *[section(f"s{i}", terms=terms, checkpoint=[lab_cp(i)], mission=f"任务 {i}") for i in (1, 2, 3)], lab=LAB,
                    nodes=[{"id": "tools.cmd.pwd", "title": "pwd", "desc": "d", "kind": "term"},
                           {"id": "tools.cmd.echo", "title": "echo", "desc": "d", "kind": "term"},
                           {"id": "tools.shell.cwd", "title": "当前目录", "desc": "d", "kind": "concept"}])
@@ -39,6 +44,30 @@ def generate(plan):
 
 def repair_with(parts):
     return [("submit_repair", {"parts": parts})]
+
+
+def stub_of(sec):
+    cp = sec["checkpoint"][0]
+    stub = {"title": sec["title"], "minutes": sec["minutes"], "goal": sec["goal"], "mission": sec.get("mission", "m"),
+            "terms": sec.get("terms") or [], "teaches": [f"{sec['title']} 的要点"],
+            "check": {"type": cp["type"], "what": "做到 X"}, "reading": [SRC]}
+    if cp["type"] == "lab":                    # 约定：做完这一节，练习场满足它的检查点
+        stub["state_after"] = [{k: v for k, v in c.items() if k != "trap"} for c in cp["checks"]]
+    return stub
+
+
+def outline_of(plan):
+    o = copy.deepcopy(plan)
+    for p in o["parts"]:
+        p["sections"] = [stub_of(sec) for sec in p["sections"]]
+    return o
+
+
+def staged(runtime, plan):
+    """分步备课的脚本：一次写大纲，然后每节一次（各节并行，按节序号取脚本，D-038）。"""
+    runtime.scripts.append([("fetch_url", {"url": SRC}), ("fetch_url", {"url": OTHER}),
+                            ("submit_outline", {"outline": outline_of(plan)})])
+    runtime.sections.update({i: [("submit_section", {"section": sec})] for i, sec in enumerate(sections_of(plan))})
 
 
 @pytest.fixture
@@ -151,12 +180,15 @@ def test_prepare_repairs_only_the_broken_section_and_publishes(app, runtime, pag
     broken = good_plan()
     broken["parts"][0]["sections"][2]["checkpoint"][0] = lab_cp(2, solution=["echo 3 > r2.txt"])   # 参考做法做完也不通过
     fixed = good_plan()["parts"][0]["sections"][2]
-    runtime.scripts = [generate(broken), repair_with([{"address": "/sections/2", "value": fixed}])]
+    staged(runtime, broken)
+    runtime.scripts.append(repair_with([{"address": "/sections/2", "value": fixed}]))
     r = app.prep.prepare(UNIT)
     assert r["status"] == "accepted" and r["published"] and len(r["rounds"]) == 2
     [block] = [f for f in r["rounds"][0]["findings"] if f["severity"] == "block"]
     assert (block["evaluator"], block["address"]) == ("lab_verify", "/sections/2/checkpoint/0")
-    assert runtime.runs == [["fetch_url", "submit_plan"], ["fetch_url", "submit_repair"]]
+    assert runtime.runs == [["fetch_url", "submit_outline"]] + [["fetch_url", "submit_section"]] * 4 + \
+           [["fetch_url", "submit_repair"]]                               # 大纲 → 4 节 → 只修第 3 节
+    assert r["rounds"][0]["run"].endswith("-a")                         # 第 1 轮检验的是拼好的课程计划
     assert len(runtime.reviews) == 2 and "## /sections/2 · 第 3 节 s2" in runtime.reviews[0]   # 评审模型每轮看一次，按地址
     page = app.course.page(UNIT)
     assert page["plan"]["provenance"]["run"] == r["run"] and r["run"].endswith("-r1")
@@ -166,7 +198,8 @@ def test_prepare_repairs_only_the_broken_section_and_publishes(app, runtime, pag
 
 @needs_bash
 def test_an_unsafe_verdict_stops_the_loop_before_anything_runs(app, runtime, pages, tmp_path):
-    runtime.script = generate(good_plan())
+    staged(runtime, good_plan())
+    runtime.script = repair_with([{"address": "/sections/1", "value": sections_of(good_plan())[1]}])   # 修了等于没修
     runtime.review_reply = json.dumps({"unsafe": [{"address": "/sections/1/checkpoint/0", "command": "echo 2 > r1.txt",
                                                    "why": "假装危险"}], "findings": []})
     r = app.prep.prepare(UNIT)
@@ -178,7 +211,8 @@ def test_an_unsafe_verdict_stops_the_loop_before_anything_runs(app, runtime, pag
 
 
 def test_a_reviewer_failure_counts_as_not_passed(app, runtime, pages):
-    runtime.script = generate(good_plan())
+    staged(runtime, good_plan())
+    runtime.script = repair_with([{"address": "", "value": good_plan()}])
     runtime.review_reply = "（超时，没有输出）"
     r = app.prep.prepare(UNIT)
     assert r["status"] == "escalated" and "评审模型没有给出可用的结论" in r["blocking"][0]["what"]
@@ -186,14 +220,14 @@ def test_a_reviewer_failure_counts_as_not_passed(app, runtime, pages):
 
 @needs_bash
 def test_a_unit_the_learner_already_started_waits_for_confirmation(app, runtime, pages, clock):
-    runtime.script = generate(good_plan())
+    staged(runtime, good_plan())
     first = app.prep.prepare(UNIT)
     assert first["published"]
     app.course.check(UNIT, 0, 0, ["B"])                                           # 学习者学完了第 1 节
     clock.tick(60)
     again = good_plan()
     again["nodes"] = []                                                          # 节点第一次发布时已经并入知识图
-    runtime.script = generate(again)
+    staged(runtime, again)
     r = app.prep.prepare(UNIT)
     assert r["status"] == "accepted" and not r["published"]
     assert app.course.page(UNIT)["plan"]["provenance"]["run"] == first["run"]    # 课程页还是学习者在学的那一版
@@ -208,3 +242,134 @@ def test_publish_needs_an_accepted_loop(app, runtime, pages):
     from studykit.domain.errors import DomainError
     with pytest.raises(DomainError, match="没有通过产出循环"):
         app.harness.publish(run)
+
+
+# ---------- 分步生成（D-038）：大纲 → 一节一节写 → 拼起来 ----------
+
+def _limits():
+    return PlanLimits(UNIT, 180, 45, 5, set(), {}, {SRC.rstrip("/")}, ("choice", "fill", "lab"))
+
+
+def test_outline_is_checked_before_any_section_is_written():
+    o = outline_of(good_plan())
+    assert outline_findings(o, _limits()) == []
+    bad = copy.deepcopy(o)
+    bad["parts"][0]["sections"][1]["check"] = {"type": "choice", "what": ""}
+    bad["parts"][0]["sections"][2]["check"]["type"] = "choice"
+    bad["parts"][0]["sections"][3]["reading"] = []
+    whats = {(f.address, f.what.split("：")[-1][:12]) for f in outline_findings(bad, _limits())}
+    assert ("/sections/1", "check.what") in {(a, w[:10]) for a, w in whats}
+    assert any(a == "" and "至少一半" in w for a, w in
+               {(f.address, f.what) for f in outline_findings(bad, _limits())})     # 动手型检查点不够一半
+    assert any(a == "/sections/3" and "reading" in w for a, w in {(f.address, f.what) for f in outline_findings(bad, _limits())})
+
+
+def test_assemble_fills_stubs_and_the_outline_wins_on_title_and_minutes():
+    o, plan = outline_of(good_plan()), good_plan()
+    sec = {**sections_of(plan)[0], "title": "我自己改的标题", "minutes": 99}
+    filled = fill_stub(sections_of(o)[0], sec)
+    assert (filled["title"], filled["minutes"]) == ("认识练习场", 20) and "check" not in filled
+    partial = assemble(o, [filled])
+    assert len(sections_of(partial)) == 1 and partial["lab"] == LAB and partial["sources"] == plan["sources"]
+    assert plan_parts(assemble(o, sections_of(plan))) == plan_parts(plan)          # 全写完 = 原来的课程计划
+    # 新词和定义归大纲：写节的人交来的 terms 不算数
+    mine = fill_stub(sections_of(o)[0], {**sections_of(plan)[0], "terms": [{"id": "tools.cmd.ls", "term": "ls", "explain": "x"}]})
+    assert mine["terms"] == sections_of(plan)[0]["terms"]
+    # 约定的断言并进这一节指定题型的检查点；已经有同样 desc 的不重复加
+    stub = {**sections_of(o)[1], "state_after": sections_of(o)[1]["state_after"] + [{"file": "notes.txt", "contains": "x", "desc": "记了笔记"}]}
+    checks = fill_stub(stub, sections_of(plan)[1])["checkpoint"][0]["checks"]
+    assert [c["desc"] for c in checks] == ["r1.txt 里是 ERROR 的行数", "记了笔记"] and checks[1]["contract"]
+    no_lab = {**sections_of(plan)[1], "checkpoint": [checkpoint()]}
+    assert "检查点是 lab 题" in section_findings(no_lab, stub, 1)[0].what
+
+
+def test_a_section_run_gets_only_the_outline_and_the_pages_it_should_read(app, runtime, pages):
+    plan = good_plan()
+    staged(runtime, plan)
+    o = app.harness.outline("tutor-prep", UNIT)
+    assert o.submitted and o.id.endswith("-o") and o.input["stage"] == "outline"
+    assert "# 这一步：写大纲" in (app.harness.dir("tutor-prep", o.id) / "brief.md").read_text(encoding="utf-8")
+    # 第 2 节先写（不等第 1 节）；第一次交的没有大纲说的练习场任务，被退回
+    runtime.sections = {1: [("submit_section", {"section": {**sections_of(plan)[1], "checkpoint": [checkpoint()]}}),
+                            ("submit_section", {"section": {k: v for k, v in sections_of(plan)[1].items() if k != "terms"}})]}
+    s2 = app.harness.section(o, 1)
+    assert s2.submitted and s2.id.endswith("-s2") and s2.input["index"] == 1 and s2.tool_calls["submit_section"]["errors"] == 1
+    brief = (app.harness.dir("tutor-prep", s2.id) / "brief.md").read_text(encoding="utf-8")
+    assert "# 这一步：写第 2 节「s1」" in brief and "### 第 2 节「s1」（👉 这一节）" in brief
+    assert "- 讲清的要点：认识练习场 的要点" in brief and "- 新词 pwd：打印当前目录" in brief   # 前面几节的约定：要点、新词定义
+    assert "做完后练习场满足：r1.txt 里是 ERROR 的行数" in brief                        # 这一节要兑现的约定
+    assert "- 讲清的要点：s3 的要点" in brief and "做完后练习场满足：r3.txt" not in brief  # 后面的节只看要点（不抢讲）
+    assert "打开 Git Bash" not in brief                                              # 看不到别的节的正文
+    assert "shell 讲义正文" in brief and "logs/app.log" in brief                     # 依据页面的原文、练习场文件
+    assert app.harness.limits(app.harness.dir("tutor-prep", s2.id)).grounded         # 大纲时打开过的页面仍然算出处
+
+
+def test_each_lab_verify_gets_its_own_directory(app, runtime, pages):
+    """两次检验同时跑（比如面板和命令行各开了一次）时，不能共用、互删同一个练习场目录。"""
+    class Recorder:
+        def __init__(self):
+            self.dirs = []
+
+        def verify(self, plan, workdir):
+            self.dirs.append(workdir)
+            return {"ok": True, "findings": [], "sections": []}
+    runtime.scripts = [generate(good_plan())]
+    run = app.harness.run("tutor-prep", UNIT)
+    rec = Recorder()
+    app.harness.specs = [dataclasses.replace(app.harness.specs[0], practice=rec)]
+    app.harness.verify_lab(run)
+    app.harness.verify_lab(run)
+    assert len(set(rec.dirs)) == 2 and all(d.parent.name == "raw" for d in rec.dirs)
+
+
+def test_sections_are_written_at_the_same_time_and_assembled_in_order(app, runtime, pages):
+    plan = good_plan()
+    staged(runtime, plan)
+    runtime.delay = {0: 0.6, 1: 0.6, 2: 0.6, 3: 0.6}                             # 每节"写" 0.6 秒
+    t0 = time.monotonic()
+    a = app.prep.generate(UNIT)
+    assert time.monotonic() - t0 < 1.5                                            # 串行要 2.4 秒以上
+    assert [s["title"] for s in sections_of(a.artifact)] == ["认识练习场", "s1", "s2", "s3"]   # 按节的顺序拼
+    assert a.run.endswith("-a") and a.cost == pytest.approx(0.05)                # 大纲 + 4 节的花费都算上
+
+
+def test_one_section_that_never_submits_stops_the_generation(app, runtime, pages):
+    staged(runtime, good_plan())
+    runtime.sections[2] = []
+    runtime.script = []                                                           # 重跑一次也交不出来
+    a = app.prep.generate(UNIT)
+    assert a.artifact == {} and "-s3" in a.run
+
+
+def test_outline_must_spell_out_the_contract_between_sections():
+    o = outline_of(good_plan())
+    bad = copy.deepcopy(o)
+    bad["parts"][0]["sections"][1].pop("state_after")
+    bad["parts"][0]["sections"][2]["teaches"] = []
+    bad["parts"][0]["sections"][3]["terms"] = [{"id": "tools.cmd.pwd", "term": "pwd"}]
+    bad["parts"][0]["sections"][3]["state_after"] = [{"desc": "只有描述"}]
+    from studykit.specs.cs_practice import plan_rules
+    fs = [(f.address, f.what) for f in outline_findings(bad, _limits(), plan_rules.RULES)]
+    assert any(a == "/sections/1" and "state_after" in w for a, w in fs)
+    assert any(a == "/sections/2" and "teaches" in w for a, w in fs)
+    assert any(a == "/sections/3" and "explain" in w for a, w in fs)
+    assert any(a == "/sections/3" and "要有 run 或 file" in w for a, w in fs)
+
+
+@needs_bash
+def test_a_broken_contract_is_blamed_on_the_section_that_broke_it(tmp_path):
+    """第 2 节约定"做完后有 notes.txt"，第 3 节依赖它；第 2 节的参考做法没写 notes.txt。
+    实跑要指出第 2 节（没兑现约定），而不是第 3 节（按约定接着做）。"""
+    from studykit.specs.cs_practice.practice import BashPractice
+    plan = good_plan()
+    o = outline_of(plan)
+    o["parts"][0]["sections"][1]["state_after"].append({"file": "notes.txt", "contains": "ok", "desc": "notes.txt 里记了 ok"})
+    s3 = sections_of(plan)[2]
+    s3["checkpoint"] = [lab_cp(2, solution=["cat notes.txt > /dev/null && echo 2 > r2.txt"])]
+    plan_ = assemble(o, [sections_of(plan)[0], sections_of(plan)[1], s3, sections_of(plan)[3]])
+    r = BashPractice(tmp_path / "labs", tmp_path / "state").verify(plan_, tmp_path / "v")
+    blocks = [f for f in r["findings"] if f["severity"] == "block"]
+    assert blocks and all(f["address"] == "/sections/1/checkpoint/0" for f in blocks)
+    assert "notes.txt 里记了 ok" in blocks[0]["what"]
+    assert any(f["address"] == "/sections/2/checkpoint/0" and f["severity"] == "warn" and "第 2 节没兑现约定" in f["what"]
+               for f in r["findings"])                                        # 下游的失败留着，标成可能是连带的

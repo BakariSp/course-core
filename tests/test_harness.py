@@ -140,8 +140,11 @@ def test_budget_links_terms_and_nodes(app, ws):
 
 
 def test_schema_includes_spec_fields(app):
-    fetch, submit, repair = app.harness.tool_schemas()
+    fetch, submit, outline, section, repair = app.harness.tool_schemas()
     assert repair["name"] == "submit_repair" and repair["parameters"]["required"] == ["parts"]
+    stub = outline["parameters"]["properties"]["outline"]["properties"]["parts"]["items"]["properties"]["sections"]["items"]
+    assert {"terms", "check", "reading"} <= set(stub["required"]) and "lab" in outline["parameters"]["properties"]["outline"]["properties"]
+    assert "checkpoint" in section["parameters"]["properties"]["section"]["required"]
     cp = submit["parameters"]["properties"]["plan"]["properties"]["parts"]["items"]["properties"]["sections"]["items"][
         "properties"]["checkpoint"]["items"]["properties"]
     assert cp["type"]["enum"] == ["choice", "fill", "lab"] and "solution" in cp

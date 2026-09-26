@@ -6,6 +6,8 @@ import datetime as dt
 import json
 import shutil
 import textwrap
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -47,6 +49,9 @@ class FakeRuntime:
     def __init__(self):
         self.script = []          # [(工具名, 参数)]
         self.scripts = []         # 每次运行一份脚本（生成、修复……），按顺序用完后再用 script
+        self.sections = {}        # 写一节的脚本：节序号 → 脚本（各节并行写，谁先开始不一定，D-038）
+        self.delay = {}           # 节序号 → 这一节要"写"多少秒（测并行时用）
+        self.lock = threading.Lock()
         self.judge_reply = ""
         self.review_reply = '{"unsafe": [], "findings": []}'
         self.reviews = []         # 评审模型每次拿到的输入（review_input.md）
@@ -56,10 +61,19 @@ class FakeRuntime:
     def run(self, agent: AgentDef, workspace: Path, model: dict, tools: list[str], timeout: int,
             system_prompt: Path | None = None) -> RawRun:
         self.system_prompt = system_prompt
-        self.runs.append(tools)
+        index = json.loads((workspace / "input.json").read_text(encoding="utf-8")).get("index")
+        with self.lock:
+            self.runs.append(tools)
+            if "submit_section" in tools and index in self.sections:
+                script = self.sections.pop(index)
+            else:
+                script = self.scripts.pop(0) if self.scripts else self.script
+        time.sleep(self.delay.get(index, 0))
         steps = []
-        for name, args in (self.scripts.pop(0) if self.scripts else self.script):
+        for name, args in script:
             try:
+                if name not in tools:             # 和真的 pi 一样：这一步没开放的工具调不了
+                    raise RuntimeError(f"工具没有开放：{name}")
                 text, ok = self.harness.call_tool(workspace, name, args), True
             except Exception as e:  # noqa: BLE001
                 text, ok = str(e), False

@@ -1,6 +1,6 @@
 """备课（PRD_V2 阶段 A）：课程计划注册成产出循环（D-035）里的一种产出物，从生成走到发布，全程不需要导师。
 
-    生成        tutor-prep 跑一次（查资料、写计划、submit_plan）
+    生成        分步（D-038）：大纲（查资料、练习场、每节的桩）→ 各节同时写（每节提交时就检查）→ 拼成课程计划
     检验器链    便宜的先跑，前面阻断就不跑后面的：
                   1. check          确定性：schema、预算、学科规则（含命令安全的固定规则）、评测用例
                   2. safety         评审模型读一遍会被执行的命令（D-030）；它放行，才轮到 3
@@ -14,6 +14,7 @@ INVARIANT: 每一轮是一次 Run，每个检验器的结论是这次 Run 的一
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 
 from studykit.app.harness import Harness
 from studykit.app.learning import Course
@@ -22,7 +23,7 @@ from studykit.app.ports import PlanStore
 from studykit.domain import harness as h
 from studykit.domain.artifact import Finding
 from studykit.domain.errors import DomainError
-from studykit.domain.plan import plan_parts
+from studykit.domain.plan import plan_parts, stubs_of
 
 AGENT = "tutor-prep"
 
@@ -33,8 +34,8 @@ def _findings(g: h.Grade | None, evaluators: tuple[str, ...] | None = None) -> l
 
 
 class CoursePrep:
-    def __init__(self, harness: Harness, course: Course, plans: PlanStore, budget: Budget = Budget()):
-        self.harness, self.course, self.plans, self.budget = harness, course, plans, budget
+    def __init__(self, harness: Harness, course: Course, plans: PlanStore, budget: Budget = Budget(), workers: int = 8):
+        self.harness, self.course, self.plans, self.budget, self.workers = harness, course, plans, budget, workers
         self.runs = harness.runs
 
     # ---------- 产出物种类 ----------
@@ -49,9 +50,11 @@ class CoursePrep:
         def generate(inp: dict) -> Attempt:
             if inp.get("from"):                                # 从已有的一次运行接着修（不花生成的钱）
                 return attempt(hs.resolve(AGENT, inp["from"]))
-            return attempt(hs.run(AGENT, inp["unit"], model=model))
+            return self.generate(inp["unit"], model)
 
         def repair(prev: Attempt, findings: list[Finding], inp: dict) -> Attempt:
+            if not prev.artifact:                              # 上一次没拼出课程计划：没有可修的，重新分步生成
+                return self.generate(inp["unit"], model)
             return attempt(hs.repair(self._run(prev), findings, model=model))
 
         def check(a: Attempt) -> list[Finding]:
@@ -76,6 +79,39 @@ class CoursePrep:
                     [Evaluator("check", check), Evaluator("safety", safety), Evaluator("lab_verify", lab),
                      Evaluator("quality", quality)],
                     plan_parts)
+
+    # ---------- 分步生成（D-038） ----------
+
+    def generate(self, unit: str, model: str | None = None, tries: int = 2) -> Attempt:
+        """大纲 → 各节同时写 → 拼成课程计划。每一步没交出来就重跑一次；还不行就停，交给循环按"没有提交"处理。
+        返回的 cost 是这几步加起来的花费（算进产出循环的预算）。
+        WHY: 各节只依赖大纲，所以并行：一个单元的生成时间从"大纲 + 各节之和"降到"大纲 + 最慢的一节"。"""
+        hs = self.harness
+
+        def step(fn) -> tuple[h.Run, bool, float]:
+            spent = 0.0
+            for _ in range(tries):
+                run = fn()
+                spent += run.cost_usd
+                if run.submitted:
+                    return run, True, spent
+            return run, False, spent
+
+        outline, ok, spent = step(lambda: hs.outline(AGENT, unit, model=model))
+        if not ok:
+            return Attempt({}, outline.id, spent)
+        n = len(stubs_of(self._output(outline)))
+        with ThreadPoolExecutor(max_workers=max(1, min(n, self.workers))) as pool:
+            results = list(pool.map(lambda i: step(lambda: hs.section(outline, i, model=model)), range(n)))
+        spent += sum(c for _, _, c in results)
+        failed = [run for run, ok, _ in results if not ok]
+        if failed:
+            return Attempt({}, failed[0].id, spent)
+        plan = hs.assemble(outline, [run for run, _, _ in results])        # 按节的顺序拼，和谁先写完无关
+        return Attempt(self._output(plan), plan.id, spent)
+
+    def _output(self, run: h.Run) -> dict:
+        return json.loads((self.harness.dir(run.agent, run.id) / "output.json").read_text(encoding="utf-8"))
 
     # ---------- 用例 ----------
 

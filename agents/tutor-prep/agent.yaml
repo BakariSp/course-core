@@ -16,12 +16,12 @@ prompt:                       # system prompt 的部件，按顺序原样拼接�
   - {part: tools, file: prompt/tools.md}           # 能用哪些工具
   - {part: workflow, file: prompt/workflow.md}     # 工作步骤
   - {part: rules, file: prompt/rules.md}           # 硬性规则（含语气：D-026 先给定义）
-task: task.md                 # 每次运行的任务模板（runner 填入单元信息和时间预算后作为简报）
-tools: [fetch_url, submit_plan]   # 只开放这些环境工具；pi 自带的读写文件、shell 全部关闭
-
-repair:                       # 定点修复（D-035）：同一套 system prompt，换任务模板和提交工具
-  task: repair.md
-  tools: [fetch_url, submit_repair]
+task: task.md                 # 单元信息（每一步共用的简报前半段：单元、预算、学习者、学习者模型）
+stages:                       # 备课分步（D-038）：每一步 = 简报后半段的说明 + 只开放这一步的提交工具。pi 自带的读写文件、shell 全部关闭
+  outline: {task: stages/outline.md, tools: [fetch_url, submit_outline]}   # 大纲：练习场、每节的桩
+  section: {task: stages/section.md, tools: [fetch_url, submit_section]}   # 写一节：拿着大纲和前面几节
+  repair:  {task: stages/repair.md, tools: [fetch_url, submit_repair]}     # 定点修复（D-035）：只重写被指出的部分
+  plan:    {task: stages/plan.md, tools: [fetch_url, submit_plan]}         # 一次写完整份（agent run 调试用，备课不走这一步）
 
 review:                       # 评审模型（D-035）：兼任命令的安全闸门（D-030），放行后系统才自动跑 lab verify
   model: {provider: deepseek, id: deepseek-v4-pro}   # 和生成模型分开，避免偏向自己的写法

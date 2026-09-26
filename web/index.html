@@ -1661,7 +1661,7 @@ async function showPanel() {
 
   async function prepare(u) {
     const again = u.course && u.course.passed > 0 ? "\n你已经开始学这个单元：新版本通过后要你确认才会替换。" : "";
-    if (!confirm(`给「${u.title}」备课？\n系统会：生成 → 检验（自动检查、评审模型读命令、在临时目录里跑一遍练习场）→ 只修被指出的地方，最多 3 轮 / $1。\n通过就直接发布；卡住了会停下来告诉你卡在哪。${again}`)) return;
+    if (!confirm(`给「${u.title}」备课？\n系统会：写大纲 → 各节同时写 → 检验（自动检查、评审模型读命令、在临时目录里跑一遍练习场）→ 只修被指出的地方，最多 3 轮 / $1。\n通过就直接发布；卡住了会停下来告诉你卡在哪。${again}`)) return;
     try { await api("/api/panel/prepare", { unit: u.id }); } catch (e) { return alert(e.message); }
     selected = u.id; load();
   }
@@ -1702,7 +1702,7 @@ async function showPanel() {
     catch (e) { return fill(detail, $("p", { class: "error" }, e.message)); }
     const show = v => typeof v === "string" ? v : JSON.stringify(v, null, 2);
     const VERDICT = { pass: "✓ 通过", fail: "✗ 有阻断", accepted: "✓ 放行", escalated: "✗ 需要你决定" };
-    const cell = g => !g ? $("td", { class: "hint" }, "—（没跑到）")
+    const cell = g => !g ? $("td", { class: "hint" }, "—")
       : $("td", {}, VERDICT[g.verdict] || g.verdict, ...(g.problems || []).map(x => $("div", { class: "hint" }, x)),
         ...(g.warnings || []).map(x => $("div", { class: "hint" }, "注意：" + x)));
     fill(detail,
@@ -1715,7 +1715,8 @@ async function showPanel() {
       d.runs.length ? $("table", { class: "pn-table" },
         $("tr", {}, $("th", {}, "运行"), $("th", {}, "自动检查"), $("th", {}, "评审模型"), $("th", {}, "练习场实跑"), $("th", {}, "这一轮的结论"), $("th", { class: "wide-only" }, "用时 / 花费")),
         d.runs.map(r => $("tr", {},
-          $("td", {}, r.id.slice(0, 15) + (r.repair_of ? " · 修复" : ""), r.published ? $("div", { class: "hint" }, "★ 课程页在用这一版") : null,
+          $("td", {}, r.id.slice(0, 15) + " · " + ({ outline: "大纲", section: `第 ${r.index + 1} 节`, assemble: "拼成课程", repair: "修复", plan: "整份" }[r.stage] || r.stage),
+            r.published ? $("div", { class: "hint" }, "★ 课程页在用这一版") : null,
             $("div", { class: "hint" }, `版本 ${r.variant}`)),
           cell(r.check), cell(r.reviewer), cell(r.verify),
           r.loop ? $("td", {}, VERDICT[r.loop.verdict] || r.loop.verdict, $("div", { class: "hint" }, `${r.loop.rounds} 轮 · $${r.loop.spent_usd}`))

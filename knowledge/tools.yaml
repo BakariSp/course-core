@@ -406,3 +406,118 @@ nodes:
     - tools.cmd.git.status
     units:
     - tools-02-git
+  tools.debug.reproduce:
+    title: 复现（reproduce）
+    desc: 用固定的输入和步骤让故障稳定重现出来：能重现，才能反复试、才能确认自己真的修好了。
+    kind: concept
+    requires:
+    - tools.shell.roles
+    units:
+    - tools-03-debug
+  tools.debug.logging:
+    title: 日志（logging）
+    desc: 程序在运行时把自己做了什么事写下来的记录（写到文件或终端）：不用改代码、不用盯着看，事后就能回看当时发生了什么。
+    kind: concept
+    requires:
+    - tools.shell.roles
+    units:
+    - tools-03-debug
+  tools.debug.traceback:
+    title: 报错信息（traceback）
+    desc: 程序崩掉时打印的那几行：最下面一行是错误类型和消息，往上每两行是调用它的那一层——文件名、行号、那行代码。
+    kind: concept
+    requires:
+    - tools.cmd.python
+    units:
+    - tools-03-debug
+  tools.debug.callstack:
+    title: 调用栈（call stack）
+    desc: 程序此刻走到了哪个位置、它是被谁调进来的：A 调用 B、B 调用 C，串起来就是调用栈；报错信息就是把它打印出来的样子。
+    kind: concept
+    requires:
+    - tools.debug.traceback
+    units:
+    - tools-03-debug
+  tools.debug.print:
+    title: 打印调试（print debugging）
+    desc: 在可疑的位置插一条打印语句，把中间值打到屏幕上，用实际输出代替猜测；知道要打印什么、改一次代码很便宜的时候最顺手。
+    kind: skill
+    requires:
+    - tools.cmd.python
+    - tools.debug.traceback
+    units:
+    - tools-03-debug
+  tools.debug.debugger:
+    title: 调试器（debugger）
+    desc: 能让你在程序运行中间停下来、一步步走、随时查看变量的程序；当你不确定该打印什么，或改一次代码要重启很久时用它。
+    kind: concept
+    requires:
+    - tools.debug.print
+    units:
+    - tools-03-debug
+  tools.debug.breakpoint:
+    title: 断点（breakpoint）
+    desc: 告诉调试器在哪个文件的哪一行停下来；也可以加条件，只在满足条件时停。
+    kind: concept
+    requires:
+    - tools.debug.debugger
+    units:
+    - tools-03-debug
+  tools.cmd.pdb:
+    title: python -m pdb（Python 调试器）
+    desc: Python 自带的调试器；python -m pdb 脚本.py 用它启动脚本，然后用 b / p / n / c / q 这些单字母命令控制程序。
+    kind: term
+    requires:
+    - tools.debug.breakpoint
+    - tools.cmd.python
+    units:
+    - tools-03-debug
+  tools.debug.loglevel:
+    title: 日志级别（log level）
+    desc: 每条日志带的严重程度标签（DEBUG / INFO / WARN / ERROR），用来决定哪些日志值得写下来、哪些应该被过滤掉。
+    kind: concept
+    requires:
+    - tools.debug.logging
+    units:
+    - tools-03-debug
+  tools.debug.timing:
+    title: 计时（timing：real / user / sys）
+    desc: 量一个程序花了多久：real 是从头到尾经过的时间（包含等待），user 和 sys 才是 CPU 真正替它干活的时间。
+    kind: concept
+    requires:
+    - tools.shell.roles
+    units:
+    - tools-03-debug
+  tools.cmd.time:
+    title: time（量一条命令花了多久）
+    desc: bash 里可以直接写在命令前面的 time：time python app.py 会打印 real / user / sys 三个数。
+    kind: term
+    requires:
+    - tools.debug.timing
+    units:
+    - tools-03-debug
+  tools.debug.profiler:
+    title: 性能分析器（profiler）
+    desc: 记录程序里每个函数被调用多少次、各花了多少时间的工具，用来找热点；分采样式（定期取样，开销小）和追踪式（每次调用都记）。
+    kind: concept
+    requires:
+    - tools.debug.timing
+    units:
+    - tools-03-debug
+  tools.debug.hotspot:
+    title: 热点（hot spot）
+    desc: 程序里最花时间的那一小部分代码；要优化之前先用 profiler 把它找出来，别凭感觉猜。
+    kind: concept
+    requires:
+    - tools.debug.profiler
+    units:
+    - tools-03-debug
+  tools.cmd.python.cprofile:
+    title: python -m cProfile（Python 的追踪式 profiler）
+    desc: Python 自带；python -m cProfile -s tottime 脚本.py 会按「函数自己花的时间」排序打印统计。
+    kind: term
+    requires:
+    - tools.debug.profiler
+    - tools.cmd.python
+    units:
+    - tools-03-debug

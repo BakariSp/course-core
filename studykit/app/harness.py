@@ -6,6 +6,10 @@
     fetches.jsonl     agent 读过的页面（含读到的文字，核对出处用）
     grounded.jsonl    修复运行：从上一轮继承的"打开过的页面"（出处可以继续用）
     current.json      修复运行：修复前的课程计划
+    context.json      写一节的运行：大纲
+
+备课分步（D-038），每一步是一次运行，input.json 里的 stage 说明是哪一步：
+    outline → section × N（并行）→ assemble（不调模型，把各节拼成课程计划）→ 产出循环（检验、repair）
     submissions.jsonl 每次提交：接受 / 退回 + 原因（运行中自我修正的记录）
     output.json/.md   产出（课程计划 + 给导师审阅的 Markdown）
     raw/              agent loop 的原始日志，可以过期清理
@@ -24,18 +28,23 @@ from pathlib import Path
 import yaml
 
 from studykit.app.learning import Course, LearnerModel
-from studykit.app.ports import (AgentDef, AgentRuntime, Clock, Content, Fetcher, FetchError, IdGen, RunStore, Spec)
+from studykit.app.ports import (AgentDef, AgentRuntime, Clock, Content, Fetcher, FetchError, IdGen, RawRun, RunStore,
+                                 Spec)
 from studykit.app.paths import safe_path
 from studykit.app.versions import Versions, load_prompt, prompt_texts
 from studykit.domain import course_eval, harness as h, plan_check
 from studykit.domain.artifact import Finding, blocking, repair_scope, within
 from studykit.domain.errors import CourseError, DomainError
 from studykit.domain.ids import UnitId
-from studykit.domain.plan import PLAN_SCHEMA_VERSION, plan_addresses, plan_minutes, replace_part, sections_of
+from studykit.domain.plan import (PLAN_SCHEMA_VERSION, assemble, fill_stub, plan_addresses, plan_minutes, replace_part,
+                                  sections_of, stubs_of, with_section)
 
 MAX_TEXT = 15000          # fetch_url 一次最多返回多少字
 MAX_LINKS = 80
 RUN_ID = re.compile(r"^[0-9]{8}-[0-9]{6}-[a-z0-9-]+$")
+STAGE_KEYS = ("stage", "repair", "index", "outline_run", "sections")     # 某一步自己的输入；其余是单元的冻结输入
+MAX_READING = 12000       # 写一节时，每个依据页面最多给多少字的原文
+MAX_READING_TOTAL = 36000
 
 
 class ToolError(Exception):
@@ -98,11 +107,12 @@ class Harness:
         texts = {
             **prompt_texts(load_prompt(agent.dir, agent.spec)),
             "task": agent.file("task").read_text(encoding="utf-8"),
-            **({"repair": (agent.dir / agent.spec["repair"]["task"]).read_text(encoding="utf-8")} if agent.spec.get("repair") else {}),
-            "tools": "\n\n".join([json.dumps([agent.spec.get("tools"), (agent.spec.get("repair") or {}).get("tools")], ensure_ascii=False),
-                                   src(Harness.call_tool, Harness._fetch_url, Harness._submit_plan, Harness._submit_repair, plan_check),
+            **{f"stage:{name}": (agent.dir / st["task"]).read_text(encoding="utf-8") for name, st in agent.spec["stages"].items()},
+            "tools": "\n\n".join([json.dumps({n: st["tools"] for n, st in agent.spec["stages"].items()}, ensure_ascii=False),
+                                   src(Harness.call_tool, Harness._fetch_url, Harness._submit_plan, Harness._submit_outline,
+                                       Harness._submit_section, Harness._submit_repair, plan_check),
                                    src(*spec_rules) if spec_rules else ""]),
-            "context": src(Harness.build_input, Harness.render_brief),
+            "context": src(Harness.build_input, Harness.render_brief, Harness.render_section, Harness._reading),
         }
         labels = {"model": f"{model['provider']}/{model['id']}" + (f":{model['thinking']}" if model.get("thinking") else ""),
                   "runtime": self.runtime.version}
@@ -159,20 +169,123 @@ class Harness:
 
     # ---------- 运行 ----------
 
-    def run(self, name: str, unit: str, model: str | None = None, timeout: int = 900) -> h.Run:
-        agent = self.agent(name)
+    def stage(self, agent: AgentDef, name: str) -> tuple[str, list[str]]:
+        """一步的说明（接在单元简报后面）和这一步开放的工具。"""
+        st = agent.spec["stages"][name]
+        return (agent.dir / st["task"]).read_text(encoding="utf-8"), list(st["tools"])
+
+    def _start(self, agent: AgentDef, unit: str, suffix: str, data: dict, brief: str,
+               files: dict[str, object] | None = None, grounded: list[dict] = ()) -> tuple[str, Path]:
+        """开一次运行的工作目录：冻结的输入、简报、system prompt、继承的出处、这一步要的其他文件。"""
+        run_id = self._new_id(agent.name, f"{self.clock.now():%Y%m%d-%H%M%S}-{unit}{suffix}")
+        ws = self.dir(agent.name, run_id)
+        ws.mkdir(parents=True)
+        (ws / "input.json").write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        (ws / "brief.md").write_text(brief, encoding="utf-8")
+        (ws / "system.md").write_text(h.assemble_prompt(load_prompt(agent.dir, agent.spec)), encoding="utf-8")
+        for name, value in (files or {}).items():
+            (ws / name).write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
+        if grounded:
+            (ws / "grounded.jsonl").write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in grounded), encoding="utf-8")
+        return run_id, ws
+
+    def _go(self, agent: AgentDef, stage: str, unit: str, suffix: str, data: dict, brief: str, model: str | None,
+            timeout: int, **kw) -> h.Run:
         m = self.model(agent, model)
         variant = self.variant(agent, m)
-        data = self.build_input(unit)
         started = self.clock.now()
-        run_id = self._new_id(name, f"{started:%Y%m%d-%H%M%S}-{unit}")
-        ws = self.dir(name, run_id)
-        ws.mkdir(parents=True)
-        (ws / "brief.md").write_text(self.render_brief(agent.file("task").read_text(encoding="utf-8"), data), encoding="utf-8")
-        (ws / "input.json").write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-        (ws / "system.md").write_text(h.assemble_prompt(load_prompt(agent.dir, agent.spec)), encoding="utf-8")
-        raw = self.runtime.run(agent, ws, m, list(agent.spec["tools"]), timeout, ws / "system.md")
-        return self._record(name, run_id, variant, unit, data, started, raw, ws)
+        run_id, ws = self._start(agent, unit, suffix, {**data, "stage": stage} if stage != "plan" else data, brief, **kw)
+        raw = self.runtime.run(agent, ws, m, self.stage(agent, stage)[1], timeout, ws / "system.md")
+        return self._record(agent.name, run_id, variant, unit, self._input(ws), started, raw, ws)
+
+    def run(self, name: str, unit: str, model: str | None = None, timeout: int = 900) -> h.Run:
+        """一次写完整份（调试、对照用；备课走 outline → section）。"""
+        agent = self.agent(name)
+        data = self.build_input(unit)
+        brief = self.render_brief(agent.file("task").read_text(encoding="utf-8"), data) + self.stage(agent, "plan")[0]
+        return self._go(agent, "plan", unit, "", data, brief, model, timeout)
+
+    def outline(self, name: str, unit: str, model: str | None = None, timeout: int = 900) -> h.Run:
+        """备课第一步（D-038）：查资料、写大纲（练习场 + 每节的桩）。"""
+        agent = self.agent(name)
+        data = self.build_input(unit)
+        brief = self.render_brief(agent.file("task").read_text(encoding="utf-8"), data) + self.stage(agent, "outline")[0]
+        return self._go(agent, "outline", unit, "-o", data, brief, model, timeout)
+
+    def section(self, outline_run: h.Run, index: int, model: str | None = None, timeout: int = 900) -> h.Run:
+        """写第 index 节：只拿大纲（练习场、每一节的桩）和这一节要依据的页面原文。
+        INVARIANT: 不依赖别的节写成什么样——各节可以同时写。前后衔接靠大纲里每节的任务，衔接不上由拼起来之后的练习场实跑发现。"""
+        agent = self.agent(outline_run.agent)
+        outline = json.loads((self.dir(agent.name, outline_run.id) / "output.json").read_text(encoding="utf-8"))
+        base = self._base(outline_run.input)
+        pages = self._fetched(self.dir(agent.name, outline_run.id))
+        brief = (self.render_brief(agent.file("task").read_text(encoding="utf-8"), base)
+                 + self.render_section(self.stage(agent, "section")[0], outline, index, pages))
+        data = {**base, "index": index, "outline_run": outline_run.id}
+        return self._go(agent, "section", outline_run.unit, f"-s{index + 1}", data, brief, model, timeout,
+                        files={"context.json": {"outline": outline}}, grounded=pages)
+
+    def assemble(self, outline_run: h.Run, section_runs: list[h.Run]) -> h.Run:
+        """把大纲和写好的各节拼成课程计划，记成一次运行（不调模型）。产出循环从这一次开始检验。"""
+        agent = self.agent(outline_run.agent)
+        load = lambda r: json.loads((self.dir(agent.name, r.id) / "output.json").read_text(encoding="utf-8"))  # noqa: E731
+        plan = assemble(load(outline_run), [load(r) for r in section_runs])
+        base = self._base(outline_run.input)
+        pages = [f for r in (outline_run, *section_runs) for f in self._fetched(self.dir(agent.name, r.id))]
+        started = self.clock.now()
+        data = {**base, "stage": "assemble", "outline_run": outline_run.id, "sections": [r.id for r in section_runs]}
+        brief = (self.dir(agent.name, outline_run.id) / "brief.md").read_text(encoding="utf-8")
+        run_id, ws = self._start(agent, outline_run.unit, "-a", data, brief, grounded=pages)
+        (ws / "output.json").write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
+        (ws / "output.md").write_text(plan_check.render_plan_md(plan, base["session_minutes"]), encoding="utf-8")
+        return self._record(agent.name, run_id, self.variant(agent, self.model(agent)), outline_run.unit, data, started,
+                            RawRun([], 0, 0.0), ws)
+
+    @staticmethod
+    def _base(inp: dict) -> dict:
+        return {k: v for k, v in inp.items() if k not in STAGE_KEYS}
+
+    @staticmethod
+    def render_section(task: str, outline: dict, index: int, pages: list[dict]) -> str:
+        stubs = stubs_of(outline)
+        stub = stubs[index]
+        dump = lambda v: "```json\n" + json.dumps(v, ensure_ascii=False, indent=1) + "\n```"  # noqa: E731
+
+        def block(i: int, st: dict) -> str:
+            where = "👉 这一节" if i == index else "学习者已经学完" if i < index else "还没学到"
+            lines = [f"### 第 {i + 1} 节「{st.get('title', '')}」（{where}）",
+                     f"- 目标：{st.get('goal', '')}；任务：{st.get('mission', '')}",
+                     "- 讲清的要点：" + ("；".join(st.get("teaches") or []) or "（无）")]
+            if i <= index:           # 前面几节的新词定义和练习场状态：这一节可以直接用、可以依赖
+                lines += [f"- 新词 {t.get('term', '')}：{t.get('explain', '')}" for t in st.get("terms") or []]
+                lines += [f"- 做完后练习场满足：{k.get('desc', '')} `{json.dumps({x: y for x, y in k.items() if x != 'desc'}, ensure_ascii=False)}`"
+                          for k in st.get("state_after") or []]
+            return "\n".join(lines)
+
+        head = {k: outline.get(k) for k in ("title", "summary", "outcomes") if outline.get(k)}
+        return (task.replace("{number}", str(index + 1)).replace("{title}", str(stub.get("title", "")))
+                .replace("{check_type}", str((stub.get("check") or {}).get("type", "")))
+                .replace("{stub}", dump(stub))
+                .replace("{outline}", dump(head) + "\n\n" + "\n\n".join(block(i, st) for i, st in enumerate(stubs)))
+                .replace("{lab}", dump(outline.get("lab") or {}))
+                .replace("{reading}", Harness._reading(pages, stub.get("reading") or [])))
+
+    @staticmethod
+    def _reading(pages: list[dict], urls: list[str]) -> str:
+        """大纲给这一节列的依据页面 → 读到的原文（按段拼回去，截断）。WHY: 写一节的运行不用重新抓一遍页面。"""
+        out, total = [], 0
+        for url in urls:
+            key = plan_check.url_key(url)
+            chunks = sorted({f.get("start", 0): f.get("text", "") for f in pages
+                             if key in (plan_check.url_key(f["url"]), plan_check.url_key(f.get("final_url", f["url"])))}.items())
+            text = "".join(t for _, t in chunks)[:MAX_READING]
+            if not text or total >= MAX_READING_TOTAL:
+                out.append(f"### {url}\n\n（没有读到原文，需要的话用 fetch_url 打开）")
+                continue
+            text = text[:MAX_READING_TOTAL - total]
+            total += len(text)
+            out.append(f"### {url}\n\n{text}")
+        return "\n\n".join(out) or "（大纲没有列依据页面）"
 
     def repair(self, prev: h.Run, findings: list[Finding], model: str | None = None, timeout: int = 900) -> h.Run:
         """定点修复（D-035）：同一个 agent、同一份冻结的输入，只重写发现指向的部分。修复也是一次运行，能回放。
@@ -181,31 +294,17 @@ class Harness:
         """
         agent = self.agent(prev.agent)
         prev_ws = self.dir(prev.agent, prev.id)
-        if not (prev_ws / "output.json").exists():            # 上一次没交出计划：没有可修的东西，重新生成
-            return self.run(prev.agent, prev.unit, model, timeout)
+        if not (prev_ws / "output.json").exists():
+            raise DomainError(f"{prev.id} 没有交出课程计划，没有可修的东西")
         plan = json.loads((prev_ws / "output.json").read_text(encoding="utf-8"))
-        m = self.model(agent, model)
-        variant = self.variant(agent, m)
         info = prev.input.get("repair") or {}
         rnd = int(info.get("round", 0)) + 1
-        allowed = repair_scope(findings)
-        data = {**{k: v for k, v in prev.input.items() if k != "repair"},
-                "repair": {"of": prev.id, "root": info.get("root", prev.id), "round": rnd, "allowed": allowed,
+        data = {**self._base(prev.input),
+                "repair": {"of": prev.id, "root": info.get("root", prev.id), "round": rnd, "allowed": repair_scope(findings),
                            "findings": [f.as_dict() for f in findings]}}
-        started = self.clock.now()
-        run_id = self._new_id(prev.agent, f"{started:%Y%m%d-%H%M%S}-{prev.unit}-r{rnd}")
-        ws = self.dir(prev.agent, run_id)
-        ws.mkdir(parents=True)
-        (ws / "input.json").write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-        (ws / "current.json").write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
-        with (ws / "grounded.jsonl").open("w", encoding="utf-8") as f:
-            for rec in self._fetched(prev_ws):
-                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-        task = (agent.dir / agent.spec["repair"]["task"]).read_text(encoding="utf-8")
-        (ws / "brief.md").write_text(self.render_repair(task, data, plan), encoding="utf-8")
-        (ws / "system.md").write_text(h.assemble_prompt(load_prompt(agent.dir, agent.spec)), encoding="utf-8")
-        raw = self.runtime.run(agent, ws, m, list(agent.spec["repair"]["tools"]), timeout, ws / "system.md")
-        return self._record(prev.agent, run_id, variant, prev.unit, data, started, raw, ws)
+        brief = self.render_repair(self.stage(agent, "repair")[0], data, plan)
+        return self._go(agent, "repair", prev.unit, f"-r{rnd}", data, brief, model, timeout,
+                        files={"current.json": plan}, grounded=self._fetched(prev_ws))
 
     @staticmethod
     def render_repair(task: str, data: dict, plan: dict) -> str:
@@ -257,8 +356,9 @@ class Harness:
 
     def tool_schemas(self, names: list[str] | None = None) -> list[dict]:
         types = {**plan_check.CORE_CHECKPOINT_TYPES, **{k: v for s in self.specs for k, v in s.checkpoint_docs.items()}}
-        schema = plan_check.plan_schema(types, {k: v for s in self.specs for k, v in s.checkpoint_fields.items()},
-                                        {k: v for s in self.specs for k, v in s.plan_fields.items()})
+        cp_fields = {k: v for s in self.specs for k, v in s.checkpoint_fields.items()}
+        plan_fields = {k: v for s in self.specs for k, v in s.plan_fields.items()}
+        schema = plan_check.plan_schema(types, cp_fields, plan_fields)
         tools = {
             "fetch_url": {"description": "抓取一个白名单网站的网页，返回正文（纯文本）和页面里的白名单链接。用它查课程官网、讲义、视频列表。",
                           "parameters": {"type": "object", "properties": {
@@ -267,6 +367,13 @@ class Harness:
                               "required": ["url"]}},
             "submit_plan": {"description": "提交这个单元的课程计划（结构化）。环境会检查时间预算、每节的新词数、检查点、知识节点、链接是否打开过；不通过会返回错误，改完再提交。",
                             "parameters": {"type": "object", "properties": {"plan": schema}, "required": ["plan"]}},
+            "submit_outline": {"description": "提交这个单元的大纲：练习场和每一节的桩。环境会检查时间预算、每节新词数、知识节点、练习场、链接是否打开过；不通过会返回错误，改完再提交。",
+                               "parameters": {"type": "object", "properties": {"outline": plan_check.outline_schema(
+                                   types, plan_fields, (cp_fields.get("checks") or {}).get("items"))},
+                                              "required": ["outline"]}},
+            "submit_section": {"description": "提交简报里要写的那一节（一个小节对象）。环境把它放进大纲、接在前面几节后面检查；不通过会返回错误，改完再提交。",
+                               "parameters": {"type": "object", "properties": {"section": plan_check.section_schema(types, cp_fields, plan_fields)},
+                                              "required": ["section"]}},
             "submit_repair": {"description": "定点修复时提交：只给出简报里「要重写的部分」，每个地址一项，value 是这一部分修改后的完整内容。"
                                              "环境把它们换进原计划（其余部分不变）再检查；不通过会返回错误，改完再提交。",
                               "parameters": {"type": "object", "properties": {"parts": {"type": "array", "items": {
@@ -285,6 +392,10 @@ class Harness:
             return self._submit_plan(ws, args.get("plan") or {})
         if name == "submit_repair":
             return self._submit_repair(ws, args.get("parts"))
+        if name == "submit_outline":
+            return self._submit_outline(ws, args.get("outline") or {})
+        if name == "submit_section":
+            return self._submit_section(ws, args.get("section") or {})
         raise ToolError(f"没有这个工具：{name}")
 
     def _log(self, ws: Path, name: str, rec: dict) -> None:
@@ -361,6 +472,33 @@ class Harness:
         (ws / "output.json").write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
         (ws / "output.md").write_text(plan_check.render_plan_md(plan, self._input(ws)["session_minutes"]), encoding="utf-8")
         return "已收到，检查通过。任务完成，不需要再做别的。"
+
+    def _submit_outline(self, ws: Path, outline: dict) -> str:
+        errors = [f.what for f in plan_check.outline_findings(outline, self.limits(ws), [r for s in self.specs for r in s.plan_rules])]
+        self._log(ws, "submissions.jsonl", {"accepted": not errors, "errors": errors, "minutes": plan_minutes(outline or {})})
+        if errors:
+            raise ToolError("大纲没有通过检查，请修改后重新提交：\n- " + "\n- ".join(errors))
+        (ws / "output.json").write_text(json.dumps(outline, ensure_ascii=False, indent=2), encoding="utf-8")
+        (ws / "output.md").write_text(plan_check.render_by_address(outline), encoding="utf-8")
+        return "已收到，大纲检查通过。任务完成，不需要再做别的。"
+
+    def _submit_section(self, ws: Path, section: dict) -> str:
+        i = self._input(ws)["index"]
+        ctx = json.loads((ws / "context.json").read_text(encoding="utf-8"))
+        stub = stubs_of(ctx["outline"])[i]
+        if not isinstance(section, dict):
+            raise ToolError("section 要是一个小节对象")
+        merged = fill_stub(stub, section)
+        partial = with_section(ctx["outline"], i, section)
+        found = plan_check.section_findings(merged, stub, i) + [
+            f for f in self.plan_findings(ws, partial) if f.address == "" or within(f.address, f"/sections/{i}")]
+        errors = [f.what for f in found]
+        self._log(ws, "submissions.jsonl", {"accepted": not errors, "errors": errors, "index": i})
+        if errors:
+            raise ToolError("这一节没有通过检查，请修改后重新提交：\n- " + "\n- ".join(errors))
+        (ws / "output.json").write_text(json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
+        (ws / "output.md").write_text(plan_check.render_by_address(partial), encoding="utf-8")
+        return "已收到，这一节检查通过。任务完成，不需要再做别的。"
 
     def _submit_repair(self, ws: Path, parts) -> str:
         info = self._input(ws).get("repair")
@@ -534,7 +672,10 @@ class Harness:
         if practice is None:
             raise DomainError("没有能验证练习场的学科 spec")
         ws = self.dir(run.agent, run.id)
-        result = practice.verify(json.loads((ws / "output.json").read_text(encoding="utf-8")), ws / "raw" / "lab-verify")
+        # WHY: 每次检验一个新目录。同一次运行被检验两次（面板和命令行各开了一次）时，共用目录会互相删掉对方跑到一半的练习场，
+        # 把好的课程判成"按参考做法做完仍然没通过"（2026-09-26 tools-03-debug 第 2 轮就是这样被误判的）
+        workdir = ws / "raw" / f"lab-verify-{self.ids.new()}"
+        result = practice.verify(json.loads((ws / "output.json").read_text(encoding="utf-8")), workdir)
         self._grade(run, "practice_verify", _src(type(practice).verify), "system", score=1.0 if result["ok"] else 0.0,
                     verdict="pass" if result["ok"] else "fail", detail=result)
         return result

@@ -171,7 +171,7 @@ def test_command_safety_findings_carry_addresses():
     p = plan_v2()
     p["parts"][0]["sections"][0]["try"] = [{"command": "sudo ls", "expect": "e"}]
     p["parts"][0]["sections"][0]["checkpoint"][0]["solution"] = ["rm -rf ~"]
-    fs = [f for f in plan_rules.RULES[-1](p, None)]
+    fs = plan_rules.command_safety(p, None)
     assert [(f.address, f.evaluator) for f in fs] == [("/sections/0", "safety"), ("/sections/0/checkpoint/0", "safety")]
 
 

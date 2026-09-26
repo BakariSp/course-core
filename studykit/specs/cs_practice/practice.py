@@ -232,7 +232,13 @@ class BashPractice:
         workdir.mkdir(parents=True)
         write_files(workdir, (plan.get("lab") or {}).get("files") or [])
         report, found = [], []
-        block = lambda addr, what, evidence="": found.append(Finding(addr, what, "lab_verify", "block", evidence))  # noqa: E731
+        broken: list[int] = []      # 没兑现约定（state_after，D-038）的节：后面各节的失败可能是它连带的
+
+        def block(addr, what, evidence=""):
+            if broken:              # WHY: 上游没兑现约定时，下游按约定接着做也会失败。只把源头判成阻断，修好源头后下一轮再看下游
+                found.append(Finding(addr, f"{what}（第 {broken[0]} 节没兑现约定，这里可能是连带的）", "lab_verify", "warn", evidence))
+            else:
+                found.append(Finding(addr, what, "lab_verify", "block", evidence))
         warn = lambda addr, what, evidence="": found.append(Finding(addr, what, "lab_verify", "warn", evidence))  # noqa: E731
         for i0, s in enumerate(sections_of(plan)):
             i = i0 + 1
@@ -262,6 +268,8 @@ class BashPractice:
                     block(checkpoint_address(i0, j - 1), f"第 {i} 节检查点 {j}：按参考做法做完仍然没通过：{'；'.join(failed)}",
                           "\n".join([json.dumps(k, ensure_ascii=False) for ok, _, k in after if not ok]
                                     + [o[-300:] for _, o in outs if o.strip()]))
+                    if not broken and any(k.get("contract") for ok, _, k in after if not ok):
+                        broken.append(i)
                 sec["checkpoints"].append({"idx": j, "passed_before": [ok for ok, _, _ in before],
                                            "passed_after": [ok for ok, _, _ in after],
                                            "solution_rc": [rc for rc, _ in outs]})

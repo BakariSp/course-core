@@ -46,6 +46,7 @@ def commands(plan: dict) -> list[tuple[str, str, str]]:
     out = []
     for i, s in enumerate(sections_of(plan)):
         out += [(section_address(i), f"第 {i + 1} 节动手命令", t.get("command") or "") for t in s.get("try") or []]
+        out += [(section_address(i), f"第 {i + 1} 节 state_after 的检查", k["run"]) for k in s.get("state_after") or [] if k.get("run")]
         for j, c in enumerate(s.get("checkpoint") or []):
             where = f"第 {i + 1} 节检查点 {j + 1}"
             out += [(checkpoint_address(i, j), f"{where}的参考做法", cmd) for cmd in c.get("solution") or []]

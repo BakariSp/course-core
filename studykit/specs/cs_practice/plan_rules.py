@@ -96,7 +96,17 @@ def lab_checkpoint(where: str, c: dict) -> list[str]:
     return errors
 
 
-RULES = [declared_commands, lab_defined, command_safety]
+def contract_checks(plan: dict, limits: PlanLimits) -> list[Finding]:
+    """大纲里每节的 state_after（D-038）：每条断言要么跑一条命令（run）、要么看一个文件（file），和 lab 检查点的 checks 一样。"""
+    out = []
+    for i, s in enumerate(sections_of(plan)):
+        for k in s.get("state_after") or []:
+            if not (k.get("run") or k.get("file")):
+                out.append(Finding(section_address(i), f"第 {i + 1} 节 state_after「{k.get('desc', '')}」要有 run 或 file", EVALUATOR))
+    return out
+
+
+RULES = [declared_commands, lab_defined, command_safety, contract_checks]
 CHECKPOINT_RULES = {"lab": lab_checkpoint}
 
 # ---------- 给 agent 看的 schema 片段 ----------

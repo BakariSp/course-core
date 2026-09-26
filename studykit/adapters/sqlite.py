@@ -317,7 +317,7 @@ class SqliteStore:
             return [Run(r["id"], r["agent"], r["variant"], r["unit"], r["learner"], r["mode"], r["started"],
                         json.loads(r["input"]), r["seconds"], r["exit_code"], bool(r["submitted"]), r["tokens"],
                         r["cost_usd"], json.loads(r["tool_calls"]), json.loads(r["errors"]), r["final_text"])
-                    for r in c.execute(f"SELECT * FROM run WHERE {where} ORDER BY started, id", args)]
+                    for r in c.execute(f"SELECT * FROM run WHERE {where} ORDER BY started, rowid", args)]  # 同一秒开的运行按先后
 
     def steps(self, run_id: str) -> list[RunStep]:
         with self._conn() as c:

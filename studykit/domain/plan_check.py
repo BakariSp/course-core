@@ -15,7 +15,7 @@ from typing import Callable
 
 from studykit.domain.artifact import Finding, checkpoint_address, section_address
 from studykit.domain.ids import NODE_ID_RE
-from studykit.domain.plan import plan_minutes, plan_parts, plan_sessions, sections_of
+from studykit.domain.plan import plan_minutes, plan_parts, plan_sessions, sections_of, stubs_of
 
 # WHY: 中文里链接常被全角括号、引号、句号包着（如「（https://…）」），这些字符不能算进 URL，
 # 否则核对出处和检查能否打开都会误报。整个环境只用这一个提取函数。
@@ -102,34 +102,11 @@ def _check_checkpoint(where: str, c: dict, node_ids: set[str], limits: PlanLimit
 def plan_findings(plan: dict, limits: PlanLimits, rules: list[PlanRule] = (),
                   checkpoint_rules: dict[str, CheckpointRule] | None = None) -> list[Finding]:
     """环境检查（D-035）：每个问题都带地址，修复时只改那一处。"""
-    out: list[Finding] = []
-    add = lambda address, what: out.append(Finding(address, what, EVALUATOR))  # noqa: E731
     if not isinstance(plan, dict):
         return [Finding("", "plan 必须是一个对象", EVALUATOR)]
-    for key in ("title", "summary"):
-        if not str(plan.get(key) or "").strip():
-            add("/" + key, f"缺少 {key}")
-    if not plan.get("sources"):
-        add("/sources", "至少要有一个出处（sources，整个单元列一次）")
+    out, node_ids = _unit_findings(plan, limits)
+    add = lambda address, what: out.append(Finding(address, what, EVALUATOR))  # noqa: E731
     sections = sections_of(plan)
-    if not sections:
-        add("", "至少要有一个 part 和一个 section")
-
-    proposed = {n.get("id"): n for n in plan.get("nodes") or []}
-    for nid, n in proposed.items():
-        if not NODE_ID_RE.match(str(nid or "")):
-            add("/nodes", f"nodes：id 格式不对：{nid}（小写，点分层，如 {limits.topic}.cmd.grep）")
-        elif not nid.startswith(limits.topic + "."):
-            add("/nodes", f"nodes：{nid} 要以学科 {limits.topic}. 开头")
-        if nid in limits.existing_nodes:
-            add("/nodes", f"nodes：{nid} 已经在知识图里了，直接用，不要重复提议")
-        if not str(n.get("desc") or "").strip():
-            add("/nodes", f"nodes：{nid} 缺少 desc")
-    node_ids = set(limits.existing_nodes) | set(proposed)
-    for nid, n in proposed.items():
-        for r in n.get("requires") or []:
-            if r not in node_ids:
-                add("/nodes", f"nodes：{nid} 的先修 {r} 不存在（知识图里没有，也没有提议）")
 
     known = set(limits.known_terms)
     for i, s in enumerate(sections):
@@ -169,6 +146,38 @@ def plan_findings(plan: dict, limits: PlanLimits, rules: list[PlanRule] = (),
         for j, c in enumerate(items):
             for what in _check_checkpoint(f"{name} 检查点第 {j + 1} 题", c, node_ids, limits, checkpoint_rules or {}):
                 add(checkpoint_address(i, j), what)
+    for rule in rules:
+        out += rule(plan, limits)
+    return out
+
+
+def _unit_findings(plan: dict, limits: PlanLimits) -> tuple[list[Finding], set[str]]:
+    """课程计划和大纲共用的单元级检查：标题、出处、知识节点、outcomes、总时长、链接是否打开过。返回（发现，可用的节点 id）。"""
+    out: list[Finding] = []
+    add = lambda address, what: out.append(Finding(address, what, EVALUATOR))  # noqa: E731
+    for key in ("title", "summary"):
+        if not str(plan.get(key) or "").strip():
+            add("/" + key, f"缺少 {key}")
+    if not plan.get("sources"):
+        add("/sources", "至少要有一个出处（sources，整个单元列一次）")
+    if not sections_of(plan):
+        add("", "至少要有一个 part 和一个 section")
+
+    proposed = {n.get("id"): n for n in plan.get("nodes") or []}
+    for nid, n in proposed.items():
+        if not NODE_ID_RE.match(str(nid or "")):
+            add("/nodes", f"nodes：id 格式不对：{nid}（小写，点分层，如 {limits.topic}.cmd.grep）")
+        elif not nid.startswith(limits.topic + "."):
+            add("/nodes", f"nodes：{nid} 要以学科 {limits.topic}. 开头")
+        if nid in limits.existing_nodes:
+            add("/nodes", f"nodes：{nid} 已经在知识图里了，直接用，不要重复提议")
+        if not str(n.get("desc") or "").strip():
+            add("/nodes", f"nodes：{nid} 缺少 desc")
+    node_ids = set(limits.existing_nodes) | set(proposed)
+    for nid, n in proposed.items():
+        for r in n.get("requires") or []:
+            if r not in node_ids:
+                add("/nodes", f"nodes：{nid} 的先修 {r} 不存在（知识图里没有，也没有提议）")
 
     total = plan_minutes(plan)
     if total > limits.unit_budget_minutes:
@@ -180,9 +189,75 @@ def plan_findings(plan: dict, limits: PlanLimits, rules: list[PlanRule] = (),
     for url in sorted(plan_urls(plan)):
         if url_key(url) not in limits.grounded:
             add("", f"链接没有打开过：{url}。只能引用你用 fetch_url 打开过的页面")
+    return out, node_ids
+
+
+# ---------- 大纲（PRD_V2 阶段 B，D-038） ----------
+
+def outline_findings(outline: dict, limits: PlanLimits, rules: list[PlanRule] = ()) -> list[Finding]:
+    """大纲的检查：单元级检查 + 每节的桩（时长、目标、任务、新词上限、检查点检验什么、依据哪几页）+ 学科规则（练习场）。"""
+    if not isinstance(outline, dict):
+        return [Finding("", "outline 必须是一个对象", EVALUATOR)]
+    out, node_ids = _unit_findings(outline, limits)
+    add = lambda address, what: out.append(Finding(address, what, EVALUATOR))  # noqa: E731
+    stubs = stubs_of(outline)
+    if stubs and not 4 <= len(stubs) <= 8:
+        add("", f"一共 4–8 节，现在 {len(stubs)} 节")
+    known = set(limits.known_terms)
+    practice = [t for t in limits.checkpoint_types if t not in CORE_CHECKPOINT_TYPES]
+    for i, s in enumerate(stubs):
+        at, name = section_address(i), f"第 {i + 1} 节「{s.get('title', '')}」"
+        m = s.get("minutes")
+        if not isinstance(m, int) or isinstance(m, bool) or m <= 0:
+            add(at, f"{name}：minutes 必须是正整数")
+        elif m > limits.session_minutes:
+            add(at, f"{name}：{m} 分钟超过单次学习上限 {limits.session_minutes} 分钟，拆成几节")
+        for key in ("title", "goal", "mission"):
+            if not str(s.get(key) or "").strip():
+                add(at, f"{name}：缺少 {key}")
+        terms = s.get("terms") or []
+        new = [t for t in terms if str(t.get("id")) not in known and str(t.get("term", "")).lower() not in known]
+        if len(new) > limits.max_new_terms:
+            add(at, f"{name}：新词 {len(new)} 个，超过每节上限 {limits.max_new_terms} 个：拆节，或者挪到后面的节")
+        for t in terms:
+            if not all(str(t.get(k) or "").strip() for k in ("id", "term", "explain")):
+                add(at, f"{name}：每个新词都要有 id、term 和 explain（一句话定义；各节都用这个定义，写节的人不能改）")
+            elif t["id"] not in node_ids:
+                add(at, f"{name}：新词 {t['term']} 的 id {t['id']} 不在知识图里，要在 nodes 里提议")
+        known |= {str(t.get("id")) for t in terms} | {str(t.get("term", "")).lower() for t in terms}
+        check = s.get("check") or {}
+        if check.get("type") not in limits.checkpoint_types:
+            add(at, f"{name}：check.type 只能是 {' / '.join(limits.checkpoint_types)}")
+        if not str(check.get("what") or "").strip():
+            add(at, f"{name}：check.what 要写清检查点让学习者做到 / 答出什么")
+        if not s.get("reading"):
+            add(at, f"{name}：reading 至少列一个写这一节要依据的页面（打开过的）")
+        teaches = [x for x in s.get("teaches") or [] if str(x).strip()]
+        if not 1 <= len(teaches) <= 4:
+            add(at, f"{name}：teaches 写 1–4 个这一节讲清的要点（后面的节会直接引用，不再重讲），现在 {len(teaches)} 个")
+        if check.get("type") in practice and not s.get("state_after"):
+            add(at, f"{name}：练习场任务的节要写 state_after——做完这一节后练习场满足的断言。后面的节只能依赖这些断言")
+        for k in s.get("state_after") or []:
+            if not str(k.get("desc") or "").strip():
+                add(at, f"{name}：state_after 的每条断言都要有 desc（给学习者和写后面几节的人看）")
+    if practice and stubs:
+        hands_on = [s for s in stubs if (s.get("check") or {}).get("type") in practice]
+        if 2 * len(hands_on) < len(stubs):
+            add("", f"至少一半的小节用动手型检查点（{' / '.join(practice)}），现在 {len(hands_on)}/{len(stubs)} 节")
     for rule in rules:
-        out += rule(plan, limits)
+        out += rule(outline, limits)
     return out
+
+
+def section_findings(section: dict, stub: dict, index: int) -> list[Finding]:
+    """写好的一节和大纲里它的桩对不对得上：检查点要有大纲说的那种题型（约定的断言要并进这道题）。
+    新词、标题、时长、目标、任务由 fill_stub 按大纲覆盖，不需要在这里查。"""
+    want = (stub.get("check") or {}).get("type")
+    if want and not any(c.get("type") == want for c in section.get("checkpoint") or []):
+        return [Finding(section_address(index), f"大纲说这一节的检查点是 {want} 题：{(stub.get('check') or {}).get('what', '')}"
+                        + ("。做完后练习场要满足大纲里的 state_after，环境会把这些断言并进这道题的检查" if stub.get("state_after") else ""),
+                        EVALUATOR)]
+    return []
 
 
 def render_by_address(plan: dict) -> str:
@@ -318,6 +393,43 @@ def plan_schema(checkpoint_types: dict[str, str], checkpoint_fields: dict, plan_
             "title": {"type": "string"}, "why": {"type": "string"}, "url": {"type": "string"}}, "required": ["title", "why"]}},
         "outcomes": {"type": "array", "items": {"type": "string"}, "description": "学完整个单元能做到的 3-5 件事，之后的练习题按这些出"}},
         "required": ["title", "summary", "parts", "sources", "outcomes"]}
+
+
+def outline_schema(checkpoint_types: dict[str, str], plan_fields: dict, state_check: dict | None = None) -> dict:
+    """大纲 = 课程计划去掉每节的正文，换成"桩"：这一节学什么、做什么、检查什么、依据哪几页，
+    以及各节之间的接口约定——新词的定义、讲清的要点、做完后练习场满足的断言（state_check：学科给的断言格式）。"""
+    stub = {"type": "object", "properties": {
+        "title": {"type": "string"},
+        "minutes": {"type": "integer", "description": "学完这一节要多少分钟（含动手和检查点）"},
+        "goal": {"type": "string", "description": "学完这一节能做到什么，写成可检验的行为"},
+        "mission": {"type": "string", "description": "这一节在练习故事里的任务（一两句话），它的结果是下一节的材料"},
+        "terms": {"type": "array", "items": {"type": "object", "properties": {
+            "id": {"type": "string", "description": "知识节点 id；知识图里已有的就用已有的"}, "term": {"type": "string"},
+            "explain": {"type": "string", "description": "一句话定义（先说它是什么、属于哪一类）。所有节都用这个定义"}},
+            "required": ["id", "term", "explain"]},
+            "description": "这一节第一次出现、对这个学习者来说是新的术语。写这一节的人只能用这些，定义以这里为准"},
+        "teaches": {"type": "array", "items": {"type": "string"},
+                    "description": "这一节讲清的 1–4 个要点。写后面几节的人会看到，直接引用、不再重讲；写前面几节的人会看到，不会抢先讲"},
+        **({"state_after": {"type": "array", "items": state_check,
+                            "description": "做完这一节（含检查点）后练习场必须满足的断言，格式和检查点的 checks 一样。"
+                                           "这是后面几节唯一能依赖的练习场状态；环境会把它们并进这一节检查点的检查"}} if state_check else {}),
+        "check": {"type": "object", "properties": {
+            "type": {"type": "string", "enum": list(checkpoint_types)},
+            "what": {"type": "string", "description": "检查点让学习者做到 / 答出什么（练习场任务写清结果是什么状态）"}},
+            "required": ["type", "what"]},
+        "reading": {"type": "array", "items": {"type": "string"}, "description": "写这一节要依据的页面网址（必须打开过）"}},
+        "required": ["title", "minutes", "goal", "mission", "terms", "teaches", "check", "reading"]}
+    full = plan_schema(checkpoint_types, {}, plan_fields)
+    props = {**full["properties"], "parts": {"type": "array", "items": {"type": "object", "properties": {
+        "title": {"type": "string"}, "sections": {"type": "array", "items": stub}}, "required": ["title", "sections"]}}}
+    return {"type": "object", "properties": props, "required": full["required"]}
+
+
+def section_schema(checkpoint_types: dict[str, str], checkpoint_fields: dict, plan_fields: dict) -> dict:
+    """写一节时提交的小节：没有 terms——新词和定义归大纲（fill_stub 按大纲补上）。"""
+    s = plan_schema(checkpoint_types, checkpoint_fields, plan_fields)["properties"]["parts"]["items"]["properties"]["sections"]["items"]
+    return {**s, "properties": {k: v for k, v in s["properties"].items() if k != "terms"},
+            "required": [k for k in s["required"] if k != "terms"]}
 
 
 CORE_CHECKPOINT_TYPES = {"choice": "选择", "fill": "填空（题干里每个 ____ 是一个空）"}

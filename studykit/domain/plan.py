@@ -40,6 +40,59 @@ def plan_sessions(plan: dict, session_minutes: int) -> list[list[int]]:
     return sessions
 
 
+# ---------- 大纲先行、分节生成（PRD_V2 阶段 B，D-038） ----------
+
+# 大纲里每节的桩才有的字段：检查点检验什么、写这一节要读哪几页、这一节讲清哪几点、做完后练习场满足什么
+STUB_ONLY_KEYS = ("check", "reading", "teaches", "state_after")
+
+
+def stubs_of(outline: dict) -> list[dict]:
+    """大纲里的小节桩，全书顺序（和课程计划的 /sections/i 一一对应）。"""
+    return sections_of(outline)
+
+
+def fill_stub(stub: dict, section: dict) -> dict:
+    """写好的一节 + 大纲里它的桩 → 课程计划里的一节。
+
+    INVARIANT: 大纲是各节之间的接口约定（D-038），写一节的人不能改：
+      - 标题、分钟数、目标、任务，以及新词和它的定义（terms），以大纲为准；
+      - 这一节做完后练习场要满足的断言（state_after）并进大纲指定题型的那道检查点的 checks——
+        练习场实跑时，没兑现约定的是这一节自己，而不是等到依赖它的下一节才出错。
+    """
+    out = {k: copy.deepcopy(v) for k, v in section.items() if k not in STUB_ONLY_KEYS}
+    out.update({k: copy.deepcopy(stub[k]) for k in ("title", "minutes", "goal", "mission", "terms") if k in stub})
+    contract = stub.get("state_after") or []
+    want = (stub.get("check") or {}).get("type")
+    target = next((c for c in out.get("checkpoint") or [] if c.get("type") == want), None)
+    if contract and target is not None:
+        have = {str(k.get("desc")) for k in target.get("checks") or []}
+        target["checks"] = list(target.get("checks") or []) + [
+            {**k, "contract": True} for k in contract if str(k.get("desc")) not in have]
+    return out
+
+
+def with_section(outline: dict, index: int, section: dict) -> dict:
+    """大纲里只把第 index 节换成写好的内容，其余仍是桩。各节并行写时，用它检查"这一节放进大纲里对不对"：
+    前面几节的新词（桩里有）算已经讲过，后面的节不影响这一节。"""
+    return replace_part(outline, f"/sections/{index}", fill_stub(stubs_of(outline)[index], section))
+
+
+def assemble(outline: dict, sections: list[dict]) -> dict:
+    """大纲 + 前 len(sections) 节写好的内容 → 课程计划。还没写的节不放进去。"""
+    out = {k: copy.deepcopy(v) for k, v in outline.items() if k != "parts"}
+    parts, i = [], 0
+    for p in outline.get("parts") or []:
+        secs = []
+        for stub in p.get("sections") or []:
+            if i < len(sections):
+                secs.append(fill_stub(stub, sections[i]))
+            i += 1
+        if secs:
+            parts.append({**{k: v for k, v in p.items() if k != "sections"}, "sections": secs})
+    out["parts"] = parts
+    return out
+
+
 # ---------- 按地址切分和替换（D-035：定点修复） ----------
 
 def plan_parts(plan: dict) -> dict[str, object]:

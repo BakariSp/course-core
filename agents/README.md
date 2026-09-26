@@ -29,12 +29,14 @@ agent 能做什么，完全由环境工具决定。`tutor-prep` 只有两个：
 |---|---|---|
 | `fetch_url` | 读网页正文和链接，长页面分段读 | 只能访问 curriculum.md 里出现过的网站 |
 | `submit_plan` | 交课程计划（v2：练习场、检查点、新词、知识节点） | 超预算、一节新词太多、用了没声明的命令、不安全的命令、检查点缺提示或答案、引用了没打开过的页面，都会被退回让它改 |
+| `submit_outline` | 交大纲（D-038）：练习场 + 每节的桩（目标、任务、分给这一节的新词、检查点检验什么、依据哪几页） | 超预算、新词超上限、节点不存在、动手型检查点不到一半、依据页面没打开过，都会被退回 |
+| `submit_section` | 写一节时交这一节 | 标题、分钟数、目标、任务以大纲为准；新词只能是大纲分给这一节的；接在前面几节后面跑课程计划的全部检查 |
 | `submit_repair` | 修复模式（D-035）：只交被指出的部分（地址 → 新内容） | 不在"要重写的部分"里的地址直接拒收；换进去之后，落在这些部分里的问题照样退回 |
 
 ## 命令
 
 ```bash
-python study.py prepare tools-02-git [--from <运行>]              # 备课：产出循环（生成 → 检验 → 定点修复 → 通过就发布，D-035）
+python study.py prepare tools-02-git [--from <运行>]              # 备课：大纲 → 各节并行写 → 产出循环（检验 → 定点修复 → 通过就发布，D-035、D-038）
 python study.py agent run tutor-prep --unit tools-01-shell       # 只跑一次生成 + 自动评测（调试用，不发布）
 python study.py agent eval tutor-prep [--run <运行>]               # 重新评测（默认最近一次；新的评分追加，不覆盖）
 python study.py agent review tutor-prep --run <运行> --verdict revise --issue "prompt:给字数上限"   # 开发者抽查（结构化，不是闸门）
