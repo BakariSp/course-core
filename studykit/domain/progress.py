@@ -36,6 +36,8 @@ def project(plan: dict, pid: str, evidence: list[Evidence], spent: dict[int, flo
             c["ok"] = c["ok"] or bool(e.ok)
             if c["first_try"] is None:
                 c["first_try"] = bool(e.ok)
+            if "response" in e.payload:        # 最近一次作答，页面用它把答案填回去
+                c["response"] = e.payload["response"]
         elif v == "requested_hint":
             c = _cp(cps, s, e.payload["idx"])
             c["hints"] = max(c["hints"], e.payload.get("level", 0))

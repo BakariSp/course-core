@@ -41,6 +41,8 @@ def scored(evidence: list[Evidence]) -> tuple[list[Scored], list[Evidence]]:
     """返回（有分数的练习, 还在等批改的作答）。"""
     answers = {e.id: e for e in evidence if e.verb == "answered" and e.object_type == "question"}
     graded_ids = {e.caused_by for e in evidence if e.verb == "graded"}
+    # 一条作答可以被批改多次（LLM 先批、导师再覆盖，D-031）：只算最后一次。
+    last_grade = {e.caused_by: e.id for e in evidence if e.verb == "graded"}
     out, pending = [], []
     for e in evidence:
         if e.verb == "answered" and e.object_type == "question":
@@ -50,7 +52,7 @@ def scored(evidence: list[Evidence]) -> tuple[list[Scored], list[Evidence]]:
                 continue
             out.append(Scored(e.nodes[0], int(e.payload.get("level", 1)), e.score, e.ts, e.object_id,
                               "", tuple(e.payload.get("feedback") or ())))
-        elif e.verb == "graded" and e.caused_by in answers:
+        elif e.verb == "graded" and e.caused_by in answers and last_grade[e.caused_by] == e.id:
             a = answers[e.caused_by]
             out.append(Scored(a.nodes[0], int(a.payload.get("level", 1)), e.score, e.ts, a.object_id,
                               e.payload.get("note", "")))

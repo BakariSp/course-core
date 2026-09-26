@@ -1,0 +1,137 @@
+schema_version: 1
+unit: tools-01-shell
+title: 工具 · 01 Shell 单元题
+source: tools-01-shell 课程页（MIT Missing Semester 2026 第 1 讲）
+questions:
+  - id: q1
+    checker: choice
+    multi: true
+    concept: tools.shell.expansion
+    level: 2
+    prompt: |
+      你在 Git Bash 里敲下这一行，按回车：
+
+      ```
+      grep -n ERROR logs/*.log > work/out.txt
+      ```
+
+      下面哪些符号是 **bash 自己处理掉**的（grep 启动后根本看不到它）？
+    options:
+      - "`*`"
+      - "`>`"
+      - "`-n`"
+      - "`ERROR`"
+
+  - id: q2
+    checker: fill
+    concept: tools.shell.quoting
+    level: 2
+    prompt: |
+      当前目录里只有三个文件：`a.log`、`b.log`、`c.txt`。执行：
+
+      ```
+      echo *.log "*.txt"
+      ```
+
+      屏幕上打印的是 ____ ；echo 这个程序一共收到了 ____ 个参数（填数字）。
+
+  - id: q3
+    checker: fill
+    concept: tools.shell.exitcode
+    level: 2
+    prompt: |
+      依次执行下面三行（`app.log` 存在，但里面**没有** `ERROR` 这个词；`nope.txt` 不存在）：
+
+      ```
+      grep ERROR app.log; echo $?
+      [ -f nope.txt ]; echo $?
+      echo $?
+      ```
+
+      三个 `echo $?` 分别打印 ____ 、____ 、____ 。
+
+  - id: q4
+    checker: fill
+    concept: tools.shell.stdstreams
+    level: 1
+    prompt: "`A | B` 里，管道把 A 的 ____ 接到 B 的 ____ 上（用中文术语或英文缩写都可以）。"
+
+  - id: q5
+    checker: choice
+    concept: tools.shell.redirection
+    level: 2
+    prompt: |
+      AI 给你写了一行"把名单排好序"的命令：
+
+      ```
+      sort names.txt > names.txt
+      ```
+
+      `names.txt` 原来有 50 行。执行完之后，`names.txt` 里是什么？
+    options:
+      - 排好序的 50 行
+      - 空的（0 行）
+      - 原来的 50 行，后面又接了排好序的 50 行
+      - 报错，文件没变
+
+  - id: q6
+    checker: code
+    concept: tools.shell.pipe
+    level: 3
+    prompt: |
+      写一个小脚本 `ex1.sh`。测试会在一个临时目录里用 Git Bash 运行它（`bash ex1.sh`），那个目录的样子和练习场差不多：
+
+      ```
+      logs/app.log          ← 有 ERROR 行，也有 INFO 行
+      logs/old app.log      ← 注意文件名里有空格
+      logs/archive/…        ← 子目录，里面的日志不要管
+      work/                 ← 空目录
+      ```
+
+      要求：
+      1. 把 `logs/` **这一层**所有 `.log` 文件里含 `ERROR` 的行，**原样**写进 `work/errors.txt`（不要带文件名前缀）；
+      2. 在标准输出上只打印一个数字：一共有几行错误；
+      3. 运行两次，`work/errors.txt` 里的内容也不能重复。
+
+      提示：grep 同时读多个文件时会在每行前面加上文件名，想去掉就查 `grep --help`。两三行就够。
+    file: code/ex1.sh
+    test: code/test_ex1.py
+
+  - id: q7
+    checker: short
+    kind: bug
+    concept: tools.shell.glob
+    level: 4
+    prompt: |
+      AI 写了一个"清理备份、压缩日志"的脚本，说"测过了没问题"：
+
+      ```bash
+      #!/bin/bash
+      cd $LOG_DIR
+      rm *.bak
+      echo "清理完成"
+      find . -name *.log -exec gzip {} \;
+      ```
+
+      找出其中**两个**问题。对每个问题说清楚：在什么情况下出事、是谁（bash 还是哪个程序）在什么时候做了你没想到的事、怎么改。
+      （不用管 `$LOG_DIR` 两边要不要加引号这件事，挑别的问题。）
+
+  - id: q8
+    checker: short
+    kind: project
+    concept: tools.shell.glob
+    level: 4
+    prompt: |
+      nanoteacher 的 `scripts/backup_db.sh` 最后几行是这样的（它用来"只保留最近 20 份数据库备份"）：
+
+      ```bash
+      BACKUP_DIR="data/backups"
+      # ……前面把新备份写进了 data/backups/……
+      cd "$BACKUP_DIR"
+      ls -t nanoteacher-*.db 2>/dev/null | tail -n +21 | xargs -r rm --
+      ```
+
+      已知：`ls -t` 按修改时间从新到旧列出；`tail -n +21` 表示从第 21 行开始输出到结尾；`xargs rm` 把收到的每一行当作参数交给 `rm`；`2>/dev/null` 把报错丢掉。
+
+      1. 最后一行里，`nanoteacher-*.db` 是谁、在哪个目录里换成文件名的？最终被删掉的是哪些文件？
+      2. 如果有人觉得 `cd` 那一行多余，把它删了，从仓库根目录运行这个脚本，会发生什么？说出你的推理过程。

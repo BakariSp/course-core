@@ -11,12 +11,13 @@ import datetime as dt
 import hashlib
 import json
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
 from studykit.app.ports import CheckCtx, CheckpointGrader, Clock, Content, EvidenceStore, IdGen, PlanStore, PracticeEnv
 from studykit.domain import course_eval, knowledge, mastery, plan as plans, progress, timeline
-from studykit.domain.assessment import Checker, Lesson, Record
+from studykit.domain.assessment import Checker, Lesson, Record, Verdict
 from studykit.domain.errors import CourseError, KnowledgeError, LessonError
 from studykit.domain.evidence import (SYSTEM, Actor, Evidence, VerbRegistry, checkpoint_id, learner_actor,
                                       question_id, section_id, split_question)
@@ -60,8 +61,9 @@ def _version(*parts) -> str:
 # ======================================================================
 
 class Assessment:
-    def __init__(self, deps: Deps, checkers: dict[str, Checker], sandbox: Path, root: Path):
+    def __init__(self, deps: Deps, checkers: dict[str, Checker], sandbox: Path, root: Path, short_grader=None):
         self.d, self.checkers, self.sandbox, self.root = deps, checkers, sandbox, root
+        self.short_grader = short_grader       # 简答题的 LLM 批改（D-031）；None = 等导师批改
 
     def checker(self, kind: str) -> Checker:
         if kind not in self.checkers:
@@ -85,8 +87,12 @@ class Assessment:
             item.update(checker.view(q, self._ctx(lesson, q["id"])))
             if q["id"] in latest:
                 item["previous"] = _previous_view(latest[q["id"]], lesson.answer_key(q["id"]))
+            limit = lesson.max_runs(q) if q["checker"] == "code" else None
+            if limit is not None:
+                item["max_runs"], item["runs_left"] = limit, max(0, limit - self._runs_used(ref, q["id"]))
             questions.append(item)
-        return {"ref": ref, "title": lesson.title, "source": lesson.quiz.get("source", ""), "questions": questions}
+        return {"ref": ref, "title": lesson.title, "source": lesson.quiz.get("source", ""), "questions": questions,
+                "exam": lesson.exam}
 
     def _latest(self, ref: str) -> dict[str, dict]:
         """每道题最近一次作答；批改过的用批改的分数。"""
@@ -101,35 +107,117 @@ class Assessment:
                                "ts": e.ts, "note": "", "detail": e.payload.get("detail") or {}}
             elif qid in latest and latest[qid]["id"] == e.caused_by:
                 latest[qid].update(score=e.score, result=mastery.result_of(e.score), note=e.payload.get("note", ""),
-                                   ts=e.ts)
+                                   ts=e.ts, graded_by=e.actor.id, items=e.payload.get("items"), feedback=[])
         return latest
 
     def act(self, ref: str, qid: str, action: dict) -> dict:
         lesson = self.d.content.lesson(ref)
         q = lesson.question(qid)
+        limit = lesson.max_runs(q) if q["checker"] == "code" and action.get("op") == "run" else None
+        if limit is not None and self._runs_used(ref, qid) >= limit:
+            raise LessonError(f"这道题的 {limit} 次运行已经用完，交卷时按编辑器里现在的代码判分")
         result = self.checker(q["checker"]).act(q, lesson.answer_key(qid), self._ctx(lesson, qid), action)
         if result.records:
             self.d.evidence.append(*[self._record(lesson, q, r) for r in result.records])
+        if limit is not None:
+            result.data["runs_left"] = max(0, limit - self._runs_used(ref, qid))
         return result.data
+
+    def _runs_used(self, ref: str, qid: str) -> int:
+        """这一轮作答（上次交卷之后）已经运行了几次测试。"""
+        return sum(e.verb == "ran_tests" and not e.payload.get("submit") for e in self._since_last_answer(ref, qid))
 
     def submit(self, ref: str, qid: str, response) -> dict:
         lesson = self.d.content.lesson(ref)
+        if lesson.exam:
+            raise LessonError("单元题要整卷一次交（D-031）：做完所有题后点页面底部的「交卷」")
         q = lesson.question(qid)
         key = lesson.answer_key(qid)
         verdict = self.checker(q["checker"]).check(q, key, self._ctx(lesson, qid), response)
+        records, answer = self._answer(lesson, q, response, verdict)
+        self.d.evidence.append(*records, answer)
+        return self._answer_view(answer, verdict, key)
+
+    def _answer(self, lesson: Lesson, q: dict, response, verdict: Verdict,
+                exam: str | None = None) -> tuple[list[Evidence], Evidence]:
+        qid, key = q["id"], lesson.answer_key(q["id"])
         records = [self._record(lesson, q, r) for r in verdict.records]
         # 这次提交之前、上次提交之后的每次运行，都算这次作答的过程（D-021，G1）。
-        runs = [e.id for e in self._since_last_answer(ref, qid) if e.verb == "ran_tests"] + [r.id for r in records]
+        runs = [e.id for e in self._since_last_answer(lesson.ref, qid) if e.verb == "ran_tests"] + [r.id for r in records]
         answer = self.d.new(
-            "answered", "question", question_id(ref, qid), object_version=_version(q, key), unit=lesson.unit,
+            "answered", "question", question_id(lesson.ref, qid), object_version=_version(q, key), unit=lesson.unit,
             score=verdict.score, ok=None if verdict.score is None else verdict.score >= mastery.PASS_SCORE,
             pending=verdict.score is None, nodes=(q["concept"],),
             payload={"level": q["level"], "checker": q["checker"], "response": response,
-                     "feedback": verdict.feedback, "detail": verdict.detail, "runs": runs})
-        self.d.evidence.append(*records, answer)
+                     "feedback": verdict.feedback, "detail": verdict.detail, "runs": runs,
+                     **({"exam": exam} if exam else {})})
+        return records, answer
+
+    @staticmethod
+    def _answer_view(answer: Evidence, verdict: Verdict, key: dict, grade: Evidence | None = None) -> dict:
         view = {"id": answer.id, "score": answer.score, "result": mastery.result_of(answer.score),
-                "feedback": verdict.feedback, "response": response, "ts": answer.ts, "note": "", "detail": verdict.detail}
+                "feedback": verdict.feedback, "response": answer.payload["response"], "ts": answer.ts, "note": "",
+                "detail": verdict.detail}
+        if grade is not None:
+            view.update(score=grade.score, result=mastery.result_of(grade.score), note=grade.payload.get("note", ""),
+                        graded_by=grade.actor.id, items=grade.payload.get("items"), feedback=[])
         return _previous_view(view, key)
+
+    def submit_exam(self, ref: str, responses: dict) -> dict:
+        """整卷一次交（D-031）：逐题判分，简答题并行交给 LLM 批改，最后记一条"交卷"把这些作答串起来。"""
+        lesson = self.d.content.lesson(ref)
+        if not lesson.exam:
+            raise LessonError(f"{ref} 不是整卷模式，一题一题提交")
+        exam = self.d.ids.new()
+        evs, answers, verdicts = [], {}, {}
+        for q in lesson.questions():
+            qid, key, response = q["id"], lesson.answer_key(q["id"]), (responses or {}).get(q["id"])
+            # 代码题、终端题判的是文件 / 沙箱的状态，没有作答也照样判；其他题没作答就是 0 分。
+            if response is None and q["checker"] not in ("code", "terminal"):
+                verdict = Verdict(0.0, ["没有作答。"])
+            else:
+                verdict = self.checker(q["checker"]).check(q, key, self._ctx(lesson, qid), response)
+            records, answer = self._answer(lesson, q, response, verdict, exam)
+            evs += [*records, answer]
+            answers[qid], verdicts[qid] = answer, verdict
+        grades = self._llm_grade(lesson, {qid: a for qid, a in answers.items() if a.pending})
+        scores = [grades[qid].score if qid in grades else a.score for qid, a in answers.items()]
+        submitted = self.d.new("submitted_exam", "lesson", ref, unit=lesson.unit,
+                               score=None if None in scores else round(sum(scores) / len(scores), 3),
+                               payload={"answers": {qid: a.id for qid, a in answers.items()}})
+        self.d.evidence.append(*evs, *grades.values(), submitted)
+        return {"exam": exam, "score": submitted.score,
+                "questions": {qid: self._answer_view(a, verdicts[qid], lesson.answer_key(qid), grades.get(qid))
+                              for qid, a in answers.items()}}
+
+    def _llm_grade(self, lesson: Lesson, pending: dict[str, Evidence]) -> dict[str, Evidence]:
+        """简答题并行调用模型批改。失败的题保持待批改（导师再用 grade 批），不影响其他题。"""
+        if not self.short_grader or not pending:
+            return {}
+
+        def one(item: tuple[str, Evidence]) -> tuple[str, dict]:
+            qid, a = item
+            if not str(a.payload.get("response") or "").strip():
+                return qid, {"score": 0.0, "items": [], "feedback": "没有作答。", "model": "", "version": "",
+                             "workspace": ""}
+            try:
+                return qid, self.short_grader.grade(a.object_id, lesson.question(qid), lesson.answer_key(qid),
+                                                    a.payload["response"])
+            except Exception as e:  # noqa: BLE001 —— 模型不可用、回复格式不对：留给导师批
+                return qid, {"error": str(e)}
+
+        with ThreadPoolExecutor(max_workers=min(4, len(pending))) as pool:
+            out = dict(pool.map(one, pending.items()))
+        grades = {}
+        for qid, r in out.items():
+            if "error" in r:
+                continue
+            a = pending[qid]
+            grades[qid] = self.d.new(
+                "graded", "question", a.object_id, Actor("agent", "short-grader", "grader", r["version"]),
+                object_version=a.object_version, unit=a.unit, caused_by=a.id, score=r["score"],
+                payload={"note": r["feedback"], "items": r["items"], "model": r["model"], "workspace": r["workspace"]})
+        return grades
 
     def _since_last_answer(self, ref: str, qid: str) -> list[Evidence]:
         evs = self.d.evidence.query(self.d.learner, object_type="question", object_id=question_id(ref, qid))
@@ -145,7 +233,11 @@ class Assessment:
         return mastery.scored(self.d.all())[1]
 
     def grade(self, ref: str, qid: str, score: float, note: str = "", actor: Actor = TUTOR) -> Evidence:
-        target = [a for a in self.pending() if a.object_id == question_id(ref, qid)]
+        """批改简答题。已经被 LLM 批过的，导师再批就覆盖它的分数（D-031：两条都留着，掌握度只算最后一次）。"""
+        oid = question_id(ref, qid)
+        evs = self.d.evidence.query(self.d.learner, verbs=("answered", "graded"), object_type="question", object_id=oid)
+        mine = {e.caused_by for e in evs if e.verb == "graded" and e.actor.id == actor.id}
+        target = [a for a in evs if a.verb == "answered" and a.pending and a.id not in mine]
         if not target:
             raise LessonError(f"{ref} {qid} 没有待批改的记录")
         a = target[-1]
@@ -175,13 +267,15 @@ class Assessment:
 
 
 def _previous_view(rec: dict, key: dict) -> dict:
-    out = {k: rec.get(k) for k in ("score", "result", "feedback", "response", "ts", "note")}
+    out = {k: rec.get(k) for k in ("score", "result", "feedback", "response", "ts", "note", "graded_by", "items")}
     tests = (rec.get("detail") or {}).get("tests")
     if tests is not None:
         out["tests"] = tests
     # WHY: 解析只在作答之后给；简答题要等批改完才给，否则等于提前公布评分点。
     if rec.get("result") != "pending":
         out["explain"] = key.get("explain", "")
+        if key.get("rubric"):                    # 批改后给评分点原文，对照逐条批改看（F-051）
+            out["rubric"] = [str(r) for r in key["rubric"]]
     return out
 
 
@@ -284,7 +378,9 @@ class LearnerModel:
         evs = self.d.all()
         stats = self.stats(evs)
         nodes = self.d.content.graph()
-        studied = [{"topic": tid, **u} for tid, t in (self.d.content.syllabus().get("topics") or {}).items()
+        # YAML 会把不加引号的 done_on: 2026-09-26 解析成 date，这里统一转成字符串
+        studied = [{"topic": tid, **{k: v.isoformat() if hasattr(v, "isoformat") else v for k, v in u.items()}}
+                   for tid, t in (self.d.content.syllabus().get("topics") or {}).items()
                    for u in t.get("units") or [] if u.get("status") in ("done", "watching")]
         studied_ids = {u["id"] for u in studied}
         _, pending = mastery.scored(evs)
@@ -304,6 +400,15 @@ class LearnerModel:
 
     def sessions(self) -> list[timeline.Session]:
         return timeline.sessions(*timeline.ticks(self.d.all()))
+
+    def journal(self) -> dict:
+        """学习记录页（D-027）：新词 id 换成标题，最近的一天在前。"""
+        nodes = self.d.content.graph()
+        days = timeline.journal(self.d.all())
+        for day in days:
+            for s in day["sessions"]:
+                s["terms"] = [getattr(nodes.get(n), "title", n) for n in s["terms"]]
+        return {"days": days[::-1], "total_minutes": round(sum(d["minutes"] for d in days), 1)}
 
     def time_report(self, days: int | None = None) -> str:
         since = (self.d.clock.now().date() - dt.timedelta(days=days - 1)).isoformat() if days else None
@@ -429,6 +534,11 @@ class Course:
         """页面发来的事件。检查点、提示、终端命令由服务器自己记，不走这里。"""
         plan = self.plan(unit)
         pid = plans.plan_id(plan)
+        if event == "resume":                   # 页面报"离开了几分钟"，起点用服务器的时钟算（D-027）
+            away = extra.pop("away_minutes", None)
+            if isinstance(away, bool) or not isinstance(away, (int, float)) or not 0 <= away <= 24 * 60:
+                raise CourseError("away_minutes 要是 0–1440 之间的分钟数")
+            extra["away_start"] = (self.d.clock.now() - dt.timedelta(minutes=away)).isoformat(timespec="seconds")
         ce = plans.client_event(plan, unit, section, event, minutes, **extra)
         self.d.evidence.append(self.d.new(ce.verb, ce.object_type, ce.object_id, unit=unit, plan=pid,
                                           section=ce.section, nodes=ce.nodes, payload=ce.payload))

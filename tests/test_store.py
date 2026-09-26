@@ -50,13 +50,14 @@ def test_a_batch_is_one_transaction(store):
     assert store.query("me") == []                                      # 第一条也没写进去
 
 
-def test_one_grade_per_answer(store):
+def test_one_grade_per_answer_per_grader(store):
     a = e(1, verb="answered", object_type="question", object_id="t/01-x#q2", pending=True, payload={"response": "x"})
-    grade = lambda i: e(i, verb="graded", object_type="question", object_id="t/01-x#q2", caused_by="e1", score=0.5,  # noqa: E731
-                        actor=Actor("agent", "tutor"))
-    store.append(a, grade(2))
+    grade = lambda i, who="tutor": e(i, verb="graded", object_type="question", object_id="t/01-x#q2",  # noqa: E731
+                                     caused_by="e1", score=0.5, actor=Actor("agent", who))
+    store.append(a, grade(2, "short-grader"))
+    store.append(grade(3))                                              # 导师可以覆盖 LLM 的批改（D-031）
     with pytest.raises(sqlite3.IntegrityError):
-        store.append(grade(3))
+        store.append(grade(4))                                          # 同一个批改者不能批两次
     with pytest.raises(sqlite3.IntegrityError):                         # 不能指向不存在的作答
         store.append(e(4, verb="graded", caused_by="nope", score=1.0))
 

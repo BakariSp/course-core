@@ -1,0 +1,5 @@
+# 简答题批改员（D-031）：交卷时对每道简答题调用一次模型，按 key.yaml 的 rubric 逐条给分。
+# 不是 agent loop：没有工具，一问一答。改 prompt 改 SYSTEM.md；每条批改记着 prompt + 模型的哈希。
+schema_version: 1
+model: {provider: deepseek, id: deepseek-v4-pro}   # 和 tutor-prep 的评分模型一样，用更强的模型
+system_prompt: SYSTEM.md

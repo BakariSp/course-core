@@ -7,6 +7,7 @@ INVARIANT: 页面只能发 CLIENT_EVENTS 里的事件；检查点、提示、整
 from __future__ import annotations
 
 import copy
+import datetime as dt
 from dataclasses import dataclass, field
 
 from studykit.domain.errors import CourseError
@@ -75,7 +76,7 @@ def public_view(plan: dict) -> dict:
 
 # ---------- 课程页发来的事件 → 证据 ----------
 
-CLIENT_EVENTS = {"open", "done", "undone", "skip", "activity", "term", "term_miss", "load_rating"}
+CLIENT_EVENTS = {"open", "done", "undone", "skip", "activity", "resume", "term", "term_miss", "load_rating"}
 
 
 @dataclass
@@ -94,6 +95,12 @@ def client_event(plan: dict, unit: str, index, event: str, minutes: float | None
         raise CourseError(f"不认识的事件：{event}")
     if event == "activity" and index is None:
         return ClientEvent("pinged", "unit", unit, None, payload={"kind": _activity_kind(extra)})
+    if event == "resume":                        # 暂停后回来：离开的这段算不算学习，由学习者说（D-027）
+        payload = _resume_payload(extra)
+        if index is None:
+            return ClientEvent("resumed", "unit", unit, None, payload=payload)
+        section(plan, index)
+        return ClientEvent("resumed", "section", section_id(unit, index), index, payload=payload)
     section(plan, index)
     sid = section_id(unit, index)
     if event == "open":
@@ -125,6 +132,17 @@ def client_event(plan: dict, unit: str, index, event: str, minutes: float | None
     if rating not in (1, 2, 3, 4, 5) or isinstance(rating, bool):
         raise CourseError("费劲程度是 1-5")
     return ClientEvent("rated_load", "section", sid, index, payload={"rating": rating})
+
+
+def _resume_payload(extra: dict) -> dict:
+    start, counted = extra.get("away_start"), extra.get("counted")
+    try:
+        dt.datetime.fromisoformat(str(start))
+    except ValueError:
+        raise CourseError("away_start 要是 ISO 时间，如 2026-09-26T10:05:00") from None
+    if not isinstance(counted, bool):
+        raise CourseError("counted 要是 true 或 false")
+    return {"away_start": str(start)[:19], "counted": counted}
 
 
 def _activity_kind(extra: dict) -> str:

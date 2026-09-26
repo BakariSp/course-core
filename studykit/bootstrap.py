@@ -13,13 +13,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from studykit.adapters.files import FileContent
+from studykit.adapters.jobs import ThreadJobs
 from studykit.adapters.pi import PiRuntime
 from studykit.adapters.sqlite import SqliteStore
 from studykit.adapters.system import SystemClock, UuidIds
 from studykit.adapters.web_fetch import UrllibFetcher
+from studykit.app.grading import LlmShortGrader
 from studykit.app.harness import Harness
 from studykit.app.learning import Assessment, Course, Deps, LearnerModel
-from studykit.app.ports import AgentRuntime, Clock, Fetcher, IdGen, PracticeEnv, Spec
+from studykit.app.observe import Observer
+from studykit.app.panel import Panel
+from studykit.app.ports import AgentRuntime, Clock, Fetcher, IdGen, JobRunner, PracticeEnv, Spec
 from studykit.domain.assessment import CORE_CHECKERS, CORE_CHECKPOINTS
 from studykit.domain.evidence import VerbRegistry
 from studykit.specs import cs_practice
@@ -47,7 +51,9 @@ class App:
     course: Course
     learner: LearnerModel
     harness: Harness
+    observer: Observer
     practice: PracticeEnv | None
+    panel: Panel
 
     def close(self) -> None:
         if self.practice:
@@ -62,7 +68,7 @@ def specs(content: FileContent, data: Path) -> list[Spec]:
 
 
 def build(config: Config | None = None, *, clock: Clock | None = None, ids: IdGen | None = None,
-          runtime: AgentRuntime | None = None, fetcher: Fetcher | None = None) -> App:
+          runtime: AgentRuntime | None = None, fetcher: Fetcher | None = None, jobs: JobRunner | None = None) -> App:
     config = config or Config()
     content = FileContent(config.root)
     store = SqliteStore(config.data / "study.db")
@@ -83,5 +89,8 @@ def build(config: Config | None = None, *, clock: Clock | None = None, ids: IdGe
     harness = Harness(runs=store, runtime=runtime, fetcher=fetcher or UrllibFetcher(), content=content, course=course,
                       learner=learner, specs=enabled, clock=clock, ids=ids, root=config.root,
                       workspace=config.data / "runs", learner_id=config.learner)
-    return App(config, store, content, Assessment(deps, checkers, config.data / "sandbox", config.root),
-               course, learner, harness, practice)
+    grader = LlmShortGrader(runtime, config.root, config.data / "runs", clock)
+    panel = Panel(content=content, harness=harness, course=course, runs=store, plans=store, evidence=store,
+                  jobs=jobs or ThreadJobs(), learner_id=config.learner)
+    return App(config, store, content, Assessment(deps, checkers, config.data / "sandbox", config.root, grader),
+               course, learner, harness, Observer(store, verbs, config.learner), practice, panel)

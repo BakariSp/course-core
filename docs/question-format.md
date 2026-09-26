@@ -22,11 +22,24 @@
 | `fill` | 题干里的每个 `____` 变成一个输入框 | 自动；按答对的空的比例给分 | 1–2 |
 | `code` | 网页里的代码编辑器 + 「运行测试」 | 自动：pytest 通过的测试比例 | 3–4 |
 | `terminal` | 受限的练习终端，跑真实的 git | 自动：结束时仓库状态满足几条检查 | 3–4 |
-| `short` | 文本框 | 导师按 rubric 批改 | 2–4 |
+| `short` | 文本框 | 单元题：交卷时 LLM 按 rubric 批改（D-031）；其他：导师批改 | 2–4 |
 
 代码：通用的 choice / fill / short 在 `studykit/domain/assessment.py`；要起进程的 code / terminal 属于学科 spec，在 `studykit/specs/cs_practice/`。界面在 `web/index.html` 的 `RENDERERS`。
 新增检验器：实现 `Checker` 协议（view / act / check），放进对应学科 spec 的 `checkers`（学什么都成立的放 domain），在 `RENDERERS` 里加一个同名渲染函数，在本文档里补一节，并给它写测试。
 检验器不写存储：判分过程中要记下的事（比如每次跑测试）放进返回值的 `records`，由服务层写成证据。
+
+## 整卷模式（单元题，D-031）
+
+`quiz.yaml` 带 `unit:` 的单元题默认 `mode: exam`：
+
+- 交卷前每道题都看不到对错，也没有单题的「提交」；作答草稿存在浏览器里，刷新不丢。
+- 代码题可以「运行测试」（看得到测试结果），**每题最多 5 次**，次数由后端记，用完编辑器锁定。改上限：整套题写 `max_runs: N`，或者某道题单独写 `max_runs: N`。
+- 页面底部一个「交卷」按钮，后端一次判完整卷：每道题照常记一条 `answered`，另记一条 `submitted_exam` 把它们串起来。
+- 简答题由 LLM 批改（`agents/short-grader/`：`grader.yaml` 选模型，`SYSTEM.md` 是批改员的说明），按 `key.yaml` 的 rubric 逐条给分和理由，记为 actor `short-grader` 的 `graded`，**就是最终分**。每次调用的输入和原始回复在 `data/runs/short-grader/`。
+  LLM 失败（模型不可用、回复格式不对）时这道题保持待批改，导师用 `study.py grade` 批。导师也可以对 LLM 批过的题再 `grade` 一次覆盖它（两条都留着，掌握度只算最后一次）。
+- rubric 每条末尾写这一条的满分，如 `（0.5）`，各条加起来是 1；不写分值的条目是加分项（总分封顶 1）。
+
+不想整卷交的套题写 `mode: practice`。课程页里的小节检查点不受影响。
 
 ## 掌握度等级
 
@@ -150,7 +163,7 @@ lessons/<topic>/<NN-slug>/
 ```yaml
 # key.yaml
   q5:
-    rubric:              # 导师批改用，不会发给网页
+    rubric:              # LLM / 导师批改用，不会发给网页；末尾括号是这一条的满分
       - 指出 xxx（0.5）
       - 说出后果 yyy（0.5）
     explain: 批改后才显示

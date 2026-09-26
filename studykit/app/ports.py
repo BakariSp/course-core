@@ -156,3 +156,22 @@ class RunStore(Protocol):
     def variant(self, variant_id: str) -> Variant | None: ...
     def add_grade(self, grade: Grade) -> None: ...
     def grades(self, run_id: str | None = None, agent: str | None = None) -> list[Grade]: ...
+
+
+class JobRunner(Protocol):
+    """后台任务（D-032）：同一个 key 同时只跑一个。状态只在这个进程里，服务器重启就忘了——
+    真正的结果（Run、Grade）已经写进数据库，这里只回答"现在是不是正在跑"。"""
+
+    def start(self, key: str, fn: Callable[[], object]) -> bool:
+        """开始跑；同一个 key 已经在跑时不再开，返回 False。"""
+    def status(self, key: str) -> dict | None:
+        """{"state": running | done | error, "started": ISO 时间, "error": 出错信息}；没跑过是 None。"""
+
+
+class ActivityFeed(Protocol):
+    """流程看板（D-024）：after 游标之后新写入的证据 / 运行 / 评分 / 发布，按时间排序。
+
+    after 为空时给最近 limit 条（看板打开时的历史）。返回 ([(种类, 对象)], 新游标)。
+    """
+
+    def activity(self, after: dict | None, limit: int) -> tuple[list[tuple[str, object]], dict]: ...

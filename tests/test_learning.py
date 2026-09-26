@@ -1,4 +1,5 @@
 """学习域的用例：通过 bootstrap 组装的 App 走一遍，数据落在临时 SQLite 里。"""
+import datetime as dt
 import json
 
 import pytest
@@ -139,6 +140,18 @@ def test_page_events_and_progress(app, unit, clock):
         app.course.record(unit, 0, "checkpoint")
 
 
+def test_resume_after_pause_counts_the_away_time_when_learner_says_so(app, unit, clock):
+    """D-027：页面只报"离开了几分钟"，离开的起点由服务器的时钟算（避免浏览器和服务器时区不一致）。"""
+    app.course.record(unit, 0, "open")
+    clock.tick(30)
+    p = app.course.record(unit, 0, "resume", away_minutes=29, counted=True)
+    [e] = app.store.query("me", verbs=["resumed"])
+    assert e.payload == {"away_start": (clock.now() - dt.timedelta(minutes=29)).isoformat(timespec="seconds"), "counted": True}
+    assert p["spent_minutes"] == {"0": 31.0}                            # 离开 29 分钟 > GAP，但学习者说在学
+    with pytest.raises(CourseError):
+        app.course.record(unit, 0, "resume", away_minutes=-3, counted=True)
+
+
 def test_progress_belongs_to_one_plan_version(app, unit):
     app.course.check(unit, 0, 0, ["B"])
     app.course.check(unit, 0, 1, [".."])
@@ -214,3 +227,93 @@ def test_time_report_includes_manual_entries(app, unit):
     app.learner.log_time("2026-09-25T20:00:00", 48, "看第 1 讲视频")
     report = app.learner.time_report()
     assert "2026-09-25  合计 48 分钟" in report and "看第 1 讲视频" in report and "2026-09-26" in report
+
+
+def test_weak_report_is_json_even_with_yaml_dates(app, root):
+    # syllabus.yaml 里不加引号的 done_on: 2026-09-26 会被 YAML 解析成 date 对象
+    (root / "progress" / "syllabus.yaml").write_text(
+        "topics:\n  tools:\n    title: 开发工具\n    units:\n"
+        "      - {id: tools-01-shell, title: Shell, status: done, done_on: 2026-09-26}\n", encoding="utf-8")
+    w = app.learner.weak()
+    assert json.loads(json.dumps(w))["studied_units"][0]["done_on"] == "2026-09-26"
+
+
+# ---------- 单元题整卷一次交（D-031） ----------
+
+EXAM = "t/02-exam"
+LLM_OK = '{"items": [{"id": 1, "score": 0.5, "why": "说了 cd"}, {"id": 2, "score": 0.25, "why": "只说了结论"}], "feedback": "glob 是 bash 展开的"}'
+
+
+def test_unit_quiz_is_exam_and_rejects_single_submit(app):
+    assert app.assessment.view(EXAM)["exam"] is True and app.assessment.view("t/01-x")["exam"] is False
+    with pytest.raises(LessonError, match="整卷"):
+        app.assessment.submit(EXAM, "q1", ["B"])
+    with pytest.raises(LessonError):
+        app.assessment.submit_exam("t/01-x", {})
+
+
+def test_exam_code_runs_are_limited_and_reset_after_submit(app, runtime):
+    runtime.judge_reply = LLM_OK
+    code = "def f(x):\n    return x\n"
+    for left in (4, 3, 2, 1, 0):
+        assert app.assessment.act(EXAM, "q3", {"op": "run", "code": code})["runs_left"] == left
+    with pytest.raises(LessonError, match="5 次"):
+        app.assessment.act(EXAM, "q3", {"op": "run", "code": code})
+    assert app.assessment.view(EXAM)["questions"][2]["runs_left"] == 0
+    r = app.assessment.submit_exam(EXAM, {"q3": {"code": code}})     # 交卷时的判分不算次数
+    assert r["questions"]["q3"]["score"] == 1.0
+    assert app.assessment.view(EXAM, retake=True)["questions"][2]["runs_left"] == 5
+
+
+def test_exam_submit_grades_everything_and_llm_grades_short(app, runtime, root):
+    runtime.judge_reply = LLM_OK
+    r = app.assessment.submit_exam(EXAM, {"q1": ["B"], "q2": "cd 失败了还会继续 rm"})
+    q = r["questions"]
+    assert q["q1"]["score"] == 1.0 and q["q1"]["explain"] == "因为 B"
+    assert q["q2"]["score"] == 0.75 and q["q2"]["graded_by"] == "short-grader" and q["q2"]["note"] == "glob 是 bash 展开的"
+    assert q["q2"]["explain"] == "两个问题" and q["q3"]["score"] == 0.0         # 代码没写：按文件现状判
+    assert q["q2"]["feedback"] == []                                        # 批完了就不再说"等导师批改"
+    assert r["score"] == round((1 + 0.75 + 0) / 3, 3)
+    w = app.learner.weak()
+    assert w["pending_grading"] == [] and any(c["concept"] == "t.b" for c in w["concepts"])
+    graded = [e for e in app.store.query("me", verbs=("graded",))]
+    assert graded[0].actor.id == "short-grader" and graded[0].payload["items"][0]["why"] == "说了 cd"
+    assert [e.payload["answers"]["q2"] for e in app.store.query("me", verbs=("submitted_exam",))]
+    ws = app.config.data / "runs" / "short-grader"
+    assert "cd 失败了还会继续 rm" in next(ws.iterdir()).joinpath("input.md").read_text(encoding="utf-8")
+    view = {x["id"]: x for x in app.assessment.view(EXAM)["questions"]}
+    assert view["q2"]["previous"]["graded_by"] == "short-grader"
+
+
+def test_llm_failure_leaves_short_answer_for_the_tutor(app, runtime):
+    runtime.judge_reply = "抱歉，我不能批改"
+    r = app.assessment.submit_exam(EXAM, {"q1": ["B"], "q2": "回答"})
+    assert r["questions"]["q2"]["result"] == "pending" and r["score"] is None
+    assert [p["qid"] for p in app.learner.weak()["pending_grading"]] == ["q2"]
+    app.assessment.grade(EXAM, "q2", 0.5, "导师批")
+    assert app.learner.weak()["pending_grading"] == []
+
+
+def test_tutor_can_override_llm_grade(app, runtime):
+    runtime.judge_reply = LLM_OK
+    app.assessment.submit_exam(EXAM, {"q1": ["B"], "q2": "回答"})
+    app.assessment.grade(EXAM, "q2", 0.25, "LLM 给高了")
+    view = {x["id"]: x for x in app.assessment.view(EXAM)["questions"]}
+    assert view["q2"]["previous"]["score"] == 0.25 and view["q2"]["previous"]["graded_by"] == "tutor"
+
+
+def test_empty_short_answer_scores_zero_without_calling_llm(app, runtime):
+    runtime.judge_reply = "不该被用到"
+    r = app.assessment.submit_exam(EXAM, {"q1": ["B"]})
+    assert r["questions"]["q2"]["score"] == 0.0
+
+
+def test_graded_short_answer_shows_reference_answer_and_rubric(app, runtime):
+    # F-051：批改后要看到标准答案 + 每个评分点的原文，才能对照"我的回答哪里对、哪里缺"
+    r = app.assessment.submit("t/01-x", "q2", "我的解释")
+    assert "rubric" not in r and "explain" not in r                    # 批改前不给评分点
+    runtime.judge_reply = LLM_OK
+    q2 = app.assessment.submit_exam(EXAM, {"q1": ["B"], "q2": "回答"})["questions"]["q2"]
+    assert q2["explain"] == "两个问题" and q2["rubric"][0] == "说出 cd 失败不停（0.5）"
+    view = {x["id"]: x for x in app.assessment.view(EXAM)["questions"]}
+    assert view["q2"]["previous"]["rubric"] == q2["rubric"]

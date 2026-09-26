@@ -37,6 +37,7 @@ def test_routes(req):
     assert req("GET", "/api/units")[1][0]["unit"] == "tools-01-shell"
     assert req("GET", "/api/unit?id=tools-01-shell")[1]["planned_minutes"] == 70
     assert req("GET", "/api/lessons")[1][0]["ref"] == "t/01-x"
+    assert isinstance(req("GET", "/api/log")[1]["days"], list)                  # 学习记录（D-027）
     assert "因为 B" not in json.dumps(req("GET", "/api/lesson?ref=t/01-x")[1], ensure_ascii=False)
     assert req("GET", "/api/kg?topic=tools")[1]["nodes"] == []
     assert req("GET", "/api/nope")[0] == 404
@@ -65,3 +66,10 @@ def test_submit_and_check_through_http(req):
     assert status == 200 and r["result"] == "pass"
     status, r = req("POST", "/api/unit/check", {"unit": "tools-01-shell", "section": 0, "idx": 0, "response": ["B"]})
     assert status == 200 and r["ok"]
+
+
+def test_exam_submit_through_http(req):
+    status, r = req("POST", "/api/submit", {"lesson": "t/02-exam", "qid": "q1", "response": ["B"]})
+    assert status == 400 and "整卷" in r["error"]
+    status, r = req("POST", "/api/exam/submit", {"lesson": "t/02-exam", "responses": {"q1": ["B"]}})
+    assert status == 200 and r["questions"]["q1"]["result"] == "pass"

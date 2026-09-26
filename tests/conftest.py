@@ -64,6 +64,26 @@ class FakeRuntime:
         return self.judge_reply
 
 
+class InlineJobs:
+    """后台任务的测试替身：start 时当场跑完（D-032）。"""
+
+    def __init__(self):
+        self.jobs = {}
+
+    def start(self, key, fn):
+        if (self.jobs.get(key) or {}).get("state") == "running":
+            return False
+        try:
+            fn()
+            self.jobs[key] = {"state": "done", "started": "t", "error": ""}
+        except Exception as e:  # noqa: BLE001
+            self.jobs[key] = {"state": "error", "started": "t", "error": str(e)}
+        return True
+
+    def status(self, key):
+        return self.jobs.get(key)
+
+
 def write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(textwrap.dedent(text).lstrip(), encoding="utf-8")
@@ -91,6 +111,7 @@ def root(tmp_path):
     write(lesson / "quiz.yaml", """
         title: 测试课时
         unit: tools-01-shell
+        mode: practice
         questions:
           - {id: q1, checker: choice, concept: t.a, level: 1, prompt: 选 B, options: [x, y]}
           - {id: q2, checker: short, concept: t.b, level: 2, prompt: 解释一下}
@@ -109,7 +130,24 @@ def root(tmp_path):
             checks:
               - {run: "git branch --show-current", equals: dev, desc: 在 dev 分支}
     """)
+    exam = r / "lessons" / "t" / "02-exam"                  # 单元题：整卷一次交（D-031）
+    write(exam / "quiz.yaml", """
+        title: 单元题
+        unit: tools-01-shell
+        questions:
+          - {id: q1, checker: choice, concept: t.a, level: 1, prompt: 选 B, options: [x, y]}
+          - {id: q2, checker: short, concept: t.b, level: 4, prompt: 找 bug}
+          - {id: q3, checker: code, concept: t.code, level: 3, prompt: 实现 f, file: code/ex1.py}
+    """)
+    write(exam / "code" / "ex1.py", "def f(x):\n    raise NotImplementedError\n")
+    write(exam / "code" / "test_ex1.py", "from ex1 import f\ndef test_one():\n    assert f(1) == 1\n")
+    write(exam / "key.yaml", """
+        answers:
+          q1: {answer: B, explain: 因为 B}
+          q2: {rubric: ["说出 cd 失败不停（0.5）", "说出 glob 提前展开（0.5）", "加分项：成功提示不可信"], explain: 两个问题}
+    """)
     shutil.copytree(REPO / "agents" / "tutor-prep", r / "agents" / "tutor-prep")
+    shutil.copytree(REPO / "agents" / "short-grader", r / "agents" / "short-grader")
     (r / "agents" / "_pi").mkdir(parents=True)
     (r / "agents" / "_pi" / "env_bridge.ts").write_text("// fake", encoding="utf-8")
     return r
@@ -132,7 +170,7 @@ def fetcher():
 
 @pytest.fixture
 def app(root, tmp_path, clock, runtime, fetcher):
-    a = build(Config(root=root, data=tmp_path / "data"), clock=clock, runtime=runtime, fetcher=fetcher)
+    a = build(Config(root=root, data=tmp_path / "data"), clock=clock, runtime=runtime, fetcher=fetcher, jobs=InlineJobs())
     runtime.harness = a.harness
     yield a
     a.close()

@@ -78,6 +78,14 @@ def checkpoint_id(unit: str, section: int, idx: int) -> str:
 # ---------- verb 注册表 ----------
 
 @dataclass(frozen=True)
+class Feed:
+    """这个 verb 被哪个投影读、读哪些字段（D-024）。tests/test_lineage.py 检查投影的代码里真的读了它。"""
+    projection: str                    # mastery / node_state / progress / course_eval（学习时长由 timeline 的规则算，不在这里声明）
+    fields: str                        # 给人看：读了哪些字段
+    object_type: str = ""              # 只有这种对象才读；空 = 都读
+
+
+@dataclass(frozen=True)
 class Verb:
     name: str
     spec: str                          # core 或学科 spec 的名字（D-023）
@@ -85,26 +93,48 @@ class Verb:
     required: tuple[str, ...] = ()     # payload 必填字段
     actors: tuple[str, ...] = ACTOR_TYPES
     needs_cause: bool = False          # 必须有 caused_by（如批改指向被批改的作答）
+    feeds: tuple[Feed, ...] = ()       # 被谁用
+    title: str = ""                    # 给人看的名字
 
 
 CORE_VERBS = (
-    Verb("answered", "core", ("question", "checkpoint"), ("response",), ("learner",)),
-    Verb("graded", "core", ("question",), ("note",), ("agent", "learner"), needs_cause=True),
-    Verb("logged_practice", "core", ("external",), ("level", "note"), ("learner", "agent")),
-    Verb("opened", "core", ("section",), actors=("learner",)),
-    Verb("completed", "core", ("section",), actors=("learner",)),
-    Verb("uncompleted", "core", ("section",), actors=("learner",)),
-    Verb("skipped", "core", ("section",), actors=("learner",)),
-    Verb("pinged", "core", ("section", "unit"), ("kind",), ("learner",)),
-    Verb("viewed", "core", ("node",), actors=("learner",)),
-    Verb("voted_term", "core", ("node",), ("vote",), ("learner",)),
-    Verb("flagged_unexplained", "core", ("section",), ("text",), ("learner",)),
-    Verb("rated_load", "core", ("section",), ("rating",), ("learner",)),
-    Verb("requested_hint", "core", ("checkpoint",), ("level",), ("learner",)),
-    Verb("passed_section", "core", ("section",), actors=("system",)),
-    Verb("practiced", "core", ("lab",), ("op",), ("learner",)),     # 练习环境里的操作：run / restore / reset / fill
-    Verb("observed", "core", ("node",), ("polarity", "note"), ("agent", "learner")),
-    Verb("logged_time", "core", ("time",), ("start", "minutes"), ("learner", "agent")),
+    Verb("answered", "core", ("question", "checkpoint"), ("response",), ("learner",), title="作答", feeds=(
+        Feed("mastery", "score · 题目等级 · 考的概念", "question"),
+        Feed("node_state", "做对没有 · 考的知识点", "checkpoint"),
+        Feed("progress", "做对没有 · 第几题", "checkpoint"),
+        Feed("course_eval", "第一次就对了吗 · 试了几次", "checkpoint"))),
+    Verb("graded", "core", ("question",), ("note",), ("agent", "learner"), needs_cause=True, title="批改",
+         feeds=(Feed("mastery", "score（替代被批改的那条作答）· 备注"),)),
+    Verb("submitted_exam", "core", ("lesson",), ("answers",), ("learner",), title="交卷（整卷一次交，D-031）"),
+    Verb("logged_practice", "core", ("external",), ("level", "note"), ("learner", "agent"), title="课外练习",
+         feeds=(Feed("mastery", "score · 等级 · 概念"),)),
+    Verb("opened", "core", ("section",), actors=("learner",), title="打开小节",
+         feeds=(Feed("progress", "最后学到哪一节"),)),
+    Verb("completed", "core", ("section",), actors=("learner",), title="学完（没有检查点的节）",
+         feeds=(Feed("progress", "这一节算通过"),)),
+    Verb("uncompleted", "core", ("section",), actors=("learner",), title="取消学完",
+         feeds=(Feed("progress", "这一节不算通过"),)),
+    Verb("skipped", "core", ("section",), actors=("learner",), title="跳过",
+         feeds=(Feed("progress", "跳过的节"), Feed("course_eval", "跳过了没有"))),
+    Verb("pinged", "core", ("section", "unit"), ("kind",), ("learner",), title="心跳（还在学）"),
+    Verb("resumed", "core", ("section", "unit"), ("away_start", "counted"), ("learner",), title="暂停后回来"),
+    Verb("viewed", "core", ("node",), actors=("learner",), title="点开新词",
+         feeds=(Feed("course_eval", "新词被点开的比例"),)),
+    Verb("voted_term", "core", ("node",), ("vote",), ("learner",), title="新词 👍👎", feeds=(
+        Feed("node_state", "「我早就知道」= 会了"), Feed("progress", "每个新词的投票"),
+        Feed("course_eval", "新词预测准不准"))),
+    Verb("flagged_unexplained", "core", ("section",), ("text",), ("learner",), title="划出没讲的词",
+         feeds=(Feed("course_eval", "漏报的新词"),)),
+    Verb("rated_load", "core", ("section",), ("rating",), ("learner",), title="费劲程度",
+         feeds=(Feed("progress", "自评 1-5"), Feed("course_eval", "预测负荷 vs 自评"))),
+    Verb("requested_hint", "core", ("checkpoint",), ("level",), ("learner",), title="要提示",
+         feeds=(Feed("progress", "用到第几级提示"), Feed("course_eval", "最高提示级别"))),
+    Verb("passed_section", "core", ("section",), actors=("system",), title="整节通过",
+         feeds=(Feed("node_state", "这一节的新词算会用了"),)),
+    Verb("practiced", "core", ("lab",), ("op",), ("learner",), title="练习场操作"),   # op：run / restore / reset / fill
+    Verb("observed", "core", ("node",), ("polarity", "note"), ("agent", "learner"), title="观察",
+         feeds=(Feed("node_state", "薄弱 / 会了 · 原话 · 谁观察的"),)),
+    Verb("logged_time", "core", ("time",), ("start", "minutes"), ("learner", "agent"), title="补录学习时间"),
 )
 
 
@@ -121,6 +151,12 @@ class VerbRegistry:
 
     def __contains__(self, name: str) -> bool:
         return name in self._by
+
+    def get(self, name: str) -> Verb | None:
+        return self._by.get(name)
+
+    def all(self) -> list[Verb]:
+        return list(self._by.values())
 
     def validate(self, e: Evidence) -> None:
         v = self._by.get(e.verb)

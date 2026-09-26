@@ -73,3 +73,123 @@ nodes:
     - tools.shell.options
     units:
     - tools-01-shell
+  tools.shell.cwd:
+    title: 当前工作目录（pwd / cd）
+    desc: shell 记着“我现在站在哪个目录”：pwd 打印它，cd 改变它，提示符里显示它，相对路径从它开始算
+    kind: concept
+    requires:
+    - tools.shell.roles
+    units:
+    - tools-01-shell
+  tools.shell.paths:
+    title: 路径：绝对、相对、~ 与 . ..
+    desc: 以 / 开头是绝对路径、否则是相对路径；~ 是家目录，. 是当前目录，.. 是上一级目录
+    kind: concept
+    requires:
+    - tools.shell.cwd
+    units:
+    - tools-01-shell
+  tools.cmd.ls:
+    title: ls
+    desc: 列出目录里的名字（末尾带 / 的是目录）
+    kind: term
+    requires:
+    - tools.shell.cwd
+    units:
+    - tools-01-shell
+  tools.shell.stdstreams:
+    title: 标准输入与标准输出
+    desc: 程序默认的打印通道和读入通道，默认连着终端；重定向和管道都是在改这两条通道接到了哪里
+    kind: concept
+    requires:
+    - tools.shell.roles
+    units:
+    - tools-01-shell
+  tools.shell.redirection:
+    title: 重定向（> / >> / <）
+    desc: shell 在启动程序之前打开文件，把程序的标准输出或标准输入接到它上面；> 清空重写，>> 追加
+    kind: concept
+    requires:
+    - tools.shell.stdstreams
+    units:
+    - tools-01-shell
+  tools.cmd.cat:
+    title: cat
+    desc: 把文件内容原样打到标准输出；也常用来把标准输入的内容原样转出去
+    kind: term
+    requires:
+    - tools.shell.stdstreams
+    units:
+    - tools-01-shell
+  tools.shell.pipe:
+    title: 管道（|）
+    desc: 把左边程序的标准输出接到右边程序的标准输入；没给文件参数的程序就从标准输入读
+    kind: concept
+    requires:
+    - tools.shell.stdstreams
+    units:
+    - tools-01-shell
+  tools.cmd.head:
+    title: head
+    desc: 打印文件的头几行（head -n 5 文件）
+    kind: term
+    requires:
+    - tools.shell.stdstreams
+    units:
+    - tools-01-shell
+  tools.cmd.tail:
+    title: tail
+    desc: 打印文件的末尾几行（tail -n 5 文件），看最新的事故最常用
+    kind: term
+    requires:
+    - tools.shell.stdstreams
+    units:
+    - tools-01-shell
+  tools.shell.trace:
+    title: set：用 -x 看到 shell 改写后的命令
+    desc: 打开 shell 的“直播”，在每条命令执行前打印它实际要执行的内容（展开之后的样子）；set +x 关掉
+    kind: skill
+    requires:
+    - tools.shell.expansion
+    units:
+    - tools-01-shell
+  tools.cmd.echo:
+    title: echo
+    desc: 把参数打到标准输出；观察“shell 到底交给了程序什么”最好用的工具
+    kind: term
+    requires:
+    - tools.shell.expansion
+    units:
+    - tools-01-shell
+  tools.shell.exitcode:
+    title: 退出码与 $?
+    desc: 程序用 0–255 的数字报告成败，0 是成功；$? 是上一条命令的退出码，会被下一条命令覆盖
+    kind: concept
+    requires:
+    - tools.shell.roles
+    units:
+    - tools-01-shell
+  tools.cmd.test:
+    title: test 与 [ ]
+    desc: 检查一个条件的裁判：只把答案放进退出码、不打印任何东西；[ … ] 是它的另一种写法
+    kind: term
+    requires:
+    - tools.shell.exitcode
+    units:
+    - tools-01-shell
+  tools.shell.conditional:
+    title: if 判断语句
+    desc: bash 的判断语句：如果条件成立（退出码 0）就走 then，否则走 else
+    kind: concept
+    requires:
+    - tools.cmd.test
+    units:
+    - tools-01-shell
+  tools.shell.help:
+    title: 查命令文档：--help 与 help
+    desc: 一般程序用 命令 --help 看用法；bash 内建命令用 help 名字（Git Bash 没有 man）
+    kind: skill
+    requires:
+    - tools.shell.roles
+    units:
+    - tools-01-shell

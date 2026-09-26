@@ -109,6 +109,12 @@ button:disabled { opacity: 0.5; cursor: default; }
 .output { max-height: 280px; overflow: auto; }
 .summary { text-align: center; }
 .summary .big { font-size: 28px; font-weight: 700; }
+.summary .exam-note { margin: 6px 0 10px; }
+.result .grading-sec { margin-top: 10px; }
+.result .grading-h { font-weight: 700; margin-bottom: 4px; }
+.result .md-table td.pts { white-space: nowrap; font-weight: 600; }
+.ws-runs { font-size: 13px; font-weight: 600; }
+.ws-runs.low { color: var(--bad); }
 .lesson-list a { display: block; padding: 12px 16px; margin-top: 10px; background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius); color: var(--text); text-decoration: none; }
 .lesson-list a:hover { border-color: var(--accent); }
@@ -316,6 +322,37 @@ main.wide { max-width: 1560px; }
 .rating button { font-size: 13px; padding: 3px 10px; }
 .video-btn { font-size: 12.5px; padding: 2px 10px; }
 .video-btn.on { background: var(--bad-soft); border-color: var(--bad); color: var(--bad); }
+/* 暂停与回来（D-027） */
+.budget .paused { color: var(--warn); font-weight: 600; }
+.resume-mask { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: grid; place-items: center; z-index: 50; padding: 16px; }
+.resume-box { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px 22px; max-width: 420px; width: 100%; }
+.resume-box h3 { margin: 0 0 6px; }
+.resume-box .actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 14px 0 8px; }
+/* 备课面板（D-032） */
+.pn-table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 13.5px; background: var(--surface); }
+.pn-table th, .pn-table td { border-bottom: 1px solid var(--border); padding: 8px 10px; text-align: left; vertical-align: top; }
+.pn-table th { color: var(--muted); font-weight: 600; font-size: 12.5px; }
+.pn-table tr.on td { background: var(--accent-soft); }
+.pn-who { display: inline-block; font-size: 11.5px; padding: 0 7px; border-radius: 999px; border: 1px solid var(--border); margin-left: 6px; }
+.pn-who.learner { color: var(--ok); border-color: var(--ok); }
+.pn-who.tutor { color: var(--warn); border-color: var(--warn); }
+.pn-who.agent { color: var(--accent); border-color: var(--accent); }
+.pn-detail { margin-top: 18px; }
+.pn-detail h3 { margin: 18px 0 6px; font-size: 15px; }
+.pn-block { border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; margin-top: 8px; background: var(--surface); }
+.pn-block.changed { border-color: var(--warn); }
+.pn-block pre { max-height: 260px; overflow: auto; white-space: pre-wrap; }
+.pn-issues li { margin: 2px 0; }
+@media (max-width: 700px) { .pn-table .wide-only { display: none; } }
+/* 学习记录（D-027） */
+.log-day { margin-top: 18px; }
+.log-day h3 { display: flex; justify-content: space-between; font-size: 15px; margin: 0 0 6px; }
+.log-s { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; margin-top: 8px; }
+.log-s .when { font-variant-numeric: tabular-nums; font-weight: 600; }
+.log-s .what { color: var(--muted); font-size: 13px; margin-top: 2px; }
+.log-s ul { margin: 6px 0 0; padding-left: 18px; font-size: 13.5px; }
+.log-sum { display: flex; gap: 18px; flex-wrap: wrap; font-size: 14px; color: var(--muted); }
+.log-sum b { color: var(--text); font-size: 18px; }
 
 /* ---------- 知识树（D-020） ---------- */
 .kg { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 18px; margin-top: 16px; align-items: start; }
@@ -369,6 +406,8 @@ const REF = params.get("lesson");
 const RETAKE = params.get("retake") === "1";
 const CHECKER_NAMES = { choice: "选择", fill: "填空", code: "代码", terminal: "终端", short: "简答" };
 const state = {};   // qid -> previous/result
+const drafts = {};  // 整卷模式：qid -> 交卷前的作答（null = 没答）
+const cards = {};   // qid -> { view, showResult }
 
 // ---------- 工具 ----------
 const $ = (tag, attrs = {}, ...kids) => {
@@ -452,14 +491,33 @@ async function api(path, body) {
 // ---------- 结果 ----------
 function resultBox(r) {
   const cls = r.result || "pending";
-  const label = r.result === "pending" ? "⏳ 已提交，等导师批改"
+  const label = r.result === "pending" ? "⏳ 已提交，等批改（LLM 没批成，导师会批）"
     : `${r.result === "pass" ? "✅" : r.result === "partial" ? "🟡" : "❌"} 得分 ${Math.round(r.score * 100)}%`;
   const box = $("div", { class: `result ${cls}` }, $("div", { class: "score" }, label));
   const fb = (r.feedback || []).filter(Boolean);
   if (fb.length && r.result !== "pending") box.append($("ul", {}, fb.map(f => $("li", {}, f))));
+  if (r.rubric?.length && r.result !== "pending") { appendGrading(box, r); return box; }
   if (r.note && r.result !== "pending") box.append($("div", {}, "导师批注：" + r.note));
   if (r.explain) box.append($("div", { class: "explain", html: "<b>解析：</b>" + md(r.explain) }));
   return box;
+}
+
+// 简答题批改后（F-051）：标准答案 → 逐条批改（评分点 · 得分 · 你的回答对上了什么 / 缺了什么）→ 总评
+function appendGrading(box, r) {
+  const byId = Object.fromEntries((r.items || []).map(it => [it.id, it]));
+  const weight = t => (String(t).match(/[（(]\s*(\d*\.?\d+)\s*[）)]\s*$/) || [])[1];
+  const point = t => String(t).replace(/[（(]\s*\d*\.?\d+\s*[）)]\s*$/, "");
+  const rows = r.rubric.map((t, i) => {
+    const it = byId[i + 1], w = weight(t);
+    const pts = it ? `${it.score}${w ? " / " + w : "（加分）"}` : (r.items?.length ? `0${w ? " / " + w : "（加分）"}` : (w ? `满分 ${w}` : "加分项"));
+    return `<tr><td>${inlineMd(point(t))}</td><td class="pts">${esc(pts)}</td><td>${it ? inlineMd(it.why || "") : (r.items?.length ? "没有对上" : "")}</td></tr>`;
+  }).join("");
+  const by = r.graded_by === "short-grader" ? "LLM 总评" : "导师批注";
+  box.append(
+    r.explain ? $("div", { class: "grading-sec" }, $("div", { class: "grading-h" }, "标准答案"), $("div", { class: "explain", html: md(r.explain) })) : null,
+    $("div", { class: "grading-sec" }, $("div", { class: "grading-h" }, "逐条批改"),
+      $("div", { class: "md-table", html: `<table><thead><tr><th>评分点</th><th>得分</th><th>你的回答</th></tr></thead><tbody>${rows}</tbody></table>` })),
+    r.note ? $("div", { class: "grading-sec" }, $("div", { class: "grading-h" }, by), $("div", { html: inlineMd(r.note) })) : null);
 }
 
 // ---------- 代码编辑器：有 CodeMirror 就用（行号、高亮），加载失败退回普通文本框 ----------
@@ -540,7 +598,7 @@ const RENDERERS = {
       input.addEventListener("change", () => inputs.forEach(x => x.closest(".option").classList.toggle("picked", x.checked)));
       return row;
     }));
-    const prev = q.previous?.response;
+    const prev = q.previous?.response ?? q.draft;
     if (Array.isArray(prev)) inputs.forEach(x => { x.checked = prev.includes(x.value); x.dispatchEvent(new Event("change")); });
     return {
       body: $("div", {}, q.multi ? $("div", { class: "hint" }, "多选：选对的得分，选错的倒扣") : null, list),
@@ -555,7 +613,7 @@ const RENDERERS = {
     prompt.querySelectorAll("[data-blank]").forEach(span => {
       const i = Number(span.dataset.blank);
       const input = $("input", { class: "blank", "aria-label": `第 ${i + 1} 空` });
-      input.value = q.previous?.response?.[i] ?? "";
+      input.value = q.previous?.response?.[i] ?? q.draft?.[i] ?? "";
       inputs.push(input);
       span.replaceWith(input);
     });
@@ -609,7 +667,21 @@ const RENDERERS = {
     const draftNote = restoredDraft ? $("span", { class: "ws-draft" }, "已恢复上次没运行的草稿") : null;
     const expandBtn = $("button", { title: "展开成全屏编辑（Esc 收起）", onclick: () => setExpanded(!ws.classList.contains("expanded")) }, "⤢ 展开");
     const runBtn = $("button", { onclick: () => run() }, "运行测试");
-    const submitBtn = $("button", { class: "primary", onclick: () => ui.submit() }, "提交");
+    const submitBtn = $("button", { class: "primary", onclick: () => ui.submit(), hidden: ui.exam }, "提交");
+    const limited = q.max_runs != null;
+    const runsNote = limited ? $("span", { class: "ws-runs" }) : null;
+    function showRunsLeft(left) {
+      if (!limited) return;
+      runsNote.textContent = left > 0 ? `还能运行 ${left}/${q.max_runs} 次` : "运行次数用完了，交卷时按现在的代码判分";
+      runsNote.classList.toggle("low", left <= 1);
+      if (left <= 0 && !q.previous) lockEditor();
+    }
+    function lockEditor() {
+      locked = true;
+      editor.readOnly();
+      runBtn.disabled = submitBtn.disabled = true;
+      historyList.querySelectorAll("button").forEach(b => b.disabled = true);
+    }
 
     // ---- 结果面板：终端输出（权威） + 错误分组（辅助） ----
     const termPane = $("div", { class: "rt-term", role: "tabpanel" });
@@ -639,7 +711,7 @@ const RENDERERS = {
       bar,
       $("div", { class: "ws-side" }, $("div", { class: "prompt ws-prompt", html: md(q.prompt) }), history),
       $("div", { class: "ws-main" }, editorHost, split,
-        $("div", { class: "ws-actions" }, expandBtn, runBtn, submitBtn, status, draftNote), panel));
+        $("div", { class: "ws-actions" }, expandBtn, runBtn, submitBtn, runsNote, status, draftNote), panel));
 
     function setExpanded(on) {
       if (ws.classList.contains("expanded") === on) return;
@@ -717,10 +789,12 @@ const RENDERERS = {
       if (locked) return;
       runBtn.disabled = true; runBtn.textContent = "运行中…";
       try {
-        showRun(await ui.act({ op: "run", code: editor.get() }), new Date().toTimeString().slice(0, 5));
+        const r = await ui.act({ op: "run", code: editor.get() });
+        showRun(r, new Date().toTimeString().slice(0, 5));
         try { localStorage.removeItem(draftKey); } catch {}
         draftNote?.remove();
         loadHistory();
+        if (r.runs_left != null) showRunsLeft(r.runs_left);
       } catch (e) {
         status.className = "ws-status bad"; status.textContent = e.message;
       }
@@ -745,18 +819,14 @@ const RENDERERS = {
       }).reverse());
     }
     loadHistory();
+    if (limited && !q.previous) showRunsLeft(q.runs_left);
 
     return {
       body: ws,
       ownsSubmit: true,
       collect: () => ({ code: editor.get() }),
       busy: on => { submitBtn.disabled = on || locked; submitBtn.textContent = on ? "判分中…" : "提交"; },
-      lock: () => {
-        locked = true;
-        editor.readOnly();
-        runBtn.disabled = submitBtn.disabled = true;
-        historyList.querySelectorAll("button").forEach(b => b.disabled = true);
-      },
+      lock: lockEditor,
       onResult: (r, initial) => {
         if (r.tests) showRun(r, r.ts ? r.ts.slice(11, 16) : "");
         if (!initial) { setExpanded(false); loadHistory(); try { localStorage.removeItem(draftKey); } catch {} }
@@ -803,7 +873,7 @@ const RENDERERS = {
 
   short(q) {
     const area = $("textarea", { rows: 6, placeholder: "用你自己的话写…", "aria-label": "你的回答" });
-    area.value = q.previous?.response ?? "";
+    area.value = q.previous?.response ?? q.draft ?? "";
     return {
       body: area,
       collect: () => area.value.trim() || null,
@@ -815,7 +885,13 @@ const RENDERERS = {
 // ---------- 页面 ----------
 function card(q, idx, lesson) {
   // 渲染函数拿到的 ui：act 走 /api/act；submit 走统一的提交流程（自带提交按钮的题型用它）。
+  const exam = lesson.exam;
+  const draftKey = `cs-study:exam:${lesson.ref}:${q.id}`;
+  if (exam && !q.previous && q.checker !== "code") {
+    try { const d = localStorage.getItem(draftKey); if (d != null) q.draft = JSON.parse(d); } catch {}
+  }
   const ui = {
+    exam,
     act: action => api("/api/act", { lesson: lesson.ref, qid: q.id, action }),
     submit: () => doSubmit(),
   };
@@ -842,6 +918,7 @@ function card(q, idx, lesson) {
     state[q.id] = r;
     view.lock();
     submit.hidden = true;
+    try { localStorage.removeItem(draftKey); } catch {}
     resultSlot.replaceChildren(resultBox(r));
     view.onResult?.(r, initial);
     // 首次渲染时卡片还没挂到页面上，进度点和总结由 showLesson 在全部卡片建好后统一画。
@@ -860,10 +937,23 @@ function card(q, idx, lesson) {
       q.kind === "project" ? $("span", { class: "tag" }, "nanoteacher") : null),
     view.ownsPrompt ? null : $("div", { class: "prompt", html: md(q.prompt) }),
     view.body,
-    view.ownsSubmit ? null : $("div", { class: "actions" }, ...(view.extraActions || []), submit),
+    view.ownsSubmit ? null : $("div", { class: "actions" }, ...(view.extraActions || []), exam ? null : submit),
     view.after || null,
     resultSlot);
   if (q.previous) showResult(q.previous, true);
+  if (exam && !q.previous && q.checker !== "code") {
+    // 交卷前的作答存一份草稿；答没答也用来给底部的「交卷」计数
+    const save = () => {
+      const v = view.collect();
+      drafts[q.id] = v;
+      try { v == null ? localStorage.removeItem(draftKey) : localStorage.setItem(draftKey, JSON.stringify(v)); } catch {}
+      renderSummary(lesson);
+    };
+    el.addEventListener("input", save);
+    el.addEventListener("change", save);
+    drafts[q.id] = view.collect();
+  }
+  cards[q.id] = { view, showResult };
   return el;
 }
 
@@ -875,6 +965,8 @@ function renderDots(lesson) {
 
 function renderSummary(lesson) {
   const box = document.getElementById("summary");
+  if (!box) return;
+  if (lesson.exam && !lesson.questions.every(q => state[q.id])) { renderExamBar(lesson, box); return; }
   const done = lesson.questions.filter(q => state[q.id]);
   if (done.length < lesson.questions.length) {
     box.replaceChildren($("div", { class: "hint" }, `已完成 ${done.length} / ${lesson.questions.length} 题`));
@@ -885,9 +977,42 @@ function renderSummary(lesson) {
   const avg = graded.length ? graded.reduce((a, r) => a + r.score, 0) / graded.length : 0;
   box.replaceChildren(
     $("div", { class: "big" }, graded.length ? `${Math.round(avg * 100)}%` : "—"),
-    $("div", {}, `自动判分 ${graded.length} 题${pending ? `，${pending} 题等导师批改` : ""}`),
-    $("p", {}, "回到对话，对导师说：", $("code", {}, `批改 ${lesson.ref}`)),
+    $("div", {}, `已判分 ${graded.length} 题${pending ? `，${pending} 题等导师批改` : ""}`),
+    lesson.exam ? $("p", { class: "hint exam-note" }, "简答题由 LLM 按评分标准批改；觉得判得不对，回到对话里说，导师会复核。")
+      : $("p", {}, "回到对话，对导师说：", $("code", {}, `批改 ${lesson.ref}`)),
     $("a", { href: `?lesson=${encodeURIComponent(lesson.ref)}&retake=1` }, "整套重做"));
+}
+
+// 整卷模式（D-031）：所有题做完一次交；代码题按编辑器里现在的代码判分。
+function renderExamBar(lesson, box) {
+  const answered = q => q.checker === "code" || q.checker === "terminal" || drafts[q.id] != null;
+  const missing = lesson.questions.map((q, i) => answered(q) ? null : i + 1).filter(Boolean);
+  const btn = $("button", { class: "primary", onclick: () => submitExam(lesson, btn) }, "交卷");
+  box.replaceChildren(
+    $("div", {}, `已作答 ${lesson.questions.length - missing.length} / ${lesson.questions.length} 题`),
+    $("p", { class: "hint exam-note" }, "单元题整卷一次交：交卷前看不到对错；代码题每题最多运行 5 次测试。交卷后简答题由 LLM 批改，要等几十秒。"),
+    btn);
+}
+
+async function submitExam(lesson, btn) {
+  const responses = {}, missing = [];
+  lesson.questions.forEach((q, i) => {
+    const v = cards[q.id].view.collect();
+    if (v == null && q.checker !== "code" && q.checker !== "terminal") missing.push(i + 1);
+    responses[q.id] = v;
+  });
+  const warn = missing.length ? `第 ${missing.join("、")} 题还没作答，按 0 分算。\n` : "";
+  if (!confirm(warn + "交卷后就不能再改了，确定交卷？")) return;
+  btn.disabled = true; btn.textContent = "判分中…（简答题在等 LLM 批改）";
+  try {
+    const r = await api("/api/exam/submit", { lesson: lesson.ref, responses });
+    lesson.questions.forEach(q => cards[q.id].showResult(r.questions[q.id], true));
+    renderDots(lesson); renderSummary(lesson);
+    document.getElementById("summary").scrollIntoView({ behavior: "smooth", block: "center" });
+  } catch (e) {
+    btn.disabled = false; btn.textContent = "交卷";
+    alert("交卷失败：" + e.message);
+  }
 }
 
 async function showLesson(ref) {
@@ -921,20 +1046,51 @@ async function showCourse(unitId) {
   let current = Number.isInteger(fromHash) && fromHash >= 1 && fromHash <= N ? fromHash - 1
     : (sections.findIndex((_, i) => !isPassed(i) && !isSkipped(i)) + 1 || N + 1) - 1;
 
-  // ---- 计时（D-016）：服务器按事件的时间算会话；页面只负责在"有人在学"时发心跳 ----
-  let lastInteract = Date.now(), videoSince = null;
-  ["pointerdown", "keydown", "scroll", "mousemove"].forEach(ev =>
-    document.addEventListener(ev, () => { lastInteract = Date.now(); }, { passive: true }));
+  // ---- 计时（D-016、D-027）：开着课程页就算在学；5 分钟没操作就暂停，回来时问这段算不算 ----
+  const IDLE_MS = 5 * 60000;
+  let lastInteract = Date.now(), videoSince = null, pausedAt = null, asking = false;
+  const sectionNow = () => current < N ? current : undefined;
+  function onInteract() {
+    if (pausedAt) { if (!asking) askResume(); return; }
+    lastInteract = Date.now();
+  }
+  if (!showCourse._listening) {
+    showCourse._listening = true;
+    ["pointerdown", "keydown", "scroll", "mousemove"].forEach(ev =>
+      document.addEventListener(ev, () => showCourse._onInteract?.(), { passive: true }));
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) showCourse._onInteract?.(); });
+  }
+  showCourse._onInteract = onInteract;
   clearInterval(showCourse._hb);
   showCourse._hb = setInterval(() => {
-    const section = current < N ? current : undefined;
     if (videoSince) {
       if (Date.now() - videoSince > 120 * 60000) return setVideo(false);   // 忘了点结束：最多算 2 小时
-      post("activity", { section, kind: "video" }).catch(() => {});
-    } else if (!document.hidden && Date.now() - lastInteract < 60000) {
-      post("activity", { section, kind: "page" }).catch(() => {});
+      return post("activity", { section: sectionNow(), kind: "video" }).catch(() => {});
     }
+    if (pausedAt) return;
+    if (Date.now() - lastInteract >= IDLE_MS) { pausedAt = lastInteract; return renderBudget(); }
+    post("activity", { section: sectionNow(), kind: "page" }).catch(() => {});
   }, 60000);
+  function askResume() {
+    asking = true;
+    const mins = Math.max(1, Math.round((Date.now() - pausedAt) / 60000));
+    const answer = counted => {
+      mask.remove();
+      post("resume", { section: sectionNow(), away_minutes: (Date.now() - pausedAt) / 60000, counted })
+        .then(r => { progress = r; renderBudget(); }).catch(() => {});
+      pausedAt = null; asking = false; lastInteract = Date.now();
+      renderBudget();
+    };
+    const mask = $("div", { class: "resume-mask", role: "dialog", "aria-modal": "true" },
+      $("div", { class: "resume-box" },
+        $("h3", {}, `你离开了 ${mins} 分钟`),
+        $("p", {}, "这段时间在学吗？比如在看视频、在 Git Bash 里练。"),
+        $("div", { class: "actions" },
+          $("button", { class: "primary", onclick: () => answer(true) }, "在学，算进学习时间"),
+          $("button", { onclick: () => answer(false) }, "没在学，现在继续")),
+        $("p", { class: "hint" }, "不回答直接关掉页面：离开的这段不算。")));
+    document.body.append(mask);
+  }
   const videoBtn = $("button", { class: "video-btn", onclick: () => setVideo(!videoSince) });
   function setVideo(on) {
     videoSince = on ? Date.now() : null;
@@ -957,6 +1113,7 @@ async function showCourse(unitId) {
     $("h1", {}, plan.title),
     $("div", { class: "source" }, `分 ${sessions.length} 次学，每次不超过 ${settings.session_minutes} 分钟 · `,
       $("a", { href: `?kg=${encodeURIComponent(unitId.split("-")[0])}` }, "知识树"), " · ",
+      $("a", { href: "?log=1" }, "学习记录"), " · ",
       $("a", { href: "/" }, "全部课程")),
     budgetEl);
   const tocList = $("div");
@@ -977,6 +1134,7 @@ async function showCourse(unitId) {
       $("div", { class: "budget-bar", title: `已通过的小节计划 ${donePlanned}/${planned} 分钟` }, $("div", { style: `width:${Math.round(100 * donePlanned / planned)}%` })),
       $("span", {}, `计划 ${planned}′（上限 ${settings.unit_budget_minutes}′）· 实际 ${Math.round(spent)}′`),
       over ? $("span", { class: "warn" }, "比计划慢不少：卡住的地方可以先跳过，记下来问导师") : null,
+      pausedAt ? $("span", { class: "paused", title: "5 分钟没有操作，计时暂停了。动一下鼠标就会问你这段算不算。" }, "⏸ 已暂停") : null,
       videoBtn);
   }
 
@@ -1082,6 +1240,7 @@ async function showCourse(unitId) {
         $("div", { class: "options" }, item.options.map((o, n) => $("label", { class: "option" }, inputs[n],
           $("span", { class: "letter" }, String.fromCharCode(65 + n)), $("span", { html: inlineMd(o) })))));
       collect = () => { const v = inputs.filter(x => x.checked).map(x => x.value); return v.length ? v : null; };
+      [].concat(st.response ?? []).forEach(v => { const x = inputs.find(x => x.value === v); if (x) x.checked = true; });   // 填回上次的答案
     } else if (item.type === "fill") {
       const prompt = $("div", { class: "prompt", html: md(item.prompt, true) });
       const inputs = [...prompt.querySelectorAll("[data-blank]")].map(slot => {
@@ -1091,6 +1250,7 @@ async function showCourse(unitId) {
         return inp;
       });
       body.append(prompt);
+      if (Array.isArray(st.response)) inputs.forEach((x, n) => { x.value = st.response[n] ?? ""; });                       // 填回上次的答案
       collect = () => inputs.every(x => !x.value.trim()) ? null : inputs.map(x => x.value.trim());
     } else {
       body.append($("div", { class: "prompt", html: md(item.prompt) }),
@@ -1126,14 +1286,13 @@ async function showCourse(unitId) {
               r.trap ? $("div", {}, $("div", { class: "hint" }, "你可能踩了这个坑："), trapBox(r.trap)) : null,
               $("div", { class: "hint" }, "改一改再检查；卡住了就要一级提示。")));
         el.classList.toggle("ok", r.ok);
+        if (r.ok) head.querySelector(".cp-ok")?.remove(), head.append($("span", { class: "cp-ok" }, "✓ 做对了"));
         renderBudget(); renderToc();
         if (r.section_passed && !wasPassed) {
-          // 整节通过：重画这一节，出现"费不费劲"和"下一节"
-          const keep = result.cloneNode(true);
-          renderSection();
-          lesson.querySelectorAll(".cp")[idx]?.querySelector(".cp-result")?.replaceChildren(...keep.childNodes);
+          // 整节通过：只加上"费不费劲"、换掉底部导航；不重画，答案和解析都留在原处
+          lesson.querySelector(".checkpoints")?.append(ratingRow(i));
+          lesson.querySelector(".sec-nav")?.replaceWith(navBar());
           lesson.querySelector(".rating")?.scrollIntoView({ behavior: "smooth", block: "center" });
-          return;
         }
       } catch (e) { fill(result, $("div", { class: "error" }, e.message)); }
       checkBtn.disabled = false; checkBtn.textContent = "检查";
@@ -1145,11 +1304,19 @@ async function showCourse(unitId) {
 
   function ratingRow(i) {
     const chosen = progress.ratings[String(i)];
-    const labels = ["很轻松", "有点费劲", "费劲", "很费劲", "非常费劲"];
+    const labels = ["很轻松", "比较轻松", "有点费劲", "很费劲", "非常费劲"];   // D-029：两头对称
     return $("div", { class: "rating" }, $("span", {}, "这一节费不费劲？"),
-      ...labels.map((l, n) => $("button", { class: chosen === n + 1 ? "on" : "", title: l, onclick: async () => {
-        progress = await post("load_rating", { section: i, rating: n + 1 });
-        lesson.querySelector(".rating")?.replaceWith(ratingRow(i));
+      ...labels.map((l, n) => $("button", { class: chosen === n + 1 ? "on" : "", title: l, onclick: async e => {
+        // 先亮起来再存；存失败要说出来，不能看起来选上了其实没记下（F-047）
+        e.currentTarget.parentElement.querySelectorAll("button").forEach(b => b.classList.toggle("on", b === e.currentTarget));
+        try {
+          progress = await post("load_rating", { section: i, rating: n + 1 });
+          lesson.querySelector(".rating")?.replaceWith(ratingRow(i));
+        } catch (err) {
+          const row = lesson.querySelector(".rating");
+          row?.querySelectorAll("button.on").forEach(b => b.classList.remove("on"));
+          row?.append($("span", { class: "warn" }, `没存上（${err.message}），再点一次`));
+        }
       } }, `${n + 1} ${l}`)),
       $("span", { class: "hint" }, "用来校准「预计负荷」准不准。"));
   }
@@ -1421,16 +1588,153 @@ async function showIndex() {
       : $("p", { class: "hint" }, "还没有课程页。对导师说「准备学 <单元>」生成一份。")),
     $("h2", { class: "index-h" }, "学习者模型"),
     $("div", { class: "unit-list" }, $("a", { href: "?kg=tools" }, $("b", {}, "知识树"),
-      $("div", { class: "hint" }, "每个知识点现在是什么状态、为什么、先修是什么"))),
+      $("div", { class: "hint" }, "每个知识点现在是什么状态、为什么、先修是什么")),
+      $("a", { href: "?panel=1" }, $("b", {}, "备课面板"),
+        $("div", { class: "hint" }, "每个单元学到哪、备课走到哪一步、agent 读到了什么；可以自己点「生成课程」（D-032）")),
+      $("a", { href: "?log=1" }, $("b", {}, "学习记录"),
+        $("div", { class: "hint" }, "每天学了多久、每次学了什么、做成了什么（D-027）")),
+      $("a", { href: "/flow" }, $("b", {}, "流程看板"),
+        $("div", { class: "hint" }, "实时看每条信息从哪来、记到哪、被谁用（D-024）"))),
     $("h2", { class: "index-h" }, "练习题"),
     $("div", { class: "lesson-list" }, list.length
       ? list.map(l => $("a", { href: `?lesson=${encodeURIComponent(l.ref)}` }, $("b", {}, l.title), $("div", { class: "hint" }, `${l.ref} · ${l.count} 题`)))
       : $("p", {}, "还没有课时。")));
 }
 
+// ---------- 学习记录（D-027）：每次学了多久、做成了什么，全是证据的投影 ----------
+async function showLog() {
+  const data = await api("/api/log");
+  document.title = "学习记录";
+  const fmt = m => m >= 60 ? `${Math.floor(m / 60)} 小时 ${Math.round(m % 60)} 分钟` : `${Math.round(m)} 分钟`;
+  const today = new Date(), iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const weekAgo = iso(new Date(today.getTime() - 6 * 86400000));
+  const week = data.days.filter(d => d.date >= weekAgo).reduce((a, d) => a + d.minutes, 0);
+  const todayMin = data.days.find(d => d.date === iso(today))?.minutes || 0;
+  fill(document.getElementById("top"),
+    $("h1", {}, "学习记录"),
+    $("div", { class: "source" }, "从你在这里的每次操作算出来；5 分钟没操作会暂停，回来时你说了算 · ",
+      $("a", { href: "/" }, "全部课程")),
+    $("div", { class: "log-sum" },
+      $("span", {}, "今天 ", $("b", {}, fmt(todayMin))),
+      $("span", {}, "近 7 天 ", $("b", {}, fmt(week))),
+      $("span", {}, "累计 ", $("b", {}, fmt(data.total_minutes)))));
+  const session = s => {
+    const did = [
+      s.passed?.length ? $("li", {}, "通过：", s.passed.join("、")) : null,
+      s.terms?.length ? $("li", {}, "学会的新词：", s.terms.join("、")) : null,
+      s.checkpoints?.attempts ? $("li", {}, `检查点：做对 ${s.checkpoints.ok}/${s.checkpoints.tried} 道，一共提交 ${s.checkpoints.attempts} 次`) : null,
+      s.questions?.length ? $("li", {}, `练习题 ${s.questions.length} 道：`,
+        s.questions.map(q => `${q.id.split("#")[1]} ${q.score == null ? "待批改" : Math.round(q.score * 100) + "%"}`).join("、")) : null,
+    ].filter(Boolean);
+    return $("div", { class: "log-s" },
+      $("div", {}, $("span", { class: "when" }, `${s.start.slice(11)}–${s.end.slice(11)}`), " · ", fmt(s.minutes), s.manual ? "（补录）" : ""),
+      $("div", { class: "what" }, Object.entries(s.by_label).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${fmt(v)}`).join("、")),
+      did.length ? $("ul", {}, did) : null);
+  };
+  document.getElementById("app").replaceChildren(data.days.length
+    ? $("div", {}, data.days.map(d => $("section", { class: "log-day" },
+        $("h3", {}, $("span", {}, d.date), $("span", { class: "hint" }, `合计 ${fmt(d.minutes)}`)),
+        d.sessions.slice().reverse().map(session))))
+    : $("p", { class: "hint" }, "还没有学习记录。打开一个课程页开始学吧。"));
+}
+
+// ---------- 备课面板（D-032）：课程清单 × 学习进度 × 备课流水线 × agent 看到的上下文 ----------
+const WHO = { learner: "该你", tutor: "等导师", agent: "agent 在跑" };
+const LAYER = { prompt: "prompt", context: "上下文", tools: "工具", model: "模型", runtime: "运行环境", eval: "评测" };
+async function showPanel() {
+  document.title = "备课面板";
+  document.getElementById("app").classList.add("wide");
+  let selected = params.get("id");
+  let timer = null;
+  fill(document.getElementById("top"),
+    $("h1", {}, "备课面板"),
+    $("div", { class: "source" }, "课程清单里每个单元：学到哪了、备课走到哪一步、在等谁；点一行看 agent 读到了什么 · ",
+      $("a", { href: "?log=1" }, "学习记录"), " · ", $("a", { href: "/" }, "全部课程")));
+  const list = $("div"), detail = $("div", { class: "pn-detail" });
+  document.getElementById("app").replaceChildren(list, detail);
+
+  const study = u => {
+    const s = { todo: "没开始", watching: "在学", done: `学完 ${u.done_on}` }[u.status] || u.status;
+    const bits = [s];
+    if (u.course) bits.push(`课程页 ${u.course.passed}/${u.course.sections} 节`);
+    u.quizzes.forEach(q => bits.push(`题 ${q.answered}/${q.questions}`));
+    return bits.join(" · ");
+  };
+
+  async function prepare(u) {
+    if (!confirm(`让 agent 给「${u.title}」备课？\n大约 12 分钟、$0.25。它只能打开课程清单里的网站、提交课程计划，不会在你电脑上执行命令。\n生成完之后由导师审阅、验证练习场、发布。`)) return;
+    try { await api("/api/panel/prepare", { unit: u.id }); } catch (e) { return alert(e.message); }
+    selected = u.id; load();
+  }
+
+  async function load() {
+    const data = await api("/api/panel");
+    const running = data.topics.some(t => t.units.some(u => u.prep.stage === "preparing"));
+    clearTimeout(timer);
+    if (running) timer = setTimeout(load, 15000);          // 有 agent 在跑：15 秒刷新一次
+    fill(list, data.topics.map(t => $("section", {},
+      $("h2", { class: "index-h" }, t.title),
+      $("table", { class: "pn-table" },
+        $("tr", {}, $("th", {}, "单元"), $("th", {}, "学习"), $("th", {}, "备课"), $("th", { class: "wide-only" }, "下一步"), $("th", {}, "")),
+        t.units.map(u => $("tr", { class: u.id === selected ? "on" : "" },
+          $("td", {}, $("a", { href: `?panel=1&id=${u.id}`, onclick: e => { e.preventDefault(); selected = u.id; load(); } }, $("b", {}, u.title)),
+            $("div", { class: "hint" }, u.id)),
+          $("td", {}, study(u), u.course ? $("div", {}, $("a", { href: `?unit=${u.id}` }, "课程页")) : null,
+            ...u.quizzes.map(q => $("div", {}, $("a", { href: `?lesson=${encodeURIComponent(q.ref)}` }, q.title)))),
+          $("td", {}, u.prep.label, $("span", { class: `pn-who ${u.prep.who}` }, WHO[u.prep.who] || u.prep.who),
+            u.prep.behind ? $("div", { class: "hint" }, "课程页上还是旧的那一版") : null,
+            u.prep.job_error ? $("div", { class: "error" }, "上次生成出错：" + u.prep.job_error) : null),
+          $("td", { class: "wide-only hint" }, u.prep.next),
+          $("td", {}, u.prep.stage === "preparing" ? $("span", { class: "hint" }, "生成中…")
+            : $("button", { onclick: () => prepare(u) }, u.prep.stage === "todo" ? "生成课程" : "重新生成"))))))));
+    if (selected) showUnit(selected);
+  }
+
+  async function showUnit(id) {
+    let d, ctx;
+    try { [d, ctx] = await Promise.all([api(`/api/panel/unit?id=${id}`), api(`/api/panel/context?id=${id}`)]); }
+    catch (e) { return fill(detail, $("p", { class: "error" }, e.message)); }
+    const show = v => typeof v === "string" ? v : JSON.stringify(v, null, 2);
+    const verdict = g => !g ? "—" : g.verdict || "—";
+    fill(detail,
+      $("h2", {}, `${id} · ${d.prep.label}`),
+      $("p", {}, $("b", {}, "下一步："), d.prep.next),
+      Object.keys(d.open_issues).length ? $("div", {}, $("h3", {}, "导师最近一次审阅里要改的（按层）"),
+        $("ul", { class: "pn-issues" }, Object.entries(d.open_issues).flatMap(([layer, xs]) =>
+          xs.map(x => $("li", {}, $("b", {}, `[${LAYER[layer] || layer}] `), x))))) : null,
+      $("h3", {}, `备课记录（${d.runs.length} 次）`),
+      d.runs.length ? $("table", { class: "pn-table" },
+        $("tr", {}, $("th", {}, "运行"), $("th", {}, "自动检查"), $("th", {}, "评分"), $("th", {}, "导师审阅"), $("th", {}, "练习场验证"), $("th", { class: "wide-only" }, "用时 / 花费")),
+        d.runs.map(r => $("tr", {},
+          $("td", {}, r.id.slice(0, 15), r.published ? $("div", { class: "hint" }, "★ 课程页在用这一版") : null,
+            $("div", { class: "hint" }, `版本 ${r.variant}`)),
+          $("td", {}, verdict(r.check), ...(r.check?.failed || []).map(x => $("div", { class: "hint" }, x))),
+          $("td", {}, r.judge?.avg ?? "—", r.judge?.top_issue ? $("div", { class: "hint" }, r.judge.top_issue) : null),
+          $("td", {}, verdict(r.review), r.review?.issues?.length ? $("ul", { class: "pn-issues hint" },
+            r.review.issues.map(i => $("li", {}, `[${LAYER[i.layer] || i.layer}] ${i.what}`))) : null),
+          $("td", {}, verdict(r.verify), ...(r.verify?.problems || []).map(x => $("div", { class: "hint" }, x))),
+          $("td", { class: "wide-only hint" }, `${r.minutes} 分钟 · $${r.cost_usd}`)))) : $("p", { class: "hint" }, "还没有备课记录。"),
+      $("h3", {}, "agent 备课时读到的输入"),
+      $("p", { class: "hint" }, ctx.last_run
+        ? (ctx.changed_since_last_run.length ? `和上次运行（${ctx.last_run}）比，这几块变了（橙框）：${ctx.changed_since_last_run.join("、")}` : `和上次运行（${ctx.last_run}）时一样。`)
+        : "这是下一次生成时 agent 会读到的内容。"),
+      ctx.blocks.map(b => $("details", { class: "pn-block" + (ctx.changed_since_last_run.includes(b.key) ? " changed" : "") },
+        $("summary", {}, $("b", {}, b.title), " ", $("span", { class: "hint" }, `来自 ${b.source}${b.editable ? "" : "（自动算，不能手改）"}`)),
+        $("div", { class: "hint" }, "怎么改：", b.how),
+        $("pre", {}, show(b.value)))),
+      $("details", { class: "pn-block" }, $("summary", {}, $("b", {}, "拼好的完整简报"), " ", $("span", { class: "hint" }, "上面各块填进任务模板之后，agent 实际读到的全文")),
+        $("pre", {}, ctx.brief)),
+      ctx.prompts.map(pr => $("details", { class: "pn-block" }, $("summary", {}, $("b", {}, pr.title), " ", $("span", { class: "hint" }, pr.source)),
+        $("pre", {}, pr.text))));
+  }
+
+  await load();
+}
+
 const UNIT = params.get("unit");
 const KG = params.get("kg");
-(UNIT ? showCourse(UNIT) : KG ? showKnowledge(KG) : REF ? showLesson(REF) : showIndex()).catch(e => {
+(UNIT ? showCourse(UNIT) : KG ? showKnowledge(KG) : REF ? showLesson(REF) : params.has("log") ? showLog()
+  : params.has("panel") ? showPanel() : showIndex()).catch(e => {
   document.getElementById("app").replaceChildren($("p", { class: "error" }, "加载失败：" + e.message));
 });
 </script>

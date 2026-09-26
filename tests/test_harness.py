@@ -98,6 +98,7 @@ def test_valid_plan_is_accepted_and_rendered(app, ws):
     ({"checkpoint": [checkpoint(type="fill", prompt="____ 和 ____", accept=[["a"]])]}, "____ 的个数"),
     ({"checkpoint": [checkpoint(type="essay")]}, "type 只能是 choice / fill / lab"),
     ({"checkpoint": [checkpoint(concept="tools.nope")]}, "不在知识图里"),
+    ({"checkpoint": [checkpoint(concept=None)]}, "缺少 concept"),                  # 评测要求必填，环境也要拦（D-025）
     ({"checkpoint": [checkpoint(type="lab", checks=[{"run": "ls", "desc": "有文件"}])]}, "要有 solution"),   # spec 规则
     ({"try": [{"command": "ls | grep x", "expect": "e"}]}, "还不认识的命令 grep, ls"),                    # spec 规则
 ])
@@ -132,6 +133,9 @@ def test_schema_includes_spec_fields(app):
     cp = submit["parameters"]["properties"]["plan"]["properties"]["parts"]["items"]["properties"]["sections"]["items"][
         "properties"]["checkpoint"]["items"]["properties"]
     assert cp["type"]["enum"] == ["choice", "fill", "lab"] and "solution" in cp
+    required = submit["parameters"]["properties"]["plan"]["properties"]["parts"]["items"]["properties"]["sections"][
+        "items"]["properties"]["checkpoint"]["items"]["required"]
+    assert "concept" in required
     assert "lab" in submit["parameters"]["properties"]["plan"]["properties"] and fetch["name"] == "fetch_url"
 
 

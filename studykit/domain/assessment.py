@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -70,6 +71,20 @@ class Lesson:
 
     def answer_key(self, qid: str) -> dict:
         return (self.key.get("answers") or {}).get(qid) or {}
+
+    @property
+    def exam(self) -> bool:
+        """单元题（quiz.yaml 带 unit:）默认整卷一次交（D-031）；`mode: practice` 可以改回一题一交。"""
+        return self.quiz.get("mode", "exam" if self.unit else "practice") == "exam"
+
+    def max_runs(self, q: dict) -> int | None:
+        """整卷模式下代码题最多运行几次测试（D-031）。None = 不限。"""
+        if not self.exam:
+            return None
+        return int(q.get("max_runs", self.quiz.get("max_runs", DEFAULT_MAX_RUNS)))
+
+
+DEFAULT_MAX_RUNS = 5
 
 
 # ---------- 纯检验器 ----------
@@ -146,6 +161,57 @@ class Short(PureChecker):
 
 
 CORE_CHECKERS = (Choice(), Fill(), Short())
+
+
+# ---------- 简答题的 LLM 批改（D-031）：拼 prompt、解析回复。调用模型在 app 层 ----------
+
+_WEIGHT = re.compile(r"[（(]\s*(\d*\.?\d+)\s*[）)]\s*$")
+
+
+def rubric_items(key: dict) -> list[dict]:
+    """rubric 每条末尾的（0.5）是这一条的满分；没写分值的是加分项（可替代其他条，总分封顶 1）。"""
+    out = []
+    for i, text in enumerate(key.get("rubric") or [], 1):
+        m = _WEIGHT.search(str(text))
+        out.append({"id": i, "text": str(text), "max": float(m[1]) if m else None})
+    return out
+
+
+def short_grading_prompt(q: dict, key: dict, response: str) -> str:
+    rubric = "\n".join(f"{it['id']}. {it['text']}" + ("" if it["max"] is not None else "（加分项：可以替代其他条目的分数，总分封顶 1）")
+                       for it in rubric_items(key))
+    fmt = json.dumps({"items": [{"id": 1, "score": 0.25, "why": "回答里哪句话对上了这条 / 缺了什么（引用学习者原话）"}],
+                      "feedback": "给学习者的一两句话：错在哪个概念、正确思路是什么"}, ensure_ascii=False)
+    return "\n\n".join([
+        "# 题目\n\n" + q["prompt"].strip(),
+        "# 评分标准（rubric）\n\n" + rubric,
+        "# 参考解析（只给你看，用来理解评分标准）\n\n" + str(key.get("explain") or "（无）").strip(),
+        "# 学习者的回答\n\n" + (response or "（空）"),
+        "# 输出格式\n\n只输出一个 JSON 对象，items 里每条评分标准一项（加分项没对上可以不写）：\n" + fmt,
+    ])
+
+
+def parse_short_grading(text: str, key: dict) -> dict:
+    """解析模型的批改。每条不能超过这一条的满分；总分 = 各条之和，封顶 1。格式不对就抛错（交给导师批改）。"""
+    m = re.search(r"\{.*\}", text or "", re.DOTALL)
+    if not m:
+        raise ValueError("批改模型没有输出 JSON")
+    data = json.loads(m.group(0))
+    items = {it["id"]: it for it in rubric_items(key)}
+    got = {int(x.get("id")): x for x in data.get("items") or [] if str(x.get("id", "")).isdigit()}
+    missing = [i for i, it in items.items() if it["max"] is not None and i not in got]
+    if missing:
+        raise ValueError(f"批改缺少这些评分条目：{missing}")
+    out = []
+    for i, x in sorted(got.items()):
+        if i not in items:
+            raise ValueError(f"没有第 {i} 条评分标准")
+        score, cap = x.get("score"), items[i]["max"]
+        if not isinstance(score, (int, float)) or score < 0 or (cap is not None and score > cap + 1e-9):
+            raise ValueError(f"第 {i} 条的分数不对：{score}（满分 {cap}）")
+        out.append({"id": i, "score": float(score), "max": cap, "why": str(x.get("why") or "")})
+    return {"score": round(min(1.0, sum(x["score"] for x in out)), 3), "items": out,
+            "feedback": str(data.get("feedback") or "")}
 
 
 # ---------- 课程页检查点：choice / fill（lab 型由学科 spec 提供） ----------

@@ -1,0 +1,470 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>流程看板 · cs-study</title>
+<style>
+:root {
+  --bg: #f6f5f1; --surface: #ffffff; --text: #1d1d1b; --muted: #6b6a65; --border: #e2e0d8; --faint: #ecebe5;
+  --accent: #3b5bdb; --accent-soft: #e8ecfd; --ok: #2b8a3e; --ok-soft: #e6f4ea;
+  --warn: #b35c00; --warn-soft: #fdf1e2; --bad: #c92a2a; --bad-soft: #fdeaea;
+  --actor: #5f5d57; --actor-soft: #efeee9;
+  --lane-prep: #fbf6ee; --lane-learn: #f1f4fd; --lane-model: #f0f7f1;
+  --mono: ui-monospace, "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+  --radius: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141414; --surface: #1d1d1d; --text: #e9e7e1; --muted: #9a988f; --border: #2f2e2b; --faint: #252523;
+    --accent: #8ea4ff; --accent-soft: #232a45; --ok: #69c47c; --ok-soft: #1c2e21;
+    --warn: #f0a44b; --warn-soft: #33261a; --bad: #ff7b7b; --bad-soft: #3a1f1f;
+    --actor: #b8b5ac; --actor-soft: #262624;
+    --lane-prep: #1c1915; --lane-learn: #171a22; --lane-model: #161c17;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #141414; --surface: #1d1d1d; --text: #e9e7e1; --muted: #9a988f; --border: #2f2e2b; --faint: #252523;
+  --accent: #8ea4ff; --accent-soft: #232a45; --ok: #69c47c; --ok-soft: #1c2e21;
+  --warn: #f0a44b; --warn-soft: #33261a; --bad: #ff7b7b; --bad-soft: #3a1f1f;
+  --actor: #b8b5ac; --actor-soft: #262624;
+  --lane-prep: #1c1915; --lane-learn: #171a22; --lane-model: #161c17;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.6 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+header { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 12px 20px;
+  border-bottom: 1px solid var(--border); background: var(--bg); position: sticky; top: 0; z-index: 3; }
+header h1 { font-size: 17px; margin: 0; }
+header a { color: var(--muted); text-decoration: none; font-size: 13px; }
+.live { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.live i { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.live.on i { background: var(--ok); box-shadow: 0 0 0 0 var(--ok); animation: beat 2s infinite; }
+@keyframes beat { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 60%, transparent); }
+  100% { box-shadow: 0 0 0 8px transparent; } }
+.counts { font-size: 12px; color: var(--muted); font-family: var(--mono); }
+.spacer { flex: 1; }
+button { font: inherit; font-size: 13px; padding: 5px 12px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text); cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+
+.layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 0; height: calc(100vh - 53px); }
+.stage { position: relative; overflow: auto; padding: 14px 10px 14px 16px; }
+svg { width: 100%; height: auto; display: block; min-width: 720px; }
+aside { border-left: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; background: var(--surface); }
+.filters { display: flex; gap: 6px; flex-wrap: wrap; padding: 12px 14px 10px; border-bottom: 1px solid var(--border); }
+.filters button { font-size: 12px; padding: 3px 10px; border-radius: 999px; }
+#log { list-style: none; margin: 0; padding: 6px 0; overflow-y: auto; flex: 1; min-height: 120px; }
+#log li { display: grid; grid-template-columns: 4px 1fr; gap: 10px; padding: 8px 14px; cursor: pointer; border-bottom: 1px solid var(--faint); }
+#log li:hover, #log li.sel { background: var(--accent-soft); }
+#log li .bar { border-radius: 2px; }
+#log li .t { font-size: 13px; }
+#log li .s { font-size: 12px; color: var(--muted); }
+#log li .ts { font-family: var(--mono); font-size: 11px; color: var(--muted); float: right; margin-left: 8px; }
+#log li.fresh { animation: fresh 1.6s ease-out; }
+@keyframes fresh { from { background: var(--warn-soft); } to { background: transparent; } }
+.empty { padding: 20px 16px; color: var(--muted); font-size: 13px; }
+#detail { border-top: 1px solid var(--border); padding: 12px 14px 16px; max-height: 48%; overflow-y: auto; font-size: 13px; }
+#detail h3 { font-size: 14px; margin: 0 0 4px; }
+#detail .muted { color: var(--muted); }
+#detail h4 { font-size: 12px; color: var(--muted); margin: 12px 0 4px; font-weight: 600; letter-spacing: .02em; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 2px 10px; font-family: var(--mono); font-size: 12px; }
+.kv .k { color: var(--muted); }
+.kv .v { word-break: break-all; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.chip { font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--faint); }
+.feeds { margin: 0; padding-left: 0; list-style: none; }
+.feeds li { margin: 3px 0; }
+.feeds b { font-weight: 600; }
+code { font-family: var(--mono); font-size: 12px; background: var(--faint); padding: 1px 5px; border-radius: 4px; }
+
+/* ---------- 画布 ---------- */
+.lane-bg { rx: 14; }
+.lane-title { font-size: 13px; font-weight: 700; fill: var(--muted); letter-spacing: .04em; }
+.col-title { font-size: 11px; fill: var(--muted); letter-spacing: .08em; }
+.edge { fill: none; stroke: var(--border); stroke-width: 1.5; }
+.edge.loop { stroke-dasharray: 5 5; }
+.edge.lit { stroke: var(--c, var(--accent)); stroke-width: 2.5; transition: stroke .3s; }
+.edge-label { font-size: 10.5px; fill: var(--muted); opacity: 0; transition: opacity .3s; pointer-events: none; }
+svg.hovering .edge-label.show, .edge-label.lit { opacity: 1; }
+.node { cursor: pointer; }
+.node .box { stroke-width: 1.5; transition: filter .3s, stroke-width .3s; }
+.node .label { font-size: 13px; font-weight: 600; fill: var(--text); }
+.node .sub { font-size: 10.5px; fill: var(--muted); }
+.node.actor .box { fill: var(--actor-soft); stroke: var(--actor); }
+.node.surface .box { fill: var(--accent-soft); stroke: var(--accent); }
+.node.store .box { fill: var(--warn-soft); stroke: var(--warn); }
+.node.projection .box { fill: var(--ok-soft); stroke: var(--ok); }
+.node .halo { fill: none; stroke: var(--c, var(--accent)); stroke-width: 0; opacity: 0; }
+.node.hit .halo { animation: halo 1.3s ease-out; }
+@keyframes halo { 0% { stroke-width: 10; opacity: .5; } 100% { stroke-width: 22; opacity: 0; } }
+.node.dim { opacity: .35; }
+.node.sel .box { stroke-width: 3; }
+.pulse { filter: drop-shadow(0 0 4px var(--c)); }
+.tip { font-size: 11.5px; pointer-events: none; }
+.tip rect { fill: var(--surface); stroke: var(--c, var(--border)); }
+.tip text { fill: var(--text); }
+.legend { font-size: 11px; fill: var(--muted); }
+
+@media (max-width: 980px) {
+  .layout { grid-template-columns: 1fr; height: auto; }
+  aside { border-left: none; border-top: 1px solid var(--border); height: 70vh; }
+  .stage { padding: 10px 0 10px 16px; }
+}
+@media (prefers-reduced-motion: reduce) { .node.hit .halo, #log li.fresh, .live.on i { animation: none; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>流程看板</h1>
+  <span class="live" id="live"><i></i><span>连接中…</span></span>
+  <span class="counts" id="counts"></span>
+  <span class="spacer"></span>
+  <button id="replay" title="把最近的记录按时间顺序重新流一遍">▶ 回放最近记录</button>
+  <button id="pause">暂停动画</button>
+  <a href="/">← 回到答题页</a>
+</header>
+<div class="layout">
+  <div class="stage"><svg id="canvas" viewBox="0 0 1240 740" role="img" aria-label="学习环境的数据流"></svg></div>
+  <aside>
+    <div class="filters" id="filters"></div>
+    <ul id="log"></ul>
+    <div id="detail"><p class="muted">点一条记录：看它<b>记了什么</b>、<b>被谁用</b>。<br>点图上的一个节点：看它是什么、<b>哪些信息喂给它</b>。</p></div>
+  </aside>
+</div>
+<script>
+"use strict";
+// 布局：三条泳道（生成课程 / 学习与答题 / 评估与反馈）。节点位置只在这里，节点的含义来自服务器（/api/flow/graph）。
+const POS = {
+  tutor: [90, 78], cli: [90, 196], agent: [310, 78], context: [310, 196], tools: [520, 78], runs: [730, 78],
+  judge: [730, 196], grades: [940, 110], report: [940, 222], gate: [1140, 78], plans: [1140, 196],
+  learner: [90, 372], course_page: [310, 327], quiz: [310, 417], evidence: [580, 372],
+  system: [90, 612], mastery: [420, 566], node_state: [640, 566], timeline: [420, 672], progress: [640, 672],
+  course_eval: [880, 618],
+};
+const LANES = [["prep", 16, 264, "var(--lane-prep)"], ["learn", 274, 470, "var(--lane-learn)"], ["model", 480, 712, "var(--lane-model)"]];
+const LANE_COLOR = { prep: "var(--warn)", learn: "var(--accent)", model: "var(--ok)" };
+// 基础连线：每种记录会走的路径 + 计算之间的依赖（服务器给）+ 证据流向每个计算
+const BASE = [["tutor", "cli"], ["learner", "course_page"], ["learner", "quiz"], ["course_page", "evidence"], ["quiz", "evidence"],
+  ["cli", "evidence"], ["system", "evidence"], ["tutor", "context"], ["agent", "tools"], ["tools", "runs"], ["runs", "judge"],
+  ["judge", "grades"], ["runs", "grades"], ["cli", "grades"], ["cli", "gate"],
+  ...["mastery", "node_state", "timeline", "progress", "course_eval"].map(p => ["evidence", p])];
+const LOOPS = new Set(["node_state>context", "context>agent", "plans>course_page", "course_eval>grades"]);
+const W = 150, H = 50;
+const NS = "http://www.w3.org/2000/svg";
+const svg = document.getElementById("canvas");
+const $ = (sel) => document.querySelector(sel);
+const el = (tag, attrs = {}, ...kids) => {
+  const e = tag.includes(":") || ["svg", "g", "rect", "path", "text", "circle", "tspan", "ellipse"].includes(tag)
+    ? document.createElementNS(NS, tag) : document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "text") e.textContent = v; else if (k.startsWith("on")) e.addEventListener(k.slice(2), v); else if (v != null) e.setAttribute(k, v);
+  }
+  for (const k of kids) if (k != null) e.append(k.nodeType ? k : document.createTextNode(k));
+  return e;
+};
+
+let GRAPH, paused = false, filter = "all";
+const edges = new Map();        // "a>b" → {path, label}
+const nodes = new Map();        // id → g
+const events = [];              // 已收到的记录（新的在前）
+const counts = { evidence: 0, run: 0, grade: 0, publication: 0 };
+
+// ---------- 画图 ----------
+
+function anchor(a, b) {
+  // 从 a 的边框出发指向 b：水平距离大就走左右两边，否则走上下两边。
+  const [ax, ay] = POS[a], [bx, by] = POS[b];
+  const dx = bx - ax, dy = by - ay;
+  if (Math.abs(dx) > Math.abs(dy) * 1.2) {
+    const s = Math.sign(dx);
+    return [[ax + s * W / 2, ay], [bx - s * W / 2, by], "h"];
+  }
+  const s = Math.sign(dy) || 1;
+  return [[ax, ay + s * H / 2], [bx, by - s * H / 2], "v"];
+}
+
+function curve(a, b) {
+  const [[x1, y1], [x2, y2], dir] = anchor(a, b);
+  if (dir === "h") { const m = (x2 - x1) / 2; return `M${x1},${y1} C${x1 + m},${y1} ${x2 - m},${y2} ${x2},${y2}`; }
+  const m = (y2 - y1) / 2; return `M${x1},${y1} C${x1},${y1 + m} ${x2},${y2 - m} ${x2},${y2}`;
+}
+
+function edge(a, b, label = "") {
+  const key = `${a}>${b}`;
+  if (edges.has(key) || !POS[a] || !POS[b]) return edges.get(key);
+  const d = curve(a, b);
+  const path = el("path", { d, class: "edge" + (LOOPS.has(key) ? " loop" : ""), "marker-end": "url(#arrow)" });
+  svg.querySelector("#edges").append(path);
+  let text = null;
+  if (label) {
+    const p = path.getPointAtLength(path.getTotalLength() / 2);
+    text = el("text", { x: p.x, y: p.y - 6, "text-anchor": "middle", class: "edge-label", text: label });
+    text.dataset.a = a; text.dataset.b = b;
+    svg.querySelector("#labels").append(text);
+  }
+  const e = { path, text };
+  edges.set(key, e);
+  return e;
+}
+
+function draw() {
+  svg.innerHTML = "";
+  svg.append(el("defs", {}, el("marker", { id: "arrow", viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto-start-reverse" },
+    el("path", { d: "M0,0 L10,5 L0,10 z", fill: "var(--muted)" }))));
+  for (const [id, y1, y2, fill] of LANES) {
+    svg.append(el("rect", { x: 6, y: y1, width: 1228, height: y2 - y1, fill, class: "lane-bg", rx: 14 }));
+    svg.append(el("text", { x: 22, y: y1 + 20, class: "lane-title", text: GRAPH.lanes[id] }));
+  }
+  svg.append(el("g", { id: "edges" }), el("g", { id: "labels" }), el("g", { id: "nodes" }), el("g", { id: "fx" }));
+  for (const [a, b] of BASE) edge(a, b);
+  for (const l of GRAPH.links) edge(l.from, l.to, l.label);
+  for (const [id, n] of Object.entries(GRAPH.nodes)) {
+    if (!POS[id]) continue;
+    const [x, y] = POS[id];
+    const g = el("g", { class: `node ${n.kind}`, transform: `translate(${x - W / 2},${y - H / 2})`, tabindex: 0,
+      onclick: () => showNode(id), onmouseenter: () => hover(id, true), onmouseleave: () => hover(id, false) });
+    g.append(el("rect", { class: "halo", x: 0, y: 0, width: W, height: H, rx: n.kind === "actor" ? 25 : 10 }));
+    if (n.kind === "store") {
+      // 存储画成"圆柱"：顶上一道弧线
+      g.append(el("rect", { class: "box", x: 0, y: 0, width: W, height: H, rx: 10 }));
+      g.append(el("path", { d: `M8,9 Q${W / 2},19 ${W - 8},9`, fill: "none", stroke: "var(--warn)", "stroke-width": 1.2, opacity: .7 }));
+    } else {
+      g.append(el("rect", { class: "box", x: 0, y: 0, width: W, height: H, rx: n.kind === "actor" ? 25 : 10 }));
+    }
+    g.append(el("text", { class: "label", x: W / 2, y: 22, "text-anchor": "middle", text: n.label }));
+    g.append(el("text", { class: "sub", x: W / 2, y: 38, "text-anchor": "middle", text: n.sub }));
+    g.append(el("title", { text: n.desc }));
+    svg.querySelector("#nodes").append(g);
+    nodes.set(id, g);
+  }
+  // 图例
+  const legend = [["actor", "谁"], ["surface", "从哪进来"], ["store", "记到哪（只追加）"], ["projection", "被谁用（现场算，不存）"]];
+  legend.forEach(([k, t], i) => {
+    const gx = 700 + i * 132, gy = 732;
+    const g = el("g", { class: `node ${k}`, transform: `translate(${gx},${gy - 9})` });
+    g.append(el("rect", { class: "box", width: 14, height: 11, rx: 3 }));
+    svg.append(g, el("text", { x: gx + 20, y: gy, class: "legend", text: t }));
+  });
+  svg.append(el("text", { x: 22, y: 732, class: "legend", text: "虚线 = 回环：评估的结果喂回下一次生成" }));
+}
+
+function hover(id, on) {
+  svg.classList.toggle("hovering", on);
+  for (const t of svg.querySelectorAll(".edge-label")) t.classList.toggle("show", on && (t.dataset.a === id || t.dataset.b === id));
+}
+
+// ---------- 动画 ----------
+
+const queue = [];
+let running = false;
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+function flash(id, color) {
+  const g = nodes.get(id);
+  if (!g) return;
+  g.style.setProperty("--c", color);
+  g.classList.remove("hit"); void g.getBBox(); g.classList.add("hit");
+}
+
+function tip(id, text, color, ms = 2600) {
+  if (!POS[id] || !text) return;
+  const [x, y] = POS[id];
+  const g = el("g", { class: "tip", style: `--c:${color}` });
+  const t = el("text", { x: 0, y: 0, text: text.length > 34 ? text.slice(0, 33) + "…" : text });
+  g.append(t);
+  svg.querySelector("#fx").append(g);
+  const w = t.getComputedTextLength() + 16;
+  const tx = Math.min(1230 - w, Math.max(8, x - w / 2)), ty = y - H / 2 - 30;
+  g.insertBefore(el("rect", { x: tx, y: ty, width: w, height: 22, rx: 11 }), t);
+  t.setAttribute("x", tx + 8); t.setAttribute("y", ty + 15);
+  g.animate([{ opacity: 0, transform: "translateY(4px)" }, { opacity: 1, transform: "none" }], { duration: 250, fill: "forwards" });
+  setTimeout(() => g.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 400, fill: "forwards" }).onfinish = () => g.remove(), ms);
+}
+
+function travel(a, b, color, ms, r = 6) {
+  const e = edge(a, b);
+  if (!e) return Promise.resolve();
+  e.path.style.setProperty("--c", color);
+  e.path.classList.add("lit");
+  e.text && e.text.classList.add("lit");
+  const len = e.path.getTotalLength();
+  const start = e.path.getPointAtLength(0);          // 先放在起点，否则第一帧会画在左上角
+  const dot = el("circle", { r, cx: start.x, cy: start.y, fill: color, class: "pulse", style: `--c:${color}` });
+  svg.querySelector("#fx").append(dot);
+  return new Promise(done => {
+    const t0 = performance.now();
+    const step = (now) => {
+      const k = Math.min(1, (now - t0) / ms), ease = k < .5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+      const p = e.path.getPointAtLength(len * ease);
+      dot.setAttribute("cx", p.x); dot.setAttribute("cy", p.y);
+      if (k < 1) return requestAnimationFrame(step);
+      dot.remove();
+      setTimeout(() => { e.path.classList.remove("lit"); e.text && e.text.classList.remove("lit"); }, 900);
+      done();
+    };
+    requestAnimationFrame(step);
+  });
+}
+
+async function animate(ev) {
+  const color = LANE_COLOR[ev.lane] || "var(--accent)";
+  const fast = queue.length > 6;                       // 一次来很多条时加快，不要排长队
+  const seg = fast ? 220 : 480;
+  flash(ev.path[0], color);
+  for (let i = 0; i + 1 < ev.path.length; i++) {
+    await travel(ev.path[i], ev.path[i + 1], color, seg);
+    flash(ev.path[i + 1], color);
+  }
+  const store = ev.path[ev.path.length - 1];
+  tip(store, ev.title, color);
+  await Promise.all(ev.feeds.map(async f => {
+    await travel(store, f.node, "var(--ok)", fast ? 260 : 620, 4.5);
+    flash(f.node, "var(--ok)");
+    tip(f.node, f.fields, "var(--ok)", fast ? 1600 : 3000);
+  }));
+  await sleep(fast ? 80 : 350);
+}
+
+async function pump() {
+  if (running) return;
+  running = true;
+  while (queue.length) {
+    if (paused) { await sleep(200); continue; }
+    const ev = queue.shift();
+    if (filter === "all" || ev.lane === filter) await animate(ev);
+  }
+  running = false;
+}
+
+// ---------- 记录列表和详情 ----------
+
+const hhmm = (ts) => ts.slice(5, 10).replace("-", "/") + " " + ts.slice(11, 19);
+
+function addEvent(ev, { animate: anim = true, fresh = true } = {}) {
+  events.unshift(ev);
+  counts[ev.kind] = (counts[ev.kind] || 0) + 1;
+  renderCounts();
+  if (filter === "all" || ev.lane === filter) {
+    const li = logItem(ev, fresh);
+    $("#log").prepend(li);
+    $(".empty")?.remove();
+  }
+  if (anim) { queue.push(ev); pump(); }
+}
+
+function logItem(ev, fresh) {
+  const li = el("li", { class: fresh ? "fresh" : "", onclick: () => { showEvent(ev); select(li); } },
+    el("span", { class: "bar", style: `background:${LANE_COLOR[ev.lane]}` }),
+    el("div", {}, el("span", { class: "ts", text: hhmm(ev.ts) }), el("div", { class: "t", text: ev.title }),
+      el("div", { class: "s", text: ev.subtitle || "" })));
+  return li;
+}
+
+function select(li) { for (const x of $("#log").children) x.classList.toggle("sel", x === li); }
+
+function renderLog() {
+  const log = $("#log");
+  log.innerHTML = "";
+  const shown = events.filter(e => filter === "all" || e.lane === filter);
+  if (!shown.length) log.append(el("li", { class: "empty", text: "还没有记录。去答一道题、打开一节课，或者在命令行里批改——这里会实时出现。" }));
+  for (const e of shown) log.append(logItem(e, false));
+}
+
+function renderCounts() {
+  $("#counts").textContent = `证据 ${counts.evidence} · 运行 ${counts.run} · 评分 ${counts.grade} · 发布 ${counts.publication}`;
+}
+
+function label(id) { return GRAPH.nodes[id]?.label || id; }
+
+function showEvent(ev) {
+  for (const [id, g] of nodes) g.classList.toggle("dim", !ev.path.includes(id) && !ev.feeds.some(f => f.node === id));
+  const kv = el("div", { class: "kv" });
+  for (const [k, v] of Object.entries(ev.recorded)) {
+    kv.append(el("span", { class: "k", text: k }), el("span", { class: "v", text: typeof v === "object" ? JSON.stringify(v) : String(v) }));
+  }
+  const path = el("div", { class: "chips" });
+  ev.path.forEach((p, i) => { if (i) path.append(" → "); path.append(el("span", { class: "chip", text: label(p) })); });
+  const feeds = el("ul", { class: "feeds" });
+  for (const f of ev.feeds) feeds.append(el("li", {}, el("b", { text: label(f.node) }), "：", f.fields));
+  if (!ev.feeds.length) feeds.append(el("li", { class: "muted", text: "没有计算读它（只作审计记录）" }));
+  $("#detail").replaceChildren(
+    el("h3", { text: ev.title }), el("div", { class: "muted", text: `${hhmm(ev.ts)} · ${ev.actor}` }),
+    el("h4", { text: "路径" }), path,
+    el("h4", { text: "记了什么" }), kv,
+    el("h4", { text: "被谁用（读了哪些字段）" }), feeds,
+    el("p", {}, el("button", { onclick: () => { queue.push(ev); pump(); }, text: "▶ 再流一遍" }),
+      " ", el("button", { onclick: clearDim, text: "取消高亮" })));
+}
+
+function clearDim() { for (const g of nodes.values()) g.classList.remove("dim", "sel"); }
+
+function showNode(id) {
+  const n = GRAPH.nodes[id];
+  clearDim();
+  nodes.get(id)?.classList.add("sel");
+  const fed = GRAPH.verbs.flatMap(v => v.feeds.filter(f => f.node === id).map(f => ({ v, f })));
+  const inbound = GRAPH.links.filter(l => l.to === id), outbound = GRAPH.links.filter(l => l.from === id);
+  const list = el("ul", { class: "feeds" });
+  for (const { v, f } of fed) {
+    list.append(el("li", {}, el("b", { text: v.title || v.name }), " ", el("code", { text: v.name + (f.object ? `(${f.object})` : "") }),
+      v.spec !== "core" ? " " : null, v.spec !== "core" ? el("span", { class: "chip", text: v.spec }) : null, "：", f.fields));
+  }
+  if (id === "timeline") list.append(el("li", {}, "学习者自己做的每一件事（导师的批改、观察和系统规则不算），规则见 ", el("code", { text: "timeline.counts_as_study" })));
+  for (const l of inbound) list.append(el("li", {}, el("b", { text: label(l.from) }), l.label ? `：${l.label}` : ""));
+  const out = el("ul", { class: "feeds" });
+  for (const l of outbound) out.append(el("li", {}, el("b", { text: label(l.to) }), l.label ? `：${l.label}` : ""));
+  const recent = events.filter(e => e.path.includes(id) || e.feeds.some(f => f.node === id)).length;
+  $("#detail").replaceChildren(
+    el("h3", { text: `${n.label} · ${n.sub}` }), el("p", { text: n.desc }),
+    n.code ? el("div", { class: "muted" }, "代码：", el("code", { text: "studykit/" + n.code })) : null,
+    fed.length || inbound.length || id === "timeline" ? el("h4", { text: "哪些信息喂给它" }) : null,
+    fed.length || inbound.length || id === "timeline" ? list : null,
+    outbound.length ? el("h4", { text: "它的结果被谁用" }) : null, outbound.length ? out : null,
+    el("p", { class: "muted", text: `已收到的记录里有 ${recent} 条经过它。` }));
+}
+
+function buildFilters() {
+  const box = $("#filters");
+  const opts = [["all", "全部"], ...Object.entries(GRAPH.lanes)];
+  for (const [id, t] of opts) {
+    box.append(el("button", { class: id === filter ? "on" : "", "data-f": id, text: t, onclick: () => {
+      filter = id;
+      for (const b of box.children) b.classList.toggle("on", b.dataset.f === id);
+      renderLog();
+    } }));
+  }
+}
+
+// ---------- 数据：先拿最近的历史，再用 SSE 接着收新的 ----------
+
+async function getJSON(url) { const r = await fetch(url); if (!r.ok) throw new Error(url); return r.json(); }
+
+function connect(cursor) {
+  const live = $("#live");
+  const src = new EventSource(`/api/flow/stream?cursor=${encodeURIComponent(JSON.stringify(cursor))}`);
+  src.onopen = () => { live.className = "live on"; live.lastChild.textContent = "实时"; };
+  src.onerror = () => { live.className = "live"; live.lastChild.textContent = "重连中…"; };
+  src.addEventListener("flow", (m) => addEvent(JSON.parse(m.data)));
+}
+
+async function main() {
+  GRAPH = await getJSON("/api/flow/graph");
+  draw();
+  buildFilters();
+  const hist = await getJSON("/api/flow?limit=60");
+  for (const e of hist.events) addEvent(e, { animate: false, fresh: false });
+  renderLog();
+  connect(hist.cursor);
+  $("#pause").onclick = () => { paused = !paused; $("#pause").textContent = paused ? "继续动画" : "暂停动画"; $("#pause").classList.toggle("on", paused); };
+  $("#replay").onclick = () => {
+    const recent = events.slice(0, 20).reverse().filter(e => filter === "all" || e.lane === filter);
+    queue.push(...recent); pump();
+  };
+}
+main().catch(e => { $("#detail").textContent = "加载失败：" + e.message; });
+</script>
+</body>
+</html>

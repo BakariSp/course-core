@@ -11,14 +11,15 @@ from pathlib import Path
 
 from studykit.app.ports import Spec
 from studykit.domain.assessment import CheckpointResult
-from studykit.domain.evidence import Verb
+from studykit.domain.evidence import Feed, Verb
 from studykit.specs.cs_practice import plan_rules
 from studykit.specs.cs_practice.code import Code
 from studykit.specs.cs_practice.practice import BashPractice
 from studykit.specs.cs_practice.terminal import Terminal
 
 NAME = "cs-practice"
-VERBS = (Verb("ran_tests", NAME, ("question",), ("code", "passed", "total"), ("learner",)),)
+VERBS = (Verb("ran_tests", NAME, ("question",), ("code", "passed", "total"), ("learner",), title="跑测试",
+              feeds=(Feed("mastery", "跑了几次才全过（练习过程，不算分）"),)),)
 
 
 def spec(lab_root: Path, state_root: Path, bash_path: str | None = None) -> Spec:

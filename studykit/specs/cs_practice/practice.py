@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import queue
+import re
 import shutil
 import subprocess
 import sys
@@ -276,6 +277,7 @@ class Shell:
         self.lock = threading.Lock()
         self.proc: subprocess.Popen | None = None
         self.q: queue.Queue = queue.Queue()
+        self.seq = 0
 
     def _environ(self) -> dict:
         env = dict(os.environ)
@@ -292,8 +294,8 @@ class Shell:
         self.q = queue.Queue()
         threading.Thread(target=self._pump, args=(self.proc, self.q), daemon=True).start()
         # 把 $LAB 换成 bash 自己的路径写法（/c/Users/...），再回到上次所在的目录。
-        self._send('LAB="$(cygpath -u "$LAB" 2>/dev/null || echo "$LAB")"; export LAB; cd "$LAB"')
-        _, rc, cwd = self._read(TIMEOUT)
+        seq = self._send('LAB="$(cygpath -u "$LAB" 2>/dev/null || echo "$LAB")"; export LAB; cd "$LAB"')
+        _, rc, cwd = self._read(seq, TIMEOUT)
         # WHY: 练习场在 bash 里的路径要问 bash 自己（Git Bash 会把临时目录映射成 /tmp，自己拼会拼错）。
         if rc is not None and cwd:
             self.lab_path = cwd
@@ -313,26 +315,35 @@ class Shell:
                 return
             q.put(chunk)
 
-    def _send(self, command: str) -> None:
+    def _send(self, command: str) -> int:
+        """写入一条命令，返回它的编号；_read 只认这个编号的结束标记。"""
         cmd_file = self.env.state_dir(self.unit) / "cmd.sh"
         with cmd_file.open("w", encoding="utf-8", newline="\n") as f:
             f.write(command + "\n")
         posix = cmd_file.as_posix()
-        line = f'. "{posix}" </dev/null 2>&1; printf "\\n{MARK}%s:%s\\n" "$?" "$PWD"\n'
+        self.seq += 1
+        line = f'. "{posix}" </dev/null 2>&1; printf "\\n{MARK}{self.seq}:%s:%s\\n" "$?" "$PWD"\n'
         self.proc.stdin.write(line.encode("utf-8"))
         self.proc.stdin.flush()
+        return self.seq
 
-    def _read(self, timeout: float) -> tuple[str | None, int | None, str | None]:
-        """读到结束标记为止。返回（输出, 退出码, 当前目录）；超时或进程退出时退出码为 None。"""
-        buf, deadline, mark = b"", time.monotonic() + timeout, MARK.encode()
+    def _read(self, seq: int, timeout: float) -> tuple[str | None, int | None, str | None]:
+        """读到编号为 seq 的结束标记为止。返回（输出, 退出码, 当前目录）；超时或进程退出时退出码为 None。
+
+        WHY: 结束标记必须独占一行、退出码是数字——set -x 会把 printf 那一行原样追踪出来
+        （格式里的 \\n 是两个字符，退出码是 %s），不能把它当成真标记。
+        按编号认标记：上一条命令的残留（超时后晚到的输出）丢掉，下一条命令才不会错位。
+        """
+        buf, deadline = b"", time.monotonic() + timeout
+        end = re.compile(rb"\n" + re.escape(MARK.encode()) + rb"(\d+):(\d+):([^\n]*)\n")
         while True:
-            if mark in buf:
-                head, tail = buf.split(mark, 1)
-                if b"\n" in tail:
-                    rc, _, cwd = tail.split(b"\n", 1)[0].decode("utf-8", "replace").partition(":")
-                    text = head.decode("utf-8", "replace")
-                    # 结尾的换行去掉：一个是命令自己的，一个是结束标记前补的（没换行结尾的输出也能和标记分开）。
-                    return text.rstrip("\n"), int(rc or 0), cwd
+            ends = list(end.finditer(buf))
+            mine = next((m for m in ends if int(m.group(1)) == seq), None)
+            if mine:
+                start = max((m.end() for m in ends if m.end() <= mine.start()), default=0)
+                text = self._untrace(buf[start:mine.start()].decode("utf-8", "replace"))
+                # 结尾的换行去掉：一个是命令自己的，一个是结束标记前补的（没换行结尾的输出也能和标记分开）。
+                return text.rstrip("\n"), int(mine.group(2)), mine.group(3).decode("utf-8", "replace")
             try:
                 chunk = self.q.get(timeout=max(0.05, deadline - time.monotonic()))
             except queue.Empty:
@@ -343,12 +354,25 @@ class Shell:
             if len(buf) > MAX_OUTPUT * 4:
                 buf = buf[-MAX_OUTPUT * 4:]
 
+    def _untrace(self, text: str) -> str:
+        """去掉 set -x 追踪出来的练习场自己的两行（source cmd.sh、printf 结束标记）；学习者命令的追踪留着。
+
+        WHY: 命令是 source 进来的，多了一层，bash 会把追踪前缀写成 `++`。只有确实在追踪时
+        （能看到 source 或 printf 那一行的追踪）才去掉一个 `+`，和学习者在 Git Bash 里看到的一样。
+        """
+        posix = (self.env.state_dir(self.unit) / "cmd.sh").as_posix()
+        lines = text.split("\n")
+        ours = [line.startswith("+") and (MARK in line or line.rstrip("'\"").endswith(posix)) for line in lines]
+        tracing = any(ours)
+        return "\n".join(line[1:] if tracing and line.startswith("++") else line
+                         for o, line in zip(ours, lines) if not o)
+
     def run(self, command: str) -> dict:
         with self.lock:
             if self.proc is None or self.proc.poll() is not None:
                 self._start()
-            self._send(command)
-            out, rc, cwd = self._read(TIMEOUT)
+            seq = self._send(command)
+            out, rc, cwd = self._read(seq, TIMEOUT)
             out = out.replace((self.env.state_dir(self.unit) / "cmd.sh").as_posix(), "bash")
             if len(out) > MAX_OUTPUT:
                 out = out[:MAX_OUTPUT] + f"\n…（输出太长，只显示前 {MAX_OUTPUT} 字）"

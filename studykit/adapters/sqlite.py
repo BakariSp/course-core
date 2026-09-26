@@ -142,6 +142,11 @@ MIGRATIONS = [
     CREATE TRIGGER grade_no_delete BEFORE DELETE ON grade BEGIN SELECT RAISE(ABORT, 'grades are append-only'); END;
     CREATE TRIGGER variant_no_update BEFORE UPDATE ON variant BEGIN SELECT RAISE(ABORT, 'variants are immutable'); END;
     """,
+    # D-031：简答题先由 LLM 批，导师可以再批一次覆盖它。每个批改者对一条作答仍然只能批一次。
+    """
+    DROP INDEX one_grade_per_answer;
+    CREATE UNIQUE INDEX one_grade_per_grader ON evidence(caused_by, actor_id) WHERE verb = 'graded';
+    """,
 ]
 
 
@@ -298,6 +303,9 @@ class SqliteStore:
                       (g.id, g.ts, g.run, g.grader, g.grader_version, g.actor, g.score, g.verdict, _j(g.dims),
                        _j(g.issues), _j(g.refs), _j(g.detail)))
 
+    def grade(self, grade_id: str) -> Grade | None:
+        return next(iter(self._grades("g.id = ?", [grade_id])), None)
+
     def grades(self, run_id: str | None = None, agent: str | None = None) -> list[Grade]:
         where, args = ["1 = 1"], []
         if run_id:
@@ -306,12 +314,44 @@ class SqliteStore:
         if agent:
             where.append("r.agent = ?")
             args.append(agent)
+        return self._grades(" AND ".join(where), args)
+
+    def _grades(self, where: str, args: list) -> list[Grade]:
         with self._conn() as c:
             return [Grade(r["id"], r["ts"], r["run"], r["grader"], r["grader_version"], r["actor"], r["score"],
                           r["verdict"], json.loads(r["dims"]), json.loads(r["issues"]), json.loads(r["refs"]),
                           json.loads(r["detail"]))
-                    for r in c.execute(f"SELECT g.* FROM grade g JOIN run r ON r.id = g.run WHERE {' AND '.join(where)}"
+                    for r in c.execute(f"SELECT g.* FROM grade g JOIN run r ON r.id = g.run WHERE {where}"
                                        " ORDER BY g.ts, g.rowid", args)]
+
+    # ---------- 流程看板（D-024） ----------
+
+    def activity(self, after: dict | None, limit: int = 60) -> tuple[list[tuple[str, object]], dict]:
+        """每张表用自己的自增序号当游标：别的进程（命令行、agent）写进来的新行也能按顺序拿到。"""
+        after = after or {}
+        tables = {"evidence": "SELECT seq AS k, id FROM evidence", "run": "SELECT rowid AS k, id FROM run",
+                  "grade": "SELECT rowid AS k, id FROM grade", "publication": "SELECT seq AS k, seq AS id FROM publication"}
+        found, cursor = [], {}
+        with self._conn() as c:
+            for kind, sql in tables.items():
+                cursor[kind] = c.execute(f"SELECT coalesce(max(k), 0) FROM ({sql})").fetchone()[0]
+                if kind in after:
+                    rows = c.execute(f"{sql} WHERE k > ? ORDER BY k LIMIT ?", (int(after[kind]), limit)).fetchall()
+                else:
+                    rows = c.execute(f"SELECT * FROM ({sql} ORDER BY k DESC LIMIT ?) ORDER BY k", (limit,)).fetchall()
+                found += [(kind, r["id"]) for r in rows]
+                if rows:
+                    cursor[kind] = max(r["k"] for r in rows) if kind in after else cursor[kind]
+            pubs = {r["seq"]: dict(r) for r in c.execute("SELECT * FROM publication")}
+        items = []
+        for kind, key in found:
+            obj = (self.get(key) if kind == "evidence" else self.run(key) if kind == "run" else
+                   self.grade(key) if kind == "grade" else pubs.get(key))
+            if obj is not None:
+                ts = obj["ts"] if kind == "publication" else (obj.started if kind == "run" else obj.ts)
+                items.append((ts, kind, obj))
+        items.sort(key=lambda x: x[0])
+        return [(k, o) for _, k, o in items[-limit:]], cursor
 
 
 def _j(v) -> str:

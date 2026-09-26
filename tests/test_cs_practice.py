@@ -185,6 +185,21 @@ def test_lab_terminal_keeps_state_and_warns_outside(app, unit, tmp_path):
 
 
 @needs_bash
+def test_lab_terminal_survives_set_x(app, unit):
+    """set -x 会把练习场自己加的结束标记也追踪出来；不能把它当成真标记，后面的命令也不能错位。"""
+    app.course.lab(unit, "open", 0)
+    on = app.course.lab(unit, "run", 0, "set -x")
+    assert on["rc"] == 0 and "STUDY_DONE" not in on["output"]
+    r = app.course.lab(unit, "run", 0, "echo logs/*.log")
+    lines = r["output"].splitlines()
+    assert r["rc"] == 0 and "+ echo logs/app.log" in lines                # 学习者要看的追踪留着
+    assert "logs/app.log" in lines
+    assert "STUDY_DONE" not in r["output"] and "cmd.sh" not in r["output"] and ". bash" not in r["output"]
+    assert app.course.lab(unit, "run", 0, "set +x")["output"] == "+ set +x"   # 和 Git Bash 里看到的一样
+    assert app.course.lab(unit, "run", 0, "echo hi")["output"] == "hi"   # 每条命令拿到的是自己的输出
+
+
+@needs_bash
 def test_lab_checkpoint_restore_and_fill(app, unit, tmp_path):
     app.course.record(unit, 1, "open")                                   # 第一次打开第 2 节时存快照
     assert not app.course.check(unit, 1, 0, None)["ok"]

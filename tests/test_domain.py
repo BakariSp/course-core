@@ -7,7 +7,7 @@ from studykit.domain import course_eval, knowledge, mastery, plan, plan_check, p
 from studykit.domain.assessment import CORE_CHECKERS, grade_choice_checkpoint, grade_fill_checkpoint
 from studykit.domain.errors import CourseError, InvalidEvidence, InvalidId
 from studykit.domain.evidence import Actor, Evidence, Verb, VerbRegistry, learner_actor
-from studykit.domain.harness import Variant, verify_claims, parse_judge, rubric_ids
+from studykit.domain.harness import Grade, Run, Variant, prep_stage, verify_claims, parse_judge, rubric_ids
 from studykit.domain.ids import LessonRef, NodeId, UnitId
 
 from tests.conftest import plan_v2
@@ -150,6 +150,8 @@ def test_public_view_strips_secrets_without_touching_the_original():
     (0, "term", {"node": "tools.cmd.grep", "action": "known"}),   # grep 不是第 1 节的新词
     (0, "term", {"node": "tools.cmd.pwd", "action": "love"}),
     (0, "load_rating", {"rating": 9}), (0, "term_miss", {"text": ""}), (None, "activity", {"kind": "sleep"}),
+    (0, "resume", {"away_start": "昨天", "counted": True}),                       # 暂停后回来（D-027）
+    (0, "resume", {"away_start": "2026-09-26T10:05:00", "counted": "yes"}),
 ])
 def test_client_events_are_validated(section, event, extra):
     with pytest.raises(CourseError):
@@ -161,6 +163,9 @@ def test_client_events_map_to_verbs():
     assert plan.client_event(p, "u", None, "activity", kind="video").verb == "pinged"
     done = plan.client_event(p, "u", 0, "done", minutes=9999)
     assert (done.verb, done.object_id, done.payload) == ("completed", "u#0", {"minutes": 600.0})
+    back = plan.client_event(p, "u", 0, "resume", away_start="2026-09-26T10:05:00", counted=False)
+    assert (back.verb, back.object_id, back.payload) == ("resumed", "u#0", {"away_start": "2026-09-26T10:05:00", "counted": False})
+    assert plan.client_event(p, "u", None, "resume", away_start="2026-09-26T10:05:00", counted=True).object_type == "unit"
     vote = plan.client_event(p, "u", 0, "term", node="tools.cmd.pwd", action="known")
     assert (vote.verb, vote.nodes, vote.payload) == ("voted_term", ("tools.cmd.pwd",), {"vote": "known"})
 
@@ -190,7 +195,8 @@ def test_progress_projection():
            ev("completed", "section", "u#2", section=2)]
     r = progress.project(p, "run-2", evs, {0: 12.04})
     assert r["passed"] == [0, 2] and r["skipped"] == [] and r["ratings"] == {"0": 4}
-    assert r["checkpoints"]["0"]["0"] == {"ok": True, "attempts": 2, "first_try": False, "hints": 2}
+    assert r["checkpoints"]["0"]["0"] == {"ok": True, "attempts": 2, "first_try": False, "hints": 2, "response": "x"}
+    assert "response" not in r["checkpoints"]["0"].get("9", {})   # 没作答过的题没有 response
     assert r["spent_minutes"] == {"0": 12.0} and r["last_section"] == 2
 
 
@@ -243,6 +249,44 @@ def test_sessions_split_on_gaps_and_only_count_the_learner():
     assert "2026-09-25  合计 48 分钟" in timeline.report(sess)
 
 
+def test_pause_answer_decides_whether_the_away_time_counts():
+    """D-027：5 分钟没操作就暂停；回来时学习者说这段在学（算，哪怕超过 GAP）或没在学（不算，并切成两次）。"""
+    at = lambda hm, verb="pinged", **kw: ev(verb, "section", "u#0", ts=f"2026-09-26T{hm}:00", unit="u", section=0,  # noqa: E731
+                                            plan="p", **kw)
+    studied = [at("10:00", "opened"), at("10:04", payload={"kind": "page"}),
+               at("10:50", "resumed", payload={"away_start": "2026-09-26T10:05:00", "counted": True})]
+    idle = [at("14:00", "opened"), at("14:04", payload={"kind": "page"}),
+            at("14:06", payload={"kind": "page"}),                                  # 暂停前那几分钟的心跳也不算
+            at("14:12", "resumed", payload={"away_start": "2026-09-26T14:05:00", "counted": False}),
+            at("14:15", payload={"kind": "page"})]
+    ticks, manual = timeline.ticks(studied + idle)
+    sess = timeline.sessions(ticks, manual)
+    assert [(s.start.strftime("%H:%M"), round(s.minutes)) for s in sess] == [("10:00", 51), ("14:00", 5), ("14:12", 4)]
+    assert timeline.section_minutes(ticks, "u", "p") == {0: 60.0}
+
+
+def test_journal_lists_what_each_session_produced():
+    at = lambda hm: f"2026-09-26T{hm}:00"  # noqa: E731
+    evs = [ev("opened", "section", "u#0", ts=at("10:00"), unit="u", section=0, plan="p"),
+           ev("answered", "checkpoint", "u#0.0", ts=at("10:05"), unit="u", section=0, plan="p", score=0.0, ok=False,
+              payload={"idx": 0, "response": "x"}),
+           ev("answered", "checkpoint", "u#0.0", ts=at("10:06"), unit="u", section=0, plan="p", score=1.0, ok=True,
+              payload={"idx": 0, "response": "y"}),
+           ev("passed_section", "section", "u#0", ts=at("10:06"), actor=Actor("system", "system"), unit="u", section=0,
+              plan="p", nodes=("tools.cmd.pwd",)),
+           ev("passed_section", "section", "u#0", ts=at("10:07"), actor=Actor("system", "system"), unit="u", section=0,
+              plan="p2", nodes=("tools.cmd.pwd",)),                               # 同一个词在两版课程里都学到：只列一次
+           answer(0.5, ts=at("10:10")),
+           ev("opened", "section", "u#1", ts=at("20:00"), unit="u", section=1, plan="p")]
+    [day] = timeline.journal(evs)
+    first, second = day["sessions"]
+    assert day["date"] == "2026-09-26" and day["minutes"] == 12
+    assert first["passed"] == ["u 第 1 节"] and first["terms"] == ["tools.cmd.pwd"]
+    assert first["checkpoints"] == {"tried": 1, "ok": 1, "attempts": 2}
+    assert first["questions"] == [{"id": "t/01-x#q1", "score": 0.5}]
+    assert second["passed"] == [] and second["checkpoints"] == {"tried": 0, "ok": 0, "attempts": 0}
+
+
 # ---------- 课程评测 ----------
 
 def test_spearman():
@@ -280,3 +324,77 @@ def test_claims_are_checked_against_pages_the_agent_read():
     claims = [{"claim": "a", "quote": "用 `git bisect run` 自动找"}, {"claim": "b", "quote": "Exercise 17 讲 awk"}]
     out = verify_claims(claims, "Use git  bisect run to automate. Exercises 1-12.")
     assert [c["found_in_pages"] for c in out] == [True, False]
+
+
+# ---------- 简答题的 LLM 批改（D-031） ----------
+
+KEY = {"rubric": ["cd 失败不停（0.5）", "glob 提前展开 (0.5)", "加分项：成功提示不可信"]}
+
+
+def test_rubric_weights_and_bonus_items():
+    from studykit.domain.assessment import rubric_items
+    assert [it["max"] for it in rubric_items(KEY)] == [0.5, 0.5, None]
+
+
+def test_parse_short_grading_sums_and_caps():
+    from studykit.domain.assessment import parse_short_grading
+    r = parse_short_grading('好的：{"items": [{"id": 1, "score": 0.5, "why": "a"}, {"id": 2, "score": 0.5}, '
+                            '{"id": 3, "score": 0.3}], "feedback": "f"}', KEY)
+    assert r["score"] == 1.0 and r["feedback"] == "f" and len(r["items"]) == 3
+
+
+@pytest.mark.parametrize("reply", [
+    "不是 JSON",
+    '{"items": [{"id": 1, "score": 0.5}]}',                                   # 缺第 2 条
+    '{"items": [{"id": 1, "score": 0.9}, {"id": 2, "score": 0}]}',            # 超过这一条的满分
+    '{"items": [{"id": 1, "score": 0.5}, {"id": 2, "score": 0}, {"id": 7, "score": 0}]}',   # 没有第 7 条
+])
+def test_parse_short_grading_rejects_bad_replies(reply):
+    from studykit.domain.assessment import parse_short_grading
+    with pytest.raises(ValueError):
+        parse_short_grading(reply, KEY)
+
+
+def test_later_grade_replaces_earlier_one():
+    a = answer(None, concept="t.b", level=4)
+    llm = ev("graded", actor=Actor("agent", "short-grader", "grader"), caused_by=a.id, score=0.2, payload={"note": ""})
+    tutor = ev("graded", actor=TUTOR, caused_by=a.id, score=0.8, payload={"note": ""})
+    items, pending = mastery.scored([a, llm, tutor])
+    assert [s.score for s in items] == [0.8] and pending == []
+
+
+# ---------- 备课阶段（D-032） ----------
+
+def _run(rid, submitted=True):
+    return Run(rid, "tutor-prep", "v", "u", "me", "batch", rid, {}, submitted=submitted)
+
+
+def _g(rid, grader, verdict="", **kw):
+    return Grade(f"{rid}-{grader}", "t", rid, grader, "1", "x", verdict=verdict, **kw)
+
+
+@pytest.mark.parametrize("grades, published, running, stage, who", [
+    (None, None, False, "todo", "learner"),                                          # 还没有运行
+    ([], None, True, "preparing", "agent"),
+    ([_g("r1", "check", "fail")], None, False, "failed", "tutor"),
+    ([_g("r1", "check", "pass")], None, False, "review", "tutor"),
+    ([_g("r1", "check", "pass"), _g("r1", "practice_verify", "fail")], None, False, "review", "tutor"),
+    ([_g("r1", "check", "pass"), _g("r1", "review", "revise")], None, False, "revise", "tutor"),
+    ([_g("r1", "check", "fail"), _g("r1", "review", "revise")], None, False, "revise", "tutor"),   # 审过了：看审阅结论
+    ([_g("r1", "check", "pass"), _g("r1", "review", "publish")], None, False, "verify", "tutor"),
+    ([_g("r1", "check", "pass"), _g("r1", "review", "publish"), _g("r1", "practice_verify", "pass")], None, False,
+     "ready", "tutor"),
+    ([_g("r1", "check", "pass")], "r1", False, "published", "learner"),
+    (None, "手工发布", False, "published", "learner"),                          # 发布过，但没有运行记录（早期的计划）
+])
+def test_prep_stage_says_where_the_unit_is_and_who_is_next(grades, published, running, stage, who):
+    runs = [] if grades is None else [_run("r1")]
+    s = prep_stage(runs, {"r1": grades or []}, published, running)
+    assert (s["stage"], s["who"]) == (stage, who) and s["next"]
+
+
+def test_prep_stage_follows_the_latest_run_and_notes_the_older_published_one():
+    runs = [_run("20260926-100000-u"), _run("20260926-120000-u", submitted=False)]
+    s = prep_stage(runs, {}, "20260926-100000-u", False)
+    assert s["stage"] == "failed" and s["run"] == "20260926-120000-u"
+    assert s["published_run"] == "20260926-100000-u" and s["behind"]            # 学习者在用的是旧的那一版

@@ -68,7 +68,9 @@ def _check_checkpoint(where: str, c: dict, node_ids: set[str], limits: PlanLimit
         errors.append(f"{where}：hints 要正好 3 级（方向 → 关键概念 → 接近答案），现在 {len(hints)} 条")
     if not str(c.get("explain") or "").strip():
         errors.append(f"{where}：缺少 explain（做对之后的解析）")
-    if c.get("concept") and c["concept"] not in node_ids:
+    if not c.get("concept"):
+        errors.append(f"{where}：缺少 concept（这道题检验哪个知识节点）")
+    elif c["concept"] not in node_ids:
         errors.append(f"{where}：concept {c['concept']} 不在知识图里，也没有在 nodes 里提议")
     if kind == "choice":
         opts = c.get("options") or []
@@ -272,7 +274,7 @@ def plan_schema(checkpoint_types: dict[str, str], checkpoint_fields: dict, plan_
         "hints": {"type": "array", "items": {"type": "string"}, "description": "正好 3 级：方向 → 关键概念 → 接近答案（不直接给答案）"},
         "traps": {"type": "array", "items": _TRAP, "description": "常见坑，答错时才显示"},
         "explain": {"type": "string", "description": "做对之后显示的解析"}},
-        "required": ["type", "prompt", "hints", "explain"]}
+        "required": ["type", "prompt", "concept", "hints", "explain"]}
     section = {"type": "object", "properties": {
         "title": {"type": "string"},
         "minutes": {"type": "integer", "description": "学完这一节要多少分钟（含动手和检查点）"},

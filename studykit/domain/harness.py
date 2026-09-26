@@ -101,6 +101,53 @@ class Grade:
     detail: dict = field(default_factory=dict)
 
 
+# ---------- 备课阶段（D-032）：从运行和评分推出来，不存 ----------
+
+# 阶段 → （给人看的名字，下一步做什么，该谁做）
+PREP_STAGES = {
+    "todo": ("还没备课", "点「生成课程」让 agent 备课", "learner"),
+    "preparing": ("生成中", "等 agent 查资料、写课程计划（约 12 分钟）", "agent"),
+    "failed": ("没通过自动检查", "导师看哪一项没过，改 prompt / 上下文 / 工具中的一处，再重新生成", "tutor"),
+    "review": ("待导师审阅", "导师读产出、核对评分模型的质疑，判断发布还是修改", "tutor"),
+    "revise": ("需要修改", "导师按审阅列出的问题只改一处，再重新生成", "tutor"),
+    "verify": ("待验证练习场", "导师读过命令后跑 lab verify（会在本机执行）", "tutor"),
+    "ready": ("可以发布", "导师发布，课程页换成这一版", "tutor"),
+    "published": ("已发布", "去课程页学", "learner"),
+}
+
+
+def prep_stage(runs: list[Run], grades: dict[str, list[Grade]], published_run: str | None, running: bool) -> dict:
+    """一个单元的备课走到哪一步。只看最近一次运行；学习者在用的可能是更早发布的那一版（behind）。
+
+    runs 按时间顺序；grades = 运行 id → 它的全部评分（按时间顺序，同一种评分以最后一条为准）。
+    """
+    latest = runs[-1] if runs else None
+
+    def last(grader: str) -> Grade | None:
+        gs = [g for g in grades.get(latest.id, []) if g.grader == grader] if latest else []
+        return gs[-1] if gs else None
+
+    if running:
+        stage = "preparing"
+    elif latest is None:
+        stage = "published" if published_run else "todo"
+    elif latest.id == published_run:
+        stage = "published"
+    elif last("review") is not None and last("review").verdict != "publish":
+        stage = "revise"                                   # 导师审过了：以审阅结论为准（哪怕自动检查也没过）
+    elif not latest.submitted or (last("check") is None or last("check").verdict != "pass"):
+        stage = "failed"
+    elif last("review") is None:
+        stage = "review"
+    elif last("practice_verify") is None or last("practice_verify").verdict != "pass":
+        stage = "verify"
+    else:
+        stage = "ready"
+    label, nxt, who = PREP_STAGES[stage]
+    return {"stage": stage, "label": label, "next": nxt, "who": who, "run": latest.id if latest else None,
+            "published_run": published_run, "behind": bool(published_run and latest and latest.id != published_run)}
+
+
 # ---------- 自动检查（确定性） ----------
 
 def check_results(items: list[tuple[str, str, bool, str]]) -> tuple[float, dict]:

@@ -1,0 +1,49 @@
+schema_version: 1
+answers:
+  q1:
+    answer: [A, B]
+    explain: |
+      `*` 是展开字符：bash 在启动 grep 之前把 `logs/*.log` 换成文件名清单。`>` 是语法字符：bash 在启动 grep 之前打开 `work/out.txt`，把 grep 的标准输出接上去，然后把 `>` 和文件名从参数里拿掉。
+      `-n` 和 `ERROR` 都是普通参数，bash 原样交给 grep：`-n` 是 grep 自己的选项（加行号），`ERROR` 是 grep 要找的模式。
+      用 `set -x` 跑一次就能看到：`+ grep -n ERROR logs/a.log logs/b.log`——里面没有 `*`，也没有 `>`。
+  q2:
+    blanks: [["a.log b.log *.txt"], ["3", "三"]]
+    explain: |
+      没加引号的 `*.log` 被 bash 展开成 `a.log b.log` 两个参数；加了双引号的 `"*.txt"` 不展开，bash 去掉引号后原样交给 echo，是第三个参数。
+      echo 收到 3 个参数：`a.log`、`b.log`、`*.txt`，用空格连起来打印。
+  q3:
+    blanks: [["1"], ["1"], ["0"]]
+    explain: |
+      grep 没找到匹配的行，退出码是 1（不是报错，是"没找到"）。`[ -f nope.txt ]` 判断为假，退出码 1。
+      第三个 `echo $?` 看到的是**上一条命令**——也就是第二行里的 `echo $?`——的退出码，echo 成功了，所以是 0。`$?` 每条命令都会覆盖。
+  q4:
+    blanks: [["标准输出", "stdout", "输出"], ["标准输入", "stdin", "输入"]]
+    explain: 管道把左边程序的标准输出（stdout）接到右边程序的标准输入（stdin），中间不经过文件。标准错误（stderr）不走管道。
+  q5:
+    answer: B
+    explain: |
+      重定向是 bash 在**启动 sort 之前**做的：先以"写入"方式打开 `names.txt`，这一步就把文件清空了；然后才启动 sort，sort 去读 `names.txt` 时读到的已经是空文件。
+      正确写法是先写到另一个文件再改名，或者用 sort 自己的选项 `sort -o names.txt names.txt`（sort 读完才写）。这是 AI 写的脚本里很常见的一类 bug。
+  q6:
+    explain: |
+      思路：`grep -h ERROR logs/*.log > work/errors.txt`，然后 `grep -c '' work/errors.txt` 或 `wc -l < work/errors.txt` 打印行数。
+      - `logs/*.log` 只匹配这一层，不会进 `archive/`；文件名里的空格没问题——glob 展开出来的每个文件名是一个完整的参数，不会再被空格切开。
+      - `-h` 去掉文件名前缀；用 `>` 而不是 `>>`，运行两次也不会重复。
+      - `wc -l work/errors.txt` 会把文件名也打印出来，所以要用 `<` 把文件接到标准输入，或者用 `grep -c`。
+  q7:
+    rubric:
+      - "问题 1：`cd $LOG_DIR` 失败（变量没设置时 cd 到家目录，或目录不存在时 cd 报错）后脚本继续往下跑，`rm *.bak` 在错误的目录里删文件；指出要检查 cd 的退出码（如 `cd \"$LOG_DIR\" || exit 1` 或 `set -e`）（0.5）"
+      - "问题 2：`find . -name *.log` 里的 `*.log` 没加引号，bash 在启动 find 之前就在当前目录展开了它：当前目录有一个 .log 时 find 只找这一个名字，有多个时 find 报参数错误；只有当前目录没有 .log 时才碰巧正确。改成 `-name '*.log'` 让 find 自己去匹配（0.5）"
+      - "（加分项，可替代其中一条）：`rm *.bak` 在没有 .bak 文件时 bash 原样传 `*.bak`，rm 报错；`echo \"清理完成\"` 不管 rm 成没成功都会打印——不看退出码的成功提示不可信"
+    explain: |
+      两个核心问题都是"谁在什么时候做事"：
+      1. cd 失败不会让脚本停下来。bash 默认一条命令失败了继续执行下一条，所以 `rm *.bak` 会在 cd 之前所在的目录里执行。修法：`cd "$LOG_DIR" || exit 1`，或者在脚本开头 `set -e`。
+      2. `-name *.log` 里的 `*` 没加引号，是 bash 在启动 find 之前、在**当前目录**里展开的，find 收到的是具体文件名，而不是模式。修法：`find . -name '*.log' -exec gzip {} \;`，让 `*` 原样交给 find，由 find 在每一层目录里匹配。
+  q8:
+    rubric:
+      - "第 1 问：`nanoteacher-*.db` 是 bash 在启动 ls 之前展开的，展开时的当前目录是 `data/backups`（因为上一行 cd 了）；ls -t 把它们从新到旧排好，tail 从第 21 个开始，所以删掉的是除最新 20 份之外的所有旧备份（0.4）"
+      - "第 2 问：删掉 cd 后，bash 在仓库根目录展开 `nanoteacher-*.db`，那里没有匹配的文件，bash 把 `nanoteacher-*.db` 原样交给 ls（0.3）"
+      - "第 2 问结论：ls 找不到这个字面名字而报错，报错被 `2>/dev/null` 丢掉，管道里没有任何行，xargs -r 不执行 rm——结果是**什么也没删、也没有任何报错**，旧备份会越积越多而没人发现（0.3）"
+    explain: |
+      1. 展开发生在 bash 里、在启动 ls 之前，用的是当前目录，所以 `cd "$BACKUP_DIR"` 决定了匹配的是哪里的文件。之后 ls 按时间排序，`tail -n +21` 跳过最新的 20 行，剩下的旧备份交给 rm。
+      2. 没有 cd 时，仓库根目录里没有 `nanoteacher-*.db`，bash 原样传下模式（第 5 节讲过的"没匹配到就不换"）；ls 报错，而报错被 `2>/dev/null` 吞掉了；xargs 收到空输入，`-r` 让它什么都不做。脚本照样打印成功信息，"只保留 20 份"这件事悄悄失效——这就是为什么审 AI 写的脚本时，要问"这个 `*` 是在哪个目录展开的"。

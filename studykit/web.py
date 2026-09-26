@@ -8,17 +8,23 @@ GET  /api/units             已发布的课程页（D-010）
 GET  /api/unit?id=...       一个单元的课程计划 + 学习进度
 GET  /api/kg?topic=...      知识树：节点（带状态）+ 先修边（D-020）
 GET  /api/kg/node?id=...    一个节点的详情和证据
+GET  /flow                  流程看板（D-024）
+GET  /api/flow/graph        看板的节点、依赖、每个 verb 被谁用
+GET  /api/flow?limit=       最近的记录（每条：路径、被谁用、记了什么）
+GET  /api/flow/stream       新记录的实时推送（SSE）；?cursor= 从某个位置接着推
 POST /api/unit/progress     课程页事件：打开小节、心跳、跳过、新词反馈、费劲程度……
 POST /api/unit/check        检查点判分（D-013）
 POST /api/unit/hint         检查点的下一级提示
 POST /api/unit/lab          练习场：执行命令、还原到本节开始、重置、用参考做法补齐（D-014）
 POST /api/act               作答过程中的交互（跑测试、执行终端命令）
-POST /api/submit            提交一道题：检验器判分 → 记一条证据
+POST /api/submit            提交一道题：检验器判分 → 记一条证据（整卷模式的单元题不能单题提交）
+POST /api/exam/submit       交卷：整套题一次判分，简答题由 LLM 批改（D-031）
 """
 from __future__ import annotations
 
 import json
 import secrets
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -27,6 +33,8 @@ from studykit.bootstrap import App, build
 
 WEB = Path(__file__).resolve().parent.parent / "web"
 MAX_BODY = 2 * 1024 * 1024    # 代码题提交的代码也不会超过这个大小
+STREAM_POLL = 1.0             # 秒：多久查一次数据库有没有新行
+STREAM_PING = 15.0            # 秒：多久发一次心跳，让代理和浏览器知道连接还活着
 
 
 def make_handler(app: App, token: str, port: int):
@@ -44,10 +52,22 @@ def make_handler(app: App, token: str, port: int):
             return app.course.list()
         if path == "/api/unit":
             return app.course.page(one("id"))
+        if path == "/api/panel":
+            return app.panel.overview()
+        if path == "/api/panel/unit":
+            return app.panel.unit(one("id"))
+        if path == "/api/panel/context":
+            return app.panel.context(one("id"))
+        if path == "/api/log":
+            return app.learner.journal()
         if path == "/api/kg":
             return app.learner.tree(one("topic", None) or None)
         if path == "/api/kg/node":
             return app.learner.show(one("id"))
+        if path == "/api/flow/graph":
+            return app.observer.graph()
+        if path == "/api/flow":
+            return app.observer.since(None, max(1, min(int(one("limit", "60")), 500)))
         return None
 
     def post(path: str, body: dict):
@@ -55,9 +75,14 @@ def make_handler(app: App, token: str, port: int):
             return app.assessment.act(body["lesson"], body["qid"], body.get("action") or {})
         if path == "/api/submit":
             return app.assessment.submit(body["lesson"], body["qid"], body.get("response"))
+        if path == "/api/exam/submit":
+            return app.assessment.submit_exam(body["lesson"], body.get("responses") or {})
         if path == "/api/unit/progress":
-            extra = {k: body.get(k) for k in ("kind", "node", "action", "text", "rating")}
+            extra = {k: body.get(k) for k in ("kind", "node", "action", "text", "rating", "away_minutes", "counted")}
+            extra = {k: v for k, v in extra.items() if v is not None}
             return app.course.record(body["unit"], body.get("section"), body["event"], body.get("minutes"), **extra)
+        if path == "/api/panel/prepare":
+            return app.panel.prepare(body["unit"])
         if path == "/api/unit/check":
             return app.course.check(body["unit"], body["section"], body["idx"], body.get("response"))
         if path == "/api/unit/hint":
@@ -101,7 +126,46 @@ def make_handler(app: App, token: str, port: int):
             if url.path == "/":
                 html = (WEB / "index.html").read_text(encoding="utf-8").replace("__TOKEN__", token)
                 return self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
+            if url.path == "/flow":
+                return self._send(200, (WEB / "flow.html").read_bytes(), "text/html; charset=utf-8")
+            if url.path == "/api/flow/stream":
+                return self._stream(parse_qs(url.query).get("cursor", [""])[0])
             self._dispatch(get, url.path, parse_qs(url.query))
+
+        def _stream(self, cursor: str) -> None:
+            """SSE：一条长连接，服务器有新记录就推一条 `data: <JSON>`。
+
+            WHY: 每秒查一次数据库的新行，而不是在写入的地方发通知——命令行、agent 在别的进程里写的也能看到。
+            浏览器的 EventSource 断线会自己重连，重连时带上最后的游标（Last-Event-ID）接着推，不漏不重。
+            """
+            try:
+                cur = json.loads(self.headers.get("Last-Event-ID") or cursor or "null")
+            except json.JSONDecodeError:
+                cur = None
+            if cur is None:
+                cur = app.observer.since(None, 1)["cursor"]      # 从现在开始推；历史用 /api/flow 取
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Accel-Buffering", "no")
+            self.end_headers()
+            last_ping = time.monotonic()
+            try:
+                self.wfile.write(b"retry: 2000\n\n")
+                self.wfile.flush()
+                while True:
+                    batch = app.observer.since(cur)
+                    cur = batch["cursor"]
+                    for e in batch["events"]:
+                        data = json.dumps(e, ensure_ascii=False)
+                        self.wfile.write(f"id: {json.dumps(cur)}\nevent: flow\ndata: {data}\n\n".encode("utf-8"))
+                    if time.monotonic() - last_ping > STREAM_PING:
+                        self.wfile.write(b": ping\n\n")
+                        last_ping = time.monotonic()
+                    self.wfile.flush()
+                    time.sleep(STREAM_POLL)
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                return                                          # 浏览器关了页面
 
         def do_POST(self):
             # WHY: 先把请求体读完再决定怎么回应。拒绝请求时不读请求体，Windows 会直接重置连接，
