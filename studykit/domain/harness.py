@@ -146,6 +146,7 @@ PREP_STAGES = {
     "todo": ("还没备课", "点「备课」：系统生成、检验、定点修复，通过就发布", "learner"),
     "preparing": ("备课中", "生成 → 检验 → 定点修复（最多 3 轮 / $1），通过就发布", "agent"),
     "escalated": ("需要你决定", "修复轮数或花费用完了还有问题：看卡住的地方，决定重新备课，或者让开发助手改 prompt", "learner"),
+    "interrupted": ("上次备课没走完", "中途出错、被中断，或者是旧流程留下的运行：重新备课", "learner"),
     "ready": ("新版本等你确认", "这个单元你已经开始学了，新版本要你确认才替换", "learner"),
     "published": ("已发布", "去课程页学", "learner"),
 }
@@ -155,7 +156,7 @@ def prep_stage(runs: list[Run], grades: dict[str, list[Grade]], published_run: s
     """一个单元的备课走到哪一步。只看最近一次运行（修复也是一次运行）；学习者在用的可能是更早发布的那一版（behind）。
 
     runs 按时间顺序；grades = 运行 id → 它的全部评分（按时间顺序，同一种评分以最后一条为准）。
-    最近一次运行没有产出循环的结论（loop），说明它没走完循环（出错中断、或者是旧流程的运行），按"需要你决定"算。
+    最近一次运行没有产出循环的结论（loop），说明它没走完循环（出错中断、或者是旧流程的运行）：interrupted，不是"检验没通过"。
     """
     latest = runs[-1] if runs else None
     loops = [g for g in grades.get(latest.id, []) if g.grader == "loop"] if latest else []
@@ -167,11 +168,13 @@ def prep_stage(runs: list[Run], grades: dict[str, list[Grade]], published_run: s
         stage = "published" if published_run else "todo"
     elif latest.id == published_run:
         stage = "published"
-    elif loop is not None and loop.verdict == "accepted":
+    elif loop is None:
+        stage = "interrupted"
+    elif loop.verdict == "accepted":
         stage = "ready"
     else:
         stage = "escalated"
-        stuck = [f["what"] for f in (loop.detail.get("blocking") if loop else []) or []]
+        stuck = [f["what"] for f in loop.detail.get("blocking") or []]
     label, nxt, who = PREP_STAGES[stage]
     return {"stage": stage, "label": label, "next": nxt, "who": who, "run": latest.id if latest else None,
             "published_run": published_run, "behind": bool(published_run and latest and latest.id != published_run),

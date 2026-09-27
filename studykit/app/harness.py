@@ -9,7 +9,8 @@
     context.json      写一节的运行：大纲
 
 备课分步（D-038），每一步是一次运行，input.json 里的 stage 说明是哪一步：
-    outline → section × N（并行）→ assemble（不调模型，把各节拼成课程计划）→ 产出循环（检验、repair）
+    research（单元知识库，和学习者无关，按单元缓存，D-040）→ outline → section × N（并行）
+    → assemble（不调模型，把各节拼成课程计划）→ 产出循环（检验、repair）
     submissions.jsonl 每次提交：接受 / 退回 + 原因（运行中自我修正的记录）
     output.json/.md   产出（课程计划 + 给导师审阅的 Markdown）
     raw/              agent loop 的原始日志，可以过期清理
@@ -42,7 +43,7 @@ from studykit.domain.plan import (PLAN_SCHEMA_VERSION, assemble, fill_stub, plan
 MAX_TEXT = 15000          # fetch_url 一次最多返回多少字
 MAX_LINKS = 80
 RUN_ID = re.compile(r"^[0-9]{8}-[0-9]{6}-[a-z0-9-]+$")
-STAGE_KEYS = ("stage", "repair", "index", "outline_run", "sections")     # 某一步自己的输入；其余是单元的冻结输入
+STAGE_KEYS = ("stage", "repair", "index", "outline_run", "sections", "kb_run")     # 某一步自己的输入；其余是单元的冻结输入
 MAX_READING = 12000       # 写一节时，每个依据页面最多给多少字的原文
 MAX_READING_TOTAL = 36000
 
@@ -109,7 +110,8 @@ class Harness:
             "task": agent.file("task").read_text(encoding="utf-8"),
             **{f"stage:{name}": (agent.dir / st["task"]).read_text(encoding="utf-8") for name, st in agent.spec["stages"].items()},
             "tools": "\n\n".join([json.dumps({n: st["tools"] for n, st in agent.spec["stages"].items()}, ensure_ascii=False),
-                                   src(Harness.call_tool, Harness._fetch_url, Harness._submit_plan, Harness._submit_outline,
+                                   src(Harness.call_tool, Harness._fetch_url, Harness._submit_plan, Harness._submit_research,
+                                       Harness._submit_outline,
                                        Harness._submit_section, Harness._submit_repair, plan_check),
                                    src(*spec_rules) if spec_rules else ""]),
             "context": src(Harness.build_input, Harness.render_brief, Harness.render_section, Harness._reading),
@@ -134,7 +136,8 @@ class Harness:
             "curriculum_row": _curriculum_row(curriculum, topic_id),
             "hosts": sorted(allowed_hosts(curriculum)),
             **self.course.settings(),
-            "known_terms": sorted(self.learner.known(topic_id)),
+            # WHY: 命令和术语不分学科——Shell 单元学会的 echo、python，备 test 学科的课时也算已经会的
+            "known_terms": sorted(self.learner.known()),
             "known_titles": sorted(s.node.title for s in states.values() if s.state == "mastered" and s.node.topic == topic_id),
             "existing_nodes": {nid: n.title for nid, n in nodes.items() if n.topic == topic_id},
             "related": self.learner.related(unit),
@@ -205,12 +208,38 @@ class Harness:
         brief = self.render_brief(agent.file("task").read_text(encoding="utf-8"), data) + self.stage(agent, "plan")[0]
         return self._go(agent, "plan", unit, "", data, brief, model, timeout)
 
-    def outline(self, name: str, unit: str, model: str | None = None, timeout: int = 900) -> h.Run:
-        """备课第一步（D-038）：查资料、写大纲（练习场 + 每节的桩）。"""
+    def research(self, name: str, unit: str, model: str | None = None, timeout: int = 900) -> h.Run:
+        """调研（D-040 ③）：读讲义，整理单元知识库。简报里没有学习者信息——同一个单元的知识库可以反复用。"""
+        agent = self.agent(name)
+        full = self.build_input(unit)
+        # INVARIANT: 只放和学习者无关的输入；known_terms 为空（检查新词时不按任何学习者算）
+        data = {k: full[k] for k in ("unit", "unit_title", "topic_id", "topic_title", "curriculum_row", "hosts",
+                                     "existing_nodes", "unit_budget_minutes", "session_minutes", "max_new_terms")}
+        data["known_terms"] = []
+        nodes = "\n".join(f"- `{nid}` {title}" for nid, title in sorted(data["existing_nodes"].items())) or "（还没有）"
+        brief = (self.stage(agent, "research")[0].replace("{unit_id}", data["unit"]).replace("{unit_title}", data["unit_title"])
+                 .replace("{topic_id}", data["topic_id"]).replace("{topic_title}", data["topic_title"])
+                 .replace("{curriculum_row}", data["curriculum_row"]).replace("{existing_nodes}", nodes))
+        return self._go(agent, "research", unit, "-k", data, brief, model, timeout)
+
+    def knowledge(self, name: str, unit: str) -> h.Run | None:
+        """这个单元最近一次交出来的知识库（调研运行）。没有就是 None。"""
+        runs = [r for r in self.runs.runs(name) if r.unit == unit and r.input.get("stage") == "research" and r.submitted]
+        return runs[-1] if runs else None
+
+    def outline(self, name: str, unit: str, model: str | None = None, timeout: int = 900, kb_run: h.Run | None = None) -> h.Run:
+        """写大纲（D-038）：练习场 + 每节的桩和各节之间的约定。有知识库时从知识库组装（D-040），读过的页面也继承过来。"""
         agent = self.agent(name)
         data = self.build_input(unit)
         brief = self.render_brief(agent.file("task").read_text(encoding="utf-8"), data) + self.stage(agent, "outline")[0]
-        return self._go(agent, "outline", unit, "-o", data, brief, model, timeout)
+        pages: list[dict] = []
+        if kb_run is not None:
+            kws = self.dir(name, kb_run.id)
+            brief += "\n\n# 这个单元的知识库（调研整理，和学习者无关）\n\n" + plan_check.render_by_address(
+                json.loads((kws / "output.json").read_text(encoding="utf-8")))
+            pages = self._fetched(kws)
+            data = {**data, "kb_run": kb_run.id}
+        return self._go(agent, "outline", unit, "-o", data, brief, model, timeout, grounded=pages)
 
     def section(self, outline_run: h.Run, index: int, model: str | None = None, timeout: int = 900) -> h.Run:
         """写第 index 节：只拿大纲（练习场、每一节的桩）和这一节要依据的页面原文。
@@ -367,6 +396,9 @@ class Harness:
                               "required": ["url"]}},
             "submit_plan": {"description": "提交这个单元的课程计划（结构化）。环境会检查时间预算、每节的新词数、检查点、知识节点、链接是否打开过；不通过会返回错误，改完再提交。",
                             "parameters": {"type": "object", "properties": {"plan": schema}, "required": ["plan"]}},
+            "submit_research": {"description": "提交这个单元的知识库（和学习者无关）。环境会检查知识点的 id、定义、要点、依据页面是否打开过；不通过会返回错误，改完再提交。",
+                                "parameters": {"type": "object", "properties": {"knowledge": plan_check.kb_schema()},
+                                               "required": ["knowledge"]}},
             "submit_outline": {"description": "提交这个单元的大纲：练习场和每一节的桩。环境会检查时间预算、每节新词数、知识节点、练习场、链接是否打开过；不通过会返回错误，改完再提交。",
                                "parameters": {"type": "object", "properties": {"outline": plan_check.outline_schema(
                                    types, plan_fields, (cp_fields.get("checks") or {}).get("items"))},
@@ -392,6 +424,8 @@ class Harness:
             return self._submit_plan(ws, args.get("plan") or {})
         if name == "submit_repair":
             return self._submit_repair(ws, args.get("parts"))
+        if name == "submit_research":
+            return self._submit_research(ws, args.get("knowledge") or {})
         if name == "submit_outline":
             return self._submit_outline(ws, args.get("outline") or {})
         if name == "submit_section":
@@ -472,6 +506,15 @@ class Harness:
         (ws / "output.json").write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
         (ws / "output.md").write_text(plan_check.render_plan_md(plan, self._input(ws)["session_minutes"]), encoding="utf-8")
         return "已收到，检查通过。任务完成，不需要再做别的。"
+
+    def _submit_research(self, ws: Path, kb: dict) -> str:
+        errors = [f.what for f in plan_check.kb_findings(kb, self.limits(ws))]
+        self._log(ws, "submissions.jsonl", {"accepted": not errors, "errors": errors, "points": len((kb or {}).get("points") or [])})
+        if errors:
+            raise ToolError("知识库没有通过检查，请修改后重新提交：\n- " + "\n- ".join(errors))
+        (ws / "output.json").write_text(json.dumps(kb, ensure_ascii=False, indent=2), encoding="utf-8")
+        (ws / "output.md").write_text(plan_check.render_by_address(kb), encoding="utf-8")
+        return "已收到，知识库检查通过。任务完成，不需要再做别的。"
 
     def _submit_outline(self, ws: Path, outline: dict) -> str:
         errors = [f.what for f in plan_check.outline_findings(outline, self.limits(ws), [r for s in self.specs for r in s.plan_rules])]

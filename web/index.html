@@ -260,6 +260,17 @@ main.wide { max-width: 1180px; }
 .unit-list a { display: block; padding: 12px 16px; margin-top: 10px; background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius); color: var(--text); text-decoration: none; }
 .unit-list a:hover { border-color: var(--accent); }
+/* 课程：每个单元一张卡，能不能学、备课走到哪（D-040） */
+.course-card { display: flex; gap: 12px; align-items: flex-start; padding: 12px 16px; margin-top: 10px; background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius); }
+.course-card .main { flex: 1; min-width: 0; }
+.course-card .state { font-size: 13px; margin-top: 2px; }
+.course-card .state.ready { color: var(--ok); } .course-card .state.busy { color: var(--accent); }
+.course-card .state.stuck { color: var(--warn); }
+.course-card .bar { height: 4px; background: var(--border); border-radius: 2px; margin-top: 6px; overflow: hidden; }
+.course-card .bar i { display: block; height: 100%; background: var(--accent); }
+.course-card .acts { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+@media (max-width: 560px) { .course-card { flex-direction: column; } .course-card .acts { justify-content: flex-start; } }
 .index-h { font-size: 15px; margin: 22px 0 0; color: var(--muted); }
 
 /* ---------- 课程页 v2（D-013 ~ D-017）：讲解 | 练习场终端 ---------- */
@@ -1577,19 +1588,77 @@ async function showKnowledge(topic) {
   }
 }
 
+// 课程清单里的每个单元：能不能学、备课走到哪一步（D-040）。备课在后台跑，这里 5 秒刷新一次
+let indexTimer = null;
+function courseCard(u, reload) {
+  const p = u.prep, go = `?unit=${encodeURIComponent(u.id)}`;
+  const act = async (path, question) => {
+    if (!confirm(question)) return;
+    try { await api(path, { unit: u.id }); } catch (e) { return alert(e.message); }
+    reload();
+  };
+  const prepare = () => act("/api/panel/prepare", `给「${u.title}」备课？\n系统会写大纲、各节同时写，再检验、只修被指出的地方（最多 3 轮 / $1），通过就直接发布。` +
+    "\n大约 15–25 分钟，在后台跑，这个页面会显示进度；你可以先去学别的。");
+  let state, acts = [];
+  if (p.stage === "preparing") {
+    const sec = p.progress?.sections;
+    state = [$("div", { class: "state busy" }, "备课中 · " + (p.progress?.label || "开始了")),
+      sec ? $("div", { class: "bar" }, $("i", { style: `width:${Math.round(100 * sec.done / Math.max(1, sec.total))}%` })) : null];
+    if (u.course) acts.push($("button", { onclick: () => { location.href = go; } }, "进入学习"));
+  } else if (p.stage === "escalated") {
+    state = [$("div", { class: "state stuck" }, "需要你决定：检验没通过"), p.stuck?.length ? $("div", { class: "hint" }, "卡在：" + p.stuck[0]) : null];
+    acts.push($("button", { onclick: () => { location.href = `?panel=1&id=${u.id}`; } }, "看卡在哪"), $("button", { onclick: prepare }, "重新备课"));
+    if (u.course) acts.unshift($("button", { onclick: () => { location.href = go; } }, "进入学习"));
+  } else if (p.stage === "interrupted") {
+    state = [$("div", { class: "state stuck" }, "上次备课没走完"), $("div", { class: "hint" }, "中途出错、被中断，或者是旧流程留下的")];
+    if (u.course) acts.push($("button", { onclick: () => { location.href = go; } }, "进入学习"));
+    acts.push($("button", { onclick: prepare }, "重新备课"));
+  } else if (p.stage === "ready") {
+    state = [$("div", { class: "state ready" }, `能学 · 学到 ${u.course.passed}/${u.course.sections} 节`),
+      $("div", { class: "hint" }, "有新版本等你确认（进度按版本记，旧版本的记录都保留）")];
+    acts.push($("button", { onclick: () => { location.href = go; } }, "进入学习"),
+      $("button", { onclick: () => act("/api/panel/publish", `把「${u.title}」换成新版本？`) }, "换成新版本"));
+  } else if (u.course) {
+    const done = u.course.passed >= u.course.sections;
+    state = [$("div", { class: "state ready" }, done ? "学完了" : `能学 · 学到 ${u.course.passed}/${u.course.sections} 节`)];
+    acts.push($("button", { onclick: () => { location.href = go; } }, done ? "复习" : u.course.passed ? "继续学" : "进入学习"));
+  } else {
+    state = [$("div", { class: "state" }, "还没备课")];
+    acts.push($("button", { onclick: prepare }, "备课"));
+  }
+  if (p.job_error) state.push($("div", { class: "error" }, "上次备课出错：" + p.job_error));
+  if (u.knowledge && !u.course) state.push($("div", { class: "hint" }, "知识库已备好：备课会从这里开始，不用再读讲义"));
+  return $("div", { class: "course-card" },
+    $("div", { class: "main" }, $("b", {}, u.title), $("span", { class: "hint" }, "  " + u.id), ...state,
+      ...u.quizzes.map(q => $("div", { class: "hint" }, $("a", { href: `?lesson=${encodeURIComponent(q.ref)}` }, q.title),
+        ` · 做了 ${q.answered}/${q.questions} 题`))),
+    $("div", { class: "acts" }, ...acts));
+}
+
 async function showIndex() {
-  const [units, list] = await Promise.all([api("/api/units"), api("/api/lessons")]);
+  const [overview, list] = await Promise.all([api("/api/panel"), api("/api/lessons")]);
+  const reload = () => showIndex();
+  clearTimeout(indexTimer);
+  const kbJob = overview.knowledge_job?.state === "running";
+  if (kbJob || overview.topics.some(t => t.units.some(u => u.prep.stage === "preparing"))) indexTimer = setTimeout(reload, 5000);
+  const all = overview.topics.flatMap(t => t.units), missing = all.filter(u => !u.knowledge).length;
+  const buildKb = async () => {
+    if (!confirm(`为还没有知识库的 ${missing} 个单元读讲义、整理知识点？\n和你的学习情况无关，每个单元只做一次，以后备课直接从这里开始。` +
+      `\n在后台同时跑，大约 5–10 分钟、每个单元约 $0.05–0.1。`)) return;
+    try { await api("/api/panel/knowledge", {}); } catch (e) { return alert(e.message); }
+    reload();
+  };
   document.getElementById("app").replaceChildren(
     $("h2", { class: "index-h" }, "课程"),
-    $("div", { class: "unit-list" }, units.length
-      ? units.map(u => $("a", { href: `?unit=${encodeURIComponent(u.unit)}` }, $("b", {}, u.title),
-          $("div", { class: "hint" }, `${u.unit} · ${u.sections} 节 · ${u.minutes} 分钟 · 通过 ${u.done}/${u.sections}`)))
-      : $("p", { class: "hint" }, "还没有课程页。对导师说「准备学 <单元>」生成一份。")),
+    $("div", { class: "hint" }, `知识库：${all.length - missing}/${all.length} 个单元已备好 `,
+      kbJob ? $("span", {}, "· 正在后台整理其余单元…")
+        : missing ? $("button", { onclick: buildKb }, "把其余单元的知识库都备好") : null),
+    ...overview.topics.map(t => $("section", {}, $("div", { class: "grp-label" }, t.title), ...t.units.map(u => courseCard(u, reload)))),
     $("h2", { class: "index-h" }, "学习者模型"),
     $("div", { class: "unit-list" }, $("a", { href: "?kg=tools" }, $("b", {}, "知识树"),
       $("div", { class: "hint" }, "每个知识点现在是什么状态、为什么、先修是什么")),
-      $("a", { href: "?panel=1" }, $("b", {}, "备课面板"),
-        $("div", { class: "hint" }, "每个单元学到哪、备课走到哪一步、agent 读到了什么；可以自己点「生成课程」（D-032）")),
+      $("a", { href: "?panel=1" }, $("b", {}, "备课面板（开发者视图）"),
+        $("div", { class: "hint" }, "每一轮检验的结论、agent 读到了什么、prompt 的每一版")),
       $("a", { href: "?log=1" }, $("b", {}, "学习记录"),
         $("div", { class: "hint" }, "每天学了多久、每次学了什么、做成了什么（D-027）")),
       $("a", { href: "/flow" }, $("b", {}, "流程看板"),

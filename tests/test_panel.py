@@ -34,10 +34,10 @@ def test_prepare_runs_the_loop_in_the_background_and_the_stage_follows(app, root
     job = app.panel.prepare("tools-02-git")
     assert job["state"] == "done"
     detail = app.panel.unit("tools-02-git")
-    # 假 agent 只会 submit_plan，而备课第一步只开放 submit_outline（D-038）：大纲每次都交不出来，3 轮后停在"需要你决定"
+    # 假 agent 只会 submit_plan，而备课第一步（调研）只开放 submit_research：每次都交不出来，3 轮后停在"需要你决定"
     assert detail["prep"]["stage"] == "escalated" and detail["prep"]["who"] == "learner"
     assert "没有提交课程计划" in detail["prep"]["stuck"][0]
-    assert {r["stage"] for r in detail["runs"]} == {"outline"} and len(detail["runs"]) == 6   # 每轮大纲重试一次
+    assert {r["stage"] for r in detail["runs"]} == {"research"} and len(detail["runs"]) == 6  # 每轮调研重试一次
     assert detail["runs"][0]["loop"]["verdict"] == "escalated"
     with pytest.raises(DomainError):
         app.panel.prepare("tools-99-nope")
@@ -69,3 +69,18 @@ def test_versions_list_each_llm_call_site_with_what_changed(app, root, runtime, 
     last = agents["tutor-prep"]["versions"][-1]
     assert [c["part"] for c in last["changed"]] == ["prompt:rules"] and "+- 多一条" in last["changed"][0]["diff"]
     assert app.panel.version_text(last["variant"], "prompt:rules").endswith("- 多一条\n")
+
+
+def test_build_knowledge_for_the_whole_curriculum_in_the_background(app, root, runtime, fetcher):
+    """D-040 ③：知识库和学习者无关，curriculum 定了就能为所有单元备好。"""
+    _add_unit(root)
+    fetcher.pages = {SRC: "讲义 " * 10}
+    from tests.test_prep import kb_of, good_plan, OTHER
+    fetcher.pages[OTHER] = "第二页 " * 10
+    runtime.script = [("fetch_url", {"url": SRC}), ("fetch_url", {"url": OTHER}), ("submit_research", {"knowledge": kb_of(good_plan())})]
+    job = app.panel.build_knowledge()
+    assert job["units"] == ["tools-01-shell", "tools-02-git"] and job["state"] == "done"
+    units = {u["id"]: u for t in app.panel.overview()["topics"] for u in t["units"]}
+    assert units["tools-01-shell"]["knowledge"] and units["tools-02-git"]["knowledge"]
+    with pytest.raises(DomainError, match="都已经有知识库"):
+        app.panel.build_knowledge()

@@ -17,6 +17,7 @@ from studykit.domain.errors import DomainError
 from studykit.domain.evidence import split_question
 
 AGENT = "tutor-prep"
+KB_JOB = "knowledge:all"
 
 # agent 输入里的每一块：（key，标题，从哪来，学习者能不能直接改，怎么改）
 BLOCKS = [
@@ -64,9 +65,10 @@ class Panel:
                     "quizzes": [{"ref": q.ref, "title": q.title, "questions": len(q.questions()),
                                  "answered": len(answered.get(q.ref, set()))} for q in lessons.get(uid, [])],
                     "prep": self._prep(uid, runs.get(uid, []), grades),
+                    "knowledge": self._knowledge(runs.get(uid, [])),
                 })
             topics.append({"id": tid, "title": topic.get("title", tid), "units": units})
-        return {"topics": topics}
+        return {"topics": topics, "knowledge_job": self.jobs.status(KB_JOB)}
 
     # ---------- 单元详情：每次运行的评测和审阅 ----------
 
@@ -116,15 +118,51 @@ class Panel:
         self.harness.build_input(unit)                        # 单元不存在就在这里报错，不开线程
         key = self._key(unit)
 
+        if (self.prep.status.get(unit) or {}).get("alive"):
+            raise DomainError(f"{unit} 已经在备课了（另一个窗口或命令行），等它跑完")
         if not self.jobs.start(key, lambda: self.prep.prepare(unit)):
             raise DomainError(f"{unit} 已经在生成了，等这一次跑完")
         return self.jobs.status(key) or {}
+
+    def prefetch_after(self, unit: str) -> str | None:
+        """预备（D-040 ②）：学习者在学 unit 时，把课程清单里的下一个单元放到后台去备。返回开始备的单元，没有就是 None。
+
+        只备从来没备过的单元：备过但没走完、卡住了的不自动重试（免得反复花钱）；已经在备的不重复开。
+        progress/settings.yaml 里 prefetch_next: false 可以关掉。
+        """
+        if self.content.settings().get("prefetch_next") is False:
+            return None
+        order = [u.get("id") for t in (self.content.syllabus().get("topics") or {}).values() for u in t.get("units") or []]
+        if unit not in order or order.index(unit) + 1 >= len(order):
+            return None
+        nxt = order[order.index(unit) + 1]
+        if self.plans.current(nxt) is not None or self._runs_by_unit().get(nxt):
+            return None
+        if (self.prep.status.get(nxt) or {}).get("alive") or (self.jobs.status(self._key(nxt)) or {}).get("state") == "running":
+            return None
+        self.prepare(nxt)
+        return nxt
+
+    def build_knowledge(self) -> dict:
+        """为课程清单里所有还没有知识库的单元，在后台并行调研（D-040 ③：和学习者无关，curriculum 同意后就能做）。"""
+        units = [u.get("id") for t in (self.content.syllabus().get("topics") or {}).values() for u in t.get("units") or []]
+        todo = [u for u in units if self.harness.knowledge(AGENT, u) is None]
+        if not todo:
+            raise DomainError("所有单元都已经有知识库了")
+        if not self.jobs.start(KB_JOB, lambda: self.prep.build_knowledge(todo)):
+            raise DomainError("已经在备知识库了，等这一次跑完")
+        return {**(self.jobs.status(KB_JOB) or {}), "units": todo}
 
     def publish(self, unit: str) -> dict:
         """学习者确认：已经开始学的单元，换成最近一次通过检验的新版本。"""
         return {"added_nodes": self.prep.publish(unit)}
 
     # ---------- 内部 ----------
+
+    @staticmethod
+    def _knowledge(runs: list[h.Run]) -> dict | None:
+        kb = [r for r in runs if r.input.get("stage") == "research" and r.submitted]
+        return {"run": kb[-1].id} if kb else None
 
     @staticmethod
     def _key(unit: str) -> str:
@@ -150,9 +188,15 @@ class Panel:
 
     def _prep(self, unit: str, runs: list[h.Run], grades: dict[str, list[h.Grade]]) -> dict:
         job = self.jobs.status(self._key(unit)) or {}
-        s = h.prep_stage(runs, grades, self._published_run(unit), job.get("state") == "running")
-        if job.get("state") == "error":
-            s["job_error"] = job.get("error", "")
+        st = self.prep.status.get(unit) or {}              # 任何进程发起的备课都看得见（D-040）
+        running = job.get("state") == "running" or bool(st.get("alive"))
+        s = h.prep_stage(runs, grades, self._published_run(unit), running)
+        if running:
+            s["progress"] = st.get("progress") or {"step": "outline", "label": "查资料、写大纲"}
+        elif job.get("state") == "error" or st.get("state") == "error":
+            s["job_error"] = job.get("error") or st.get("error", "")
+        elif st.get("state") == "running":                 # 记着在跑、进程却不在了：被中断的备课
+            s["job_error"] = "上次备课被中断了（进程已经退出），可以重新备课"
         return s
 
     def _course(self, unit: str) -> dict | None:

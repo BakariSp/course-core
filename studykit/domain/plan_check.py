@@ -433,3 +433,63 @@ def section_schema(checkpoint_types: dict[str, str], checkpoint_fields: dict, pl
 
 
 CORE_CHECKPOINT_TYPES = {"choice": "选择", "fill": "填空（题干里每个 ____ 是一个空）"}
+
+
+# ---------- 单元知识库（D-040 ③）：和学习者无关的通用层 ----------
+
+def kb_findings(kb: dict, limits: PlanLimits) -> list[Finding]:
+    """单元知识库的检查：知识点要有合法 id、一句话定义、要点、依据页面（打开过的）；先修要能找到。
+    INVARIANT: 知识库不含学习者信息（生成它的简报里就没有），所以同一个单元可以反复用、以后给别的学习者用。"""
+    out: list[Finding] = []
+    add = lambda address, what: out.append(Finding(address, what, EVALUATOR))  # noqa: E731
+    if not isinstance(kb, dict):
+        return [Finding("", "knowledge 必须是一个对象", EVALUATOR)]
+    if not str(kb.get("summary") or "").strip():
+        add("/summary", "缺少 summary（讲义讲了什么，两三句话）")
+    if not kb.get("sources"):
+        add("/sources", "至少要有一个出处")
+    points = kb.get("points") or []
+    if len(points) < 3:
+        add("/points", f"知识点至少 3 个，现在 {len(points)} 个")
+    ids = {str(p.get("id")) for p in points}
+    for i, p in enumerate(points):
+        at, name = f"/points/{i}", f"知识点 {p.get('id')}"
+        nid = str(p.get("id") or "")
+        if not NODE_ID_RE.match(nid) or not nid.startswith(limits.topic + "."):
+            add(at, f"{name}：id 要像 {limits.topic}.cmd.grep（小写、点分层、以学科 {limits.topic}. 开头）")
+        for key in ("term", "explain"):
+            if not str(p.get(key) or "").strip():
+                add(at, f"{name}：缺少 {key}")
+        teaches = [x for x in p.get("teaches") or [] if str(x).strip()]
+        if not 1 <= len(teaches) <= 4:
+            add(at, f"{name}：teaches 写 1–4 个要点，现在 {len(teaches)} 个")
+        if not p.get("reading"):
+            add(at, f"{name}：reading 至少列一个讲它的页面")
+        for r in p.get("requires") or []:
+            if r not in ids and r not in limits.existing_nodes:
+                add(at, f"{name}：先修 {r} 既不在这份知识库里，也不在知识图里")
+    for url in sorted(extract_urls(json.dumps(kb, ensure_ascii=False))):
+        if url_key(url) not in limits.grounded:
+            add("", f"链接没有打开过：{url}。只能引用你用 fetch_url 打开过的页面")
+    return out
+
+
+def kb_schema() -> dict:
+    point = {"type": "object", "properties": {
+        "id": {"type": "string", "description": "知识节点 id，如 test.pytest.fixture；知识图里已有的就用已有的"},
+        "term": {"type": "string", "description": "讲义里的原词"},
+        "kind": {"type": "string", "enum": ["concept", "term", "skill"]},
+        "explain": {"type": "string", "description": "一句话定义：先说它是什么、属于哪一类（不用比喻）"},
+        "requires": {"type": "array", "items": {"type": "string"}, "description": "先修：学它之前必须先会的知识点 id"},
+        "teaches": {"type": "array", "items": {"type": "string"}, "description": "讲清它要讲的 1–4 个要点（讲义里说的，不是你的发挥）"},
+        "reading": {"type": "array", "items": {"type": "string"}, "description": "讲它的页面网址（必须打开过）"}},
+        "required": ["id", "term", "kind", "explain", "teaches", "reading"]}
+    return {"type": "object", "properties": {
+        "summary": {"type": "string", "description": "这个单元的讲义讲了什么（两三句话）"},
+        "sources": {"type": "array", "items": _SOURCE},
+        "points": {"type": "array", "items": point, "description": "讲义里的知识点，按讲义的顺序"},
+        "exercises": {"type": "array", "items": {"type": "object", "properties": {
+            "title": {"type": "string"}, "what": {"type": "string", "description": "练习要做什么"},
+            "reading": {"type": "array", "items": {"type": "string"}}}, "required": ["title", "what"]},
+            "description": "讲义里的练习、可以改编成练习场任务的素材"}},
+        "required": ["summary", "sources", "points"]}

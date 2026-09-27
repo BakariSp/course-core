@@ -5,6 +5,7 @@
         sandbox/        终端题、代码题的沙箱，随时可以重建
         labs/           练习场的快照和状态。**不可重建**：删了就回不到"第 N 节开始时"
         runs/           agent 每次运行的工作目录（简报、输入、产出；raw/ 下的原始日志可以清理）
+        prep/           每个单元的备课现在走到哪、哪个进程在跑（D-040；随时可以删）
 """
 from __future__ import annotations
 
@@ -15,6 +16,7 @@ from pathlib import Path
 from studykit.adapters.files import FileContent
 from studykit.adapters.jobs import ThreadJobs
 from studykit.adapters.pi import PiRuntime
+from studykit.adapters.prep_status import FilePrepStatus
 from studykit.adapters.sqlite import SqliteStore
 from studykit.adapters.system import SystemClock, UuidIds
 from studykit.adapters.web_fetch import UrllibFetcher
@@ -92,7 +94,7 @@ def build(config: Config | None = None, *, clock: Clock | None = None, ids: IdGe
                       learner=learner, specs=enabled, clock=clock, ids=ids, root=config.root,
                       workspace=config.data / "runs", learner_id=config.learner)
     grader = LlmShortGrader(runtime, config.root, config.data / "runs", clock, harness.versions)
-    prep = CoursePrep(harness, course, store)
+    prep = CoursePrep(harness, course, store, FilePrepStatus(config.data / "prep"))
     panel = Panel(content=content, harness=harness, prep=prep, course=course, runs=store, plans=store, evidence=store,
                   jobs=jobs or ThreadJobs(), learner_id=config.learner)
     return App(config, store, content, Assessment(deps, checkers, config.data / "sandbox", config.root, grader),

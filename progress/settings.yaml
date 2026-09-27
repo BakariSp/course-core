@@ -2,3 +2,4 @@
 schema_version: 1
 unit_budget_minutes: 180     # 一个单元最多学多久（D-010：3 小时）
 session_minutes: 45          # 每次坐下来学多久；课程页按这个把小节分成一次次能学完的块
+prefetch_next: true          # 学一个单元时，自动在后台备课程清单里的下一个单元（D-040；每个单元约 $0.5–1）

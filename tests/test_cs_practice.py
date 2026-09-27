@@ -260,3 +260,15 @@ def test_lab_verify_replays_the_whole_lab(tmp_path):
     giveaway = plan_v2()
     giveaway["parts"][0]["sections"][1]["try"] = [{"command": "grep -c ERROR logs/app.log > report.txt", "expect": "x"}]
     assert "照着动手步骤敲完就已经通过了" in next(f["what"] for f in env.verify(giveaway, tmp_path / "v" / "4")["findings"] if f["severity"] == "block")
+
+
+def test_python_in_the_explanation_is_not_taken_for_shell_commands():
+    text = "写成 `assert add(1, 2) == 3`，或者 `from calc import add`；报 `syntax error` 时看行号。跑 `pytest -q tests/` 看结果"
+    assert plan_rules.inline_commands(text) == {"pytest"}
+
+
+def test_undeclared_command_advice_fits_a_writer_who_cannot_change_terms():
+    p = plan_v2()
+    p["parts"][0]["sections"][0]["try"] = [{"command": "ls | grep x", "expect": "e"}]
+    [f] = plan_rules.declared_commands(p, PlanLimits("tools-01-shell", known_terms={"grep"}))
+    assert "列进这一节的 terms" not in f.what and "大纲" in f.what             # 写节的人改不了新词（D-038）

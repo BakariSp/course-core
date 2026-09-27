@@ -12,6 +12,7 @@
     python study.py kg summary|related <单元>|show <节点>|check   学习者模型的分级查询（D-020）
     python study.py kg observe <节点> weak|ok "原话"   导师观察：把"哪里没跟上"记到具体节点上
     python study.py course-eval <单元> [--plan <版本>] [--write]   课程评测：预测 vs 实际（D-019）
+    python study.py kb [<单元> ...]               单元知识库（和学习者无关，已有的不重做；不写单元就是全部，并行，D-040）
     python study.py prepare <单元> [--from <运行>]   备课：生成 → 检验 → 定点修复 → 通过就发布（D-035，PRD_V2 阶段 A）
     python study.py agent run|eval|review|report|publish ...   助教 agent（D-022）
     python study.py agent versions tutor-prep            每一版改了哪些组成（D-033；tutor-prep#judge、short-grader 同理）
@@ -156,7 +157,14 @@ def cmd_agent(app, args) -> None:
 
 
 def cmd_prepare(app, args) -> None:
-    r = app.prep.prepare(args.unit, start_from=args.start_from, model=args.model)
+    last = [""]
+
+    def show(p):                             # 进度有变化就打一行（D-040）
+        if p.get("label") != last[0]:
+            last[0] = p.get("label")
+            print(f"  … {last[0]}", flush=True)
+
+    r = app.prep.prepare(args.unit, start_from=args.start_from, model=args.model, report=show)
     for i, rd in enumerate(r["rounds"], 1):
         blocks = [f for f in rd["findings"] if f["severity"] == "block"]
         print(f"第 {i} 轮  {rd['run']}  ${rd['cost_usd']}  " + (f"{len(blocks)} 个阻断" if blocks else "通过"))
@@ -165,6 +173,15 @@ def cmd_prepare(app, args) -> None:
     state = {"accepted": "通过", "escalated": "需要你决定"}[r["status"]]
     print(f"{state}，共 ${r['spent_usd']}。" + ("已发布：/?unit=" + r["unit"] if r["published"]
                                                else "没有发布（已经开始学的单元要你确认）" if r["status"] == "accepted" else ""))
+
+
+def cmd_kb(app, args) -> None:
+    units = args.units or [u.get("id") for t in (app.content.syllabus().get("topics") or {}).values()
+                            for u in t.get("units") or []]
+    done = app.prep.build_knowledge(units, model=args.model)
+    for u in units:
+        state = "已有" if u not in done else ("好了" if done[u] else "没交出来")
+        print(f"{u}：{state}")
 
 
 def cmd_lab(app, args) -> None:
@@ -238,6 +255,10 @@ def parser() -> argparse.ArgumentParser:
     pr.add_argument("--from", dest="start_from", help="从已有的一次 tutor-prep 运行接着检验和修复（不重新生成）")
     pr.add_argument("--model", help="临时换生成模型")
     pr.set_defaults(func=cmd_prepare)
+    kb = sub.add_parser("kb", help="单元知识库：读讲义整理知识点，和学习者无关，已有的不重做（D-040）")
+    kb.add_argument("units", nargs="*", help="单元 id；不写就是课程清单里所有单元（并行）")
+    kb.add_argument("--model", help="临时换模型")
+    kb.set_defaults(func=cmd_kb)
     lb = sub.add_parser("lab", help="练习场")
     lb.add_argument("action", choices=["verify"])
     lb.add_argument("run", nargs="?", help="tutor-prep 的运行 id，默认最近一次")

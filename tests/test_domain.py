@@ -376,7 +376,7 @@ def _run(rid, submitted=True):
 def test_prep_stage_follows_the_latest_run_and_notes_the_older_published_one():
     runs = [_run("20260926-100000-u"), _run("20260926-120000-u", submitted=False)]
     s = prep_stage(runs, {}, "20260926-100000-u", False)
-    assert s["stage"] == "escalated" and s["run"] == "20260926-120000-u"
+    assert s["stage"] == "interrupted" and s["run"] == "20260926-120000-u"
     assert s["published_run"] == "20260926-100000-u" and s["behind"]            # 学习者在用的是旧的那一版
 
 

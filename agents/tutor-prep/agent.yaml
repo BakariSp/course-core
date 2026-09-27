@@ -18,7 +18,8 @@ prompt:                       # system prompt 的部件，按顺序原样拼接�
   - {part: rules, file: prompt/rules.md}           # 硬性规则（含语气：D-026 先给定义）
 task: task.md                 # 单元信息（每一步共用的简报前半段：单元、预算、学习者、学习者模型）
 stages:                       # 备课分步（D-038）：每一步 = 简报后半段的说明 + 只开放这一步的提交工具。pi 自带的读写文件、shell 全部关闭
-  outline: {task: stages/outline.md, tools: [fetch_url, submit_outline]}   # 大纲：练习场、每节的桩
+  research: {task: stages/research.md, tools: [fetch_url, submit_research]}  # 调研：单元知识库，和学习者无关，按单元缓存（D-040）
+  outline: {task: stages/outline.md, tools: [fetch_url, submit_outline]}   # 大纲：从知识库挑选、排序，定下各节之间的约定
   section: {task: stages/section.md, tools: [fetch_url, submit_section]}   # 写一节：拿着大纲和前面几节
   repair:  {task: stages/repair.md, tools: [fetch_url, submit_repair]}     # 定点修复（D-035）：只重写被指出的部分
   plan:    {task: stages/plan.md, tools: [fetch_url, submit_plan]}         # 一次写完整份（agent run 调试用，备课不走这一步）

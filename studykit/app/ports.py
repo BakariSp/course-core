@@ -177,6 +177,17 @@ class JobRunner(Protocol):
         """{"state": running | done | error, "started": ISO 时间, "error": 出错信息}；没跑过是 None。"""
 
 
+class PrepStatus(Protocol):
+    """一个单元的备课现在走到哪（D-040）。跨进程可见（网页线程、命令行都能发起备课），也是锁：同一个单元同时只备一次。"""
+
+    def begin(self, unit: str) -> bool:
+        """开始备课；已经有活着的进程在备这个单元时返回 False。"""
+    def update(self, unit: str, progress: dict) -> None: ...
+    def end(self, unit: str, error: str = "") -> None: ...
+    def get(self, unit: str) -> dict | None:
+        """{"state": running | done | error, "alive": 进程还在且在跑, "progress": {...}, "error", "started", "updated"}；没备过是 None。"""
+
+
 class ActivityFeed(Protocol):
     """流程看板（D-024）：after 游标之后新写入的证据 / 运行 / 评分 / 发布，按时间排序。
 

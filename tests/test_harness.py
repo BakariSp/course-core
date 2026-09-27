@@ -140,7 +140,8 @@ def test_budget_links_terms_and_nodes(app, ws):
 
 
 def test_schema_includes_spec_fields(app):
-    fetch, submit, outline, section, repair = app.harness.tool_schemas()
+    fetch, submit, research, outline, section, repair = app.harness.tool_schemas()
+    assert "points" in research["parameters"]["properties"]["knowledge"]["required"]
     assert repair["name"] == "submit_repair" and repair["parameters"]["required"] == ["parts"]
     stub = outline["parameters"]["properties"]["outline"]["properties"]["parts"]["items"]["properties"]["sections"]["items"]
     assert {"terms", "check", "reading"} <= set(stub["required"]) and "lab" in outline["parameters"]["properties"]["outline"]["properties"]
@@ -287,3 +288,9 @@ def test_every_prompt_part_is_versioned_with_its_content(app, runtime, fetcher, 
     hist = app.harness.versions.history("tutor-prep")
     assert [x["variant"] for x in hist][-2:] == [r1.variant, r2.variant] and hist[-1]["runs"] == 1
     assert [p["part"] for p in hist[-1]["changed"]] == ["prompt:rules"]  # 和上一版比改了什么
+
+
+def test_known_terms_cross_topics(app, monkeypatch):
+    """学过 Shell 的学习者备 test 学科的课时，echo、python 也算已经会的（命令不分学科）。"""
+    monkeypatch.setattr(app.learner, "known", lambda topic=None: {"echo"} if topic is None else set())
+    assert "echo" in app.harness.build_input("tools-01-shell")["known_terms"]

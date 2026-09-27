@@ -74,3 +74,15 @@ def test_exam_submit_through_http(req):
     assert status == 400 and "整卷" in r["error"]
     status, r = req("POST", "/api/exam/submit", {"lesson": "t/02-exam", "responses": {"q1": ["B"]}})
     assert status == 200 and r["questions"]["q1"]["result"] == "pass"
+
+
+def test_opening_a_section_starts_preparing_the_next_unit(req, app, root):
+    """D-040 ②：学第 N 单元时，第 N+1 单元在后台备好。"""
+    from tests.test_panel import _add_unit
+    _add_unit(root)
+    started = []
+    app.prep.prepare = lambda u, **kw: started.append(u)
+    status, r = req("POST", "/api/unit/progress", {"unit": "tools-01-shell", "section": 0, "event": "open"})
+    assert status == 200 and r["prefetch"] == "tools-02-git" and started == ["tools-02-git"]
+    status, r = req("POST", "/api/unit/progress", {"unit": "tools-01-shell", "section": 1, "event": "done"})
+    assert "prefetch" not in r                                  # 只有打开时才看要不要预备

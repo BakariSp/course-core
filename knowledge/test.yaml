@@ -1,0 +1,123 @@
+# 知识图（D-020）：节点 + 先修关系。状态不写在这里，由证据算出（study.py kg）。
+topic: test
+nodes:
+  test.tools.pwd:
+    title: pwd 命令
+    desc: 打印当前工作目录完整路径的 shell 命令。
+    kind: term
+    units:
+    - test-01-batchelder
+  test.tools.ls:
+    title: ls 命令
+    desc: 列出目录里文件名的 shell 命令。
+    kind: term
+    requires:
+    - test.tools.pwd
+    units:
+    - test-01-batchelder
+  test.tools.cat:
+    title: cat 命令
+    desc: 把文件内容原样打印到终端的程序。
+    kind: term
+    units:
+    - test-01-batchelder
+  test.tools.echo:
+    title: echo 命令
+    desc: 把收到的文字原样打印到终端的 shell 命令。
+    kind: term
+    units:
+    - test-01-batchelder
+  test.tools.redirect:
+    title: 重定向（> 和 >>）
+    desc: shell 在启动命令之前先把文件打开，把命令的输出送进文件而不是终端；> 覆盖，>> 追加。
+    kind: concept
+    requires:
+    - test.tools.echo
+    units:
+    - test-01-batchelder
+  test.tools.cp:
+    title: cp 命令
+    desc: 复制文件的 shell 命令，目标文件已存在时内容被覆盖。
+    kind: term
+    units:
+    - test-01-batchelder
+  test.tools.python:
+    title: python 命令
+    desc: 解释器程序，执行它收到的 .py 文件里的语句。
+    kind: term
+    units:
+    - test-01-batchelder
+  test.pytest.tool:
+    title: pytest
+    desc: 用 Python 写的测试运行器程序：按命名约定找出测试并逐个执行，最后报告哪些通过、哪些失败。
+    kind: term
+    requires:
+    - test.tools.python
+    units:
+    - test-01-batchelder
+  test.pytest.assert:
+    title: assert 语句
+    desc: Python 语句 assert 条件：条件为真时什么都不做，为假时抛 AssertionError，让这条测试失败。
+    kind: concept
+    requires:
+    - test.tools.python
+    units:
+    - test-01-batchelder
+  test.pytest.discovery:
+    title: pytest 测试发现规则
+    desc: pytest 默认找名字形如 test_*.py / *_test.py 的文件，执行里面名字以 test_ 开头的函数。
+    kind: concept
+    requires:
+    - test.pytest.tool
+    units:
+    - test-01-batchelder
+  test.pytest.failure_report:
+    title: pytest 失败报告
+    desc: FAILURES 段里的三段信息：失败的测试名、失败的断言原文、断言里各子表达式的实际值。
+    kind: concept
+    requires:
+    - test.pytest.assert
+    units:
+    - test-01-batchelder
+  test.pytest.exitcode:
+    title: pytest 退出码
+    desc: 程序结束时交给 shell 的整数：pytest 全绿是 0、有测试失败是 1，用 echo $? 查看。
+    kind: concept
+    requires:
+    - test.pytest.tool
+    units:
+    - test-01-batchelder
+  test.testing.mutation:
+    title: 变异（改坏代码看测试是否报警）
+    desc: 故意把被测代码改坏一处再跑测试，看测试会不会报警的一种验证手法。
+    kind: concept
+    requires:
+    - test.pytest.assert
+    - test.pytest.tool
+    units:
+    - test-01-batchelder
+  test.testing.empty_test:
+    title: 空测试
+    desc: 没有断言或断言恒真、pytest 报 passed 却抓不住任何错误的测试。
+    kind: concept
+    requires:
+    - test.pytest.assert
+    units:
+    - test-01-batchelder
+  test.testing.convenient_input:
+    title: 只喂了方便的输入
+    desc: 测试用的数据对实现太宽松（如正好整除），实现改坏了这条测试也不会失败。
+    kind: concept
+    requires:
+    - test.testing.empty_test
+    units:
+    - test-01-batchelder
+  test.testing.red_first:
+    title: 先让它红
+    desc: 验证一条新测试真的在测东西：先指向已知坏掉的实现看它失败，再换回正确实现看它通过。
+    kind: skill
+    requires:
+    - test.testing.mutation
+    - test.pytest.assert
+    units:
+    - test-01-batchelder

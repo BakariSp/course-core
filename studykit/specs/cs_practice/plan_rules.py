@@ -11,6 +11,10 @@ from studykit.specs.cs_practice.safety import command_safety
 # WHY: 这些是 shell 语法里跟在别的词后面的关键字，出现在行首不代表是一个新命令。
 _NOT_COMMANDS = {"then", "do", "done", "fi", "else", "elif", "esac", "in", "{", "}", "(", ")", "!"}
 _CMD = re.compile(r"^[a-z][a-z0-9_+-]*$")
+# WHY: 讲解里的行内代码常是 Python（`assert add(1, 2) == 3`、`from calc import add`）或普通词组（`syntax error`），不是 shell 命令
+_PYTHON_KEYWORDS = {"from", "import", "assert", "def", "return", "class", "lambda", "raise", "with", "as", "print", "yield",
+                    "async", "await", "try", "except", "finally", "pass", "not", "and", "or", "is", "none", "true", "false"}
+_NOT_SHELL = re.compile(r"[()=:\[\]{}]|==|\bimport\b")
 
 
 def command_words(text: str) -> set[str]:
@@ -29,9 +33,13 @@ def inline_commands(markdown: str) -> set[str]:
     """讲解里行内代码中的命令。只看至少两个词的片段：单个词（如 `g`、`-i`）多半是参数或文件名，不是命令。"""
     words = set()
     for span in re.findall(r"(?<!`)`([^`\n]+)`(?!`)", markdown or ""):
-        if len(span.split()) >= 2:
-            words |= command_words(span)
-    return words
+        if len(span.split()) >= 2 and not _NOT_SHELL.search(span):
+            words |= {w for w in command_words(span) if w not in _PYTHON_KEYWORDS}
+    # 只有像命令的词才算：两个英文单词的词组（`syntax error`）第二个词不是参数、也不是路径时，多半是普通说法
+    return {w for w in words if w not in _PROSE}
+
+
+_PROSE = {"syntax", "error", "the", "a", "an", "this", "that"}
 
 
 def declared_commands(plan: dict, limits: PlanLimits) -> list[Finding]:
@@ -45,8 +53,10 @@ def declared_commands(plan: dict, limits: PlanLimits) -> list[Finding]:
             used |= command_words(t.get("command", ""))
         undeclared = sorted(w for w in used if w not in known)
         if undeclared:
+            # 写整份计划或大纲的人能加新词；分步写一节的人不能（新词归大纲，D-038），所以两种改法都说清
             errors.append(Finding(section_address(i), f"第 {i + 1} 节「{s.get('title', '')}」：用到了学习者还不认识的命令 "
-                                  f"{', '.join(undeclared)}。要么列进这一节的 terms（给一句话解释），要么换成已经学过的命令",
+                                  f"{', '.join(undeclared)}（没掌握，也不是这一节或前面几节的新词）。换成学习者已经会的命令，"
+                                  "或者只在讲解里用文字说它做什么；如果这一节确实要教它，它得是大纲分给这一节的新词",
                                   EVALUATOR))
     return errors
 

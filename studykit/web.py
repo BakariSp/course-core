@@ -84,9 +84,19 @@ def make_handler(app: App, token: str, port: int):
         if path == "/api/unit/progress":
             extra = {k: body.get(k) for k in ("kind", "node", "action", "text", "rating", "away_minutes", "counted")}
             extra = {k: v for k, v in extra.items() if v is not None}
-            return app.course.record(body["unit"], body.get("section"), body["event"], body.get("minutes"), **extra)
+            out = app.course.record(body["unit"], body.get("section"), body["event"], body.get("minutes"), **extra)
+            if body["event"] == "open":                     # 学第 N 单元时，第 N+1 单元在后台备好（D-040 ②）
+                try:
+                    nxt = app.panel.prefetch_after(body["unit"])
+                except Exception:  # noqa: BLE001  预备失败不能影响学习；原因会记在备课状态里
+                    nxt = None
+                if nxt:
+                    out = {**out, "prefetch": nxt}
+            return out
         if path == "/api/panel/prepare":
             return app.panel.prepare(body["unit"])
+        if path == "/api/panel/knowledge":
+            return app.panel.build_knowledge()
         if path == "/api/panel/publish":
             return app.panel.publish(body["unit"])
         if path == "/api/unit/check":
