@@ -10,50 +10,80 @@
 schema_version: 2
 goal: 能验证 AI 写的代码对不对、能独立判断架构、能交付稳定的产品
 
-# 终点（D-048）：学完能做到什么 + 怎么验收。路径是从这几条按先修关系倒推出来的。
+# 终点（D-062，替换 D-048 的 C1–C5）：产品全链路地图。6 段（S，数据流经过的层）+ 3 个横切面（X）。
+# 每一项都要能回答三问：机制（它怎么运作）/ 优化（慢在哪、会在哪坏、怎么改）/ 验证（AI 写了这段，怎么判断对不对）。
+# 验收都在 cs-study 或 nanoteacher 的真实代码上做。路径按数据流和先修关系排。
 destination:
-  - id: C1
-    can: 读路径：给一个现有功能，说出它经过哪几层、哪些模块、读写哪些数据、守住哪些不变量
-    accept: 在 cs-study 和 nanoteacher 上各走一遍一个功能（比如"提交一道题"），先预测代码在哪、再到仓库里验证
-    units: [design-01-ousterhout, design-02-layers]
-  - id: C2
-    can: 设计新功能：写出数据模型、放在哪层、新增哪个端口、规则怎么算、怎么评估
-    accept: 为"分析学习者的问题 → 找出知识点 → 更新掌握度"写一份设计文档，经得起追问
-    units: [db-01-sqlbolt, design-01-ousterhout, design-02-layers, db-03-txn, agent-02-capstone]
-  - id: C3
-    can: 搭护栏：让便宜的模型照着现有模块写代码，写错了能被拦下来
-    accept: 把 C2 的设计交给便宜模型实现，通过测试、架构测试、类型检查；故意塞一个越层写法，护栏拦得住
-    units: [test-01-batchelder, test-02-pytest, tools-04-quality, tools-05-agentic, agent-02-capstone]
-  - id: C4
-    can: 评估 AI 部件：给 LLM 负责的那一步建评测，知道改一版 prompt 是变好还是变坏
-    accept: 为"从问题里抽知识点"建一套评测集，说出准确率，对比两版 prompt
-    units: [agent-01-effective, agent-02-capstone]
-  - id: C5
-    can: 审多租户隔离：判断一个接口是不是每个请求都在后端鉴权、数据和文件按租户隔离
+  - id: S1
+    can: 界面：组件和状态怎么组织、一次交互怎么变成请求、界面怎么按用户的心智模型设计
+    accept: 在 cs-study 的 /app 上挑一个页面，说出数据从哪个接口来、状态放在哪、改一处会影响哪些组件；评一份 AI 写的界面改动
+    units: [lang-02-react]
+  - id: S2
+    can: 网络：HTTP 请求与会话、TCP 长连接、SSE 怎么推流、断线怎么续
+    accept: 讲清 cs-study 的 /api/flow/stream（Last-Event-ID 续推）和 nanoteacher 的聊天 SSE；解释为什么重启会断开所有 SSE、怎么改
+    units: [net-01-overview, net-02-http, net-03-tcp, net-04-sse]
+  - id: S3
+    can: 后端服务：分层、端口、依赖注入；进程、线程、锁、async 在一次请求里各管什么
+    accept: 在 cs-study 和 nanoteacher 上各走一遍一个功能经过哪几层、读写哪些数据；解释 4 个 worker 下为什么不能把跨请求状态放进程内字典
+    units: [design-01-ousterhout, design-02-layers, os-01-process, os-02-thread, os-03-sync, lang-01-asyncio]
+  - id: S4
+    can: Agent 与 harness：prompt 怎么组装、上下文怎么配、工具怎么给、产出循环怎么收敛、怎么评测
+    accept: 读 cs-study 的 harness 和备课循环，说出一次备课每一步的输入输出；为 LLM 负责的一步建评测，对比两版 prompt
+    units: [agent-01-effective, tools-05-agentic, agent-02-capstone]
+  - id: S5
+    can: 学习者模型：学习数据怎么建模和储存、掌握度与知识点权重怎么更新、用什么算法、怎么知道算得准
+    accept: 为"分析学习者的问题 → 找出知识点 → 更新掌握度"写设计文档（数据模型、算法、评测），经得起追问
+    units: [lm-01-model, db-01-sqlbolt, agent-02-capstone]
+  - id: S6
+    can: 存储：SQL、事务与隔离级别、索引、并发控制、文件写入的崩溃一致性
+    accept: 解释 SQLite WAL 下写锁什么时候成为瓶颈、atomic_write_text 为什么是临时文件 + rename；给一条慢查询说出该加什么索引
+    units: [db-01-sqlbolt, db-02-index, db-03-txn, db-04-cc, os-04-fs]
+  - id: X1
+    can: 隔离与安全：每个请求都在后端鉴权、数据和文件按租户隔离、注入类漏洞
     accept: 在 nanoteacher 上审一个接口，指出隔离靠什么保证、哪里可能漏
     units: [net-02-http, db-01-sqlbolt, sec-01-access, sec-02-auth, sec-03-path, sec-04-ssrf, sec-05-tenant]
+  - id: X2
+    can: 性能与扩展：响应慢在哪一段、复杂度问题、从单机到多用户要改什么
+    accept: 给 nanoteacher 的一次聊天请求量出各段耗时，指出瓶颈和改法；说出扩到 1 万用户先坏的是哪里
+    units: [db-02-index, dsa-01, sysdesign-01]
+  - id: X3
+    can: 验证：测试、调试、护栏（架构测试、类型检查），判断 vibe coding 的结果是否可信
+    accept: 把一份设计交给便宜模型实现，通过测试、架构测试、类型检查；故意塞一个越层写法，护栏拦得住
+    units: [tools-01-shell, tools-02-git, tools-03-debug, test-01-batchelder, test-02-pytest, tools-04-quality]
 
-# 学习路径（D-048）：按先修关系排，可以跨学科；没列进来的单元排在后面，用到再学。
-# 多租户（C5）优先：HTTP 和 SQL 是它的先修；审 nanoteacher 要先会读分层（C1），所以 sec-05 排在 design-02 后面。
+# 学习路径（D-062）：学完、在学的留在最前面（不动已学的）；之后按数据流和先修排。没列进来的单元排在后面。
+# 先修：SSE 要 TCP 长连接和 async；并发控制要线程和锁；多租户审查要先会读分层；学习者模型要落到存储（事务）。
 path:
   - tools-01-shell
   - tools-02-git
   - tools-03-debug
   - test-01-batchelder
-  - test-02-pytest
+  - net-01-overview
   - net-02-http
+  - test-02-pytest
   - db-01-sqlbolt
   - sec-01-access
   - sec-02-auth
-  - sec-03-path
-  - sec-04-ssrf
   - design-01-ousterhout
   - design-02-layers
-  - sec-05-tenant
-  - tools-04-quality
-  - tools-05-agentic
+  - os-01-process
+  - os-02-thread
+  - os-03-sync
+  - lang-01-asyncio
+  - net-03-tcp
+  - net-04-sse
+  - db-02-index
   - db-03-txn
+  - db-04-cc
+  - os-04-fs
+  - sec-03-path
+  - sec-04-ssrf
+  - sec-05-tenant
+  - lm-01-model
   - agent-01-effective
+  - tools-05-agentic
+  - tools-04-quality
+  - lang-02-react
   - agent-02-capstone
 
 stages:
@@ -225,6 +255,17 @@ subjects:
     units:
       - {id: agent-01-effective, title: Building Effective Agents, sources: [{ref: bea}]}
       - {id: agent-02-capstone, title: 验收项目：问题 → 知识点 → 掌握度, requests: [按 C2 → C3 → C4 做：自己写设计，便宜模型实现，建评测；这是把导师手动做的 kg observe 自动化]}
+
+  - id: lm
+    title: 学习者建模
+    priority: P1
+    stage: judge
+    goal: 能设计学习数据的模型，说清掌握度和知识点权重怎么更新、用什么算法、怎么评估准不准
+    scope: 知识追踪、间隔重复（材料待定）
+    project_links:
+      - {where: cs-study 的证据表和掌握度投影（D-056）, concept: 事件溯源、掌握度估计}
+    units:
+      - {id: lm-01-model, title: 学习者模型：掌握度与复习排程, scope: open, requests: [材料还没定，候选是知识追踪和间隔重复；例子用 cs-study 自己的证据和掌握度计算]}
 
   - id: dsa
     title: 数据结构与算法
