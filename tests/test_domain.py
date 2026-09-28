@@ -494,20 +494,36 @@ def test_course_definition_is_structured_and_ordered():
         c.find("tools-99-x")
 
 
+DEST = [{"id": "C1", "can": "读路径", "accept": "走一遍提交答案", "units": ["tools-02-git"]}]
+phase = lambda title, *units, fills=(): {"title": title, "fills": list(fills), "units": list(units)}  # noqa: E731
+
+
 def test_path_sets_learning_order_across_subjects_and_destination_names_capabilities():
-    """D-048：终点能力 + 学习路径。路径里的单元按路径顺序在前，没进路径的按学科顺序排在后面。"""
-    c = curriculum.parse_course({**COURSE, "path": ["dist-01", "tools-01-shell"],
-                                 "destination": [{"id": "C1", "can": "读路径", "accept": "走一遍提交答案", "units": ["tools-02-git"]}]})
+    """D-048、D-064：终点能力 + 分阶段的路线。路线上的单元按阶段顺序在前，没进路线的按学科顺序排在后面。"""
+    c = curriculum.parse_course({**COURSE, "destination": DEST,
+                                 "path": [phase("先分布式", "dist-01", fills=["C1"]), phase("再 shell", "tools-01-shell")]})
     assert c.unit_ids() == ["dist-01", "tools-01-shell", "tools-02-git"]
-    assert c.path == ("dist-01", "tools-01-shell")
+    assert c.path == ("dist-01", "tools-01-shell")                         # 各阶段首尾相接
+    assert c.phases[0] == curriculum.Phase("先分布式", ("dist-01",), ("C1",))
     assert c.destination == (curriculum.Capability("C1", "读路径", "走一遍提交答案", ("tools-02-git",)),)
     assert c.serves("tools-02-git") == ["C1"] and c.serves("dist-01") == []
-    assert curriculum.parse_course(COURSE).path == ()                       # 没写路径 = 学科顺序
+    assert curriculum.parse_course(COURSE).path == ()                       # 没写路线 = 学科顺序
+
+
+def test_current_phase_is_the_first_with_an_unfinished_unit():
+    ps = (curriculum.Phase("a", ("u1", "u2")), curriculum.Phase("b", ("u3",)))
+    assert curriculum.current_phase(ps, {"u1": "done", "u2": "learning", "u3": "learning"}) == 0   # 后面阶段在学的不算
+    assert curriculum.current_phase(ps, {"u1": "done", "u2": "done"}) == 1
+    assert curriculum.current_phase(ps, {"u1": "done", "u2": "done", "u3": "done"}) is None
 
 
 @pytest.mark.parametrize("patch, msg", [
-    ({"path": ["tools-99-x"]}, "路径"),
-    ({"path": ["tools-01-shell", "tools-01-shell"]}, "路径"),
+    ({"path": [phase("a", "tools-99-x")]}, "路径"),
+    ({"path": [phase("a", "tools-01-shell"), phase("b", "tools-01-shell")]}, "路径"),   # 跨阶段也不能重复
+    ({"path": ["tools-01-shell"]}, "阶段"),                                              # 旧格式（单元列表）要改成阶段
+    ({"path": [phase("a")]}, "没有单元"),
+    ({"path": [{"units": ["tools-01-shell"]}]}, "title"),
+    ({"path": [phase("a", "tools-01-shell", fills=["C9"])]}, "fills"),
     ({"destination": [{"id": "C1", "can": "x", "accept": "y", "units": ["nope-01-x"]}]}, "C1"),
     ({"destination": [{"id": "C1", "can": "x", "accept": "y"}, {"id": "C1", "can": "z", "accept": "w"}]}, "重复"),
     ({"destination": [{"id": "C1", "can": "x"}]}, "accept"),

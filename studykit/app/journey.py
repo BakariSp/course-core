@@ -44,7 +44,10 @@ class Journey:
                              "project_links": [{"where": x.where, "concept": x.concept} for x in s.project_links],
                              "units": units})
         flat.sort(key=lambda u: order.index(u["id"]))                  # 学习顺序按路径（D-048），不按学科
+        current = curriculum.current_phase(cdef.phases, {u["id"]: u["state"]["key"] for u in flat})
         return {"goal": cdef.goal, "path": list(cdef.path),
+                "phases": [{"title": p.title, "fills": list(p.fills), "units": list(p.units), "current": i == current}
+                           for i, p in enumerate(cdef.phases)],
                 "destination": [{"id": x.id, "can": x.can, "accept": x.accept, "units": list(x.units)} for x in cdef.destination],
                 "stages": [{"id": x.id, "title": x.title, "weeks": list(x.weeks), "pass": x.pass_, "practice": x.practice}
                            for x in cdef.stages],

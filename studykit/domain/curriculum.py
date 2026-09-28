@@ -83,12 +83,25 @@ class Capability:
 
 
 @dataclass(frozen=True)
+class Phase:
+    """路线上的一个阶段（D-064）：一组连着学的单元，fills 是它补终点地图的哪几段。"""
+    title: str
+    units: tuple[str, ...]
+    fills: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class CourseDef:
     goal: str
     stages: tuple[Stage, ...]
     subjects: tuple[Subject, ...]
     destination: tuple[Capability, ...] = ()
-    path: tuple[str, ...] = ()            # 学习路径（D-048）：从终点按先修倒推出的顺序，可以跨学科
+    phases: tuple[Phase, ...] = ()        # 学习路线（D-048、D-064）：按阶段分组，可以跨学科
+
+    @property
+    def path(self) -> tuple[str, ...]:
+        """路线上的单元，按学习顺序（各阶段首尾相接）。"""
+        return tuple(u for p in self.phases for u in p.units)
 
     def units(self) -> list[tuple[Subject, Unit]]:
         """全部单元，按学习顺序：路径里的按路径顺序在前，没进路径的按学科顺序排在后面。"""
@@ -170,11 +183,29 @@ def parse_course(data: dict) -> CourseDef:
         links = tuple(ProjectLink(str(x.get("where", "")), str(x.get("concept", ""))) for x in s.get("project_links") or [])
         subjects.append(Subject(sid, str(s.get("title") or sid), str(s.get("priority") or ""), str(s.get("stage") or ""),
                                 str(s.get("goal") or ""), sources, tuple(units), links, str(s.get("scope") or "")))
-    path = tuple(str(x) for x in data.get("path") or [])
-    bad = [x for x in path if x not in seen_units]
+    destination = _destination(data, seen_units)
+    phases = _phases(data, seen_units, {c.id for c in destination})
+    return CourseDef(str(data.get("goal") or ""), stages, tuple(subjects), destination, phases)
+
+
+def _phases(data: dict, units: set[str], caps: set[str]) -> tuple[Phase, ...]:
+    out = []
+    for i, x in enumerate(data.get("path") or []):
+        if not isinstance(x, dict):
+            raise CourseDefError(f"路径的第 {i + 1} 项要是一个阶段（title、fills、units），不是 {x!r}")
+        title = _req(x, "title", f"路径的第 {i + 1} 个阶段")
+        pu = tuple(str(u) for u in x.get("units") or [])
+        if not pu:
+            raise CourseDefError(f"阶段「{title}」没有单元")
+        fills = tuple(str(f) for f in x.get("fills") or [])
+        if any(f not in caps for f in fills):
+            raise CourseDefError(f"阶段「{title}」的 fills 里有终点没有的一项：{[f for f in fills if f not in caps]}")
+        out.append(Phase(title, pu, fills))
+    path = [u for p in out for u in p.units]
+    bad = [x for x in path if x not in units]
     if bad or len(set(path)) != len(path):
         raise CourseDefError(f"路径里有不存在或重复的单元：{bad or path}")
-    return CourseDef(str(data.get("goal") or ""), stages, tuple(subjects), _destination(data, seen_units), path)
+    return tuple(out)
 
 
 def _destination(data: dict, units: set[str]) -> tuple[Capability, ...]:
@@ -278,6 +309,11 @@ def next_steps(units: list[dict]) -> list[dict]:
         if first:
             out.append({"unit": first["id"], "kind": "start", "reason": "前面的单元都学完了，这个已经备好"})
     return out
+
+
+def current_phase(phases: tuple[Phase, ...], states: dict[str, str]) -> int | None:
+    """你在第几个阶段（D-064）：第一个还有没学完单元的阶段。全学完了是 None。"""
+    return next((i for i, p in enumerate(phases) if any(states.get(u) != "done" for u in p.units)), None)
 
 
 def queued_after(order: list[str], unit: str) -> str | None:

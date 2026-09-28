@@ -151,18 +151,21 @@ def test_course_for_the_learner_has_states_next_step_and_curriculum(req, app, ro
 
 
 def test_course_follows_the_learning_path_across_subjects(req, root):
-    """D-048：路径跨学科排顺序，排队、下一步都按路径走；终点的每条能力列出来，单元标出服务哪条。"""
+    """D-048、D-064：路线跨学科、分阶段，排队、下一步都按路线走；终点的每条能力列出来，单元标出服务哪条。"""
     import yaml
     from tests.conftest import add_unit
     add_unit(root, "tools-02-git", "Git")
     p = root / "progress" / "course.yaml"
     data = yaml.safe_load(p.read_text(encoding="utf-8"))
     data["subjects"].append({"id": "sec", "title": "安全", "units": [{"id": "sec-01-access", "title": "访问控制"}]})
-    data["path"] = ["tools-01-shell", "sec-01-access", "tools-02-git"]
+    data["path"] = [{"title": "基本功", "units": ["tools-01-shell"]},
+                    {"title": "隔离", "fills": ["C5"], "units": ["sec-01-access", "tools-02-git"]}]
     data["destination"] = [{"id": "C5", "can": "审多租户隔离", "accept": "审一个接口", "units": ["sec-01-access"]}]
     p.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
     c = req("GET", "/api/course")[1]
     assert c["path"] == ["tools-01-shell", "sec-01-access", "tools-02-git"]
+    assert c["phases"] == [{"title": "基本功", "fills": [], "units": ["tools-01-shell"], "current": True},
+                           {"title": "隔离", "fills": ["C5"], "units": ["sec-01-access", "tools-02-git"], "current": False}]
     assert c["destination"] == [{"id": "C5", "can": "审多租户隔离", "accept": "审一个接口", "units": ["sec-01-access"]}]
     units = {u["id"]: u for s in c["subjects"] for u in s["units"]}
     assert units["sec-01-access"]["queued_after"] == "tools-01-shell" and units["tools-02-git"]["queued_after"] == "sec-01-access"
