@@ -35,6 +35,9 @@ class EvidenceStore(Protocol):
 
     def get(self, evidence_id: str) -> Evidence | None: ...
 
+    def last_seq(self, learner: str) -> int:
+        """这个学习者最后一条证据的写入序号（没有就是 0）。证据只追加：序号没变，证据就没变。"""
+
 
 class PlanStore(Protocol):
     """发布过的课程计划：每一版不可变；某个单元的当前版本 = 最近一次发布的那一版。"""

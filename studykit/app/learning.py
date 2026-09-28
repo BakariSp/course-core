@@ -12,7 +12,7 @@ import hashlib
 import json
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from studykit.app.ports import (CheckCtx, CheckpointGrader, Clock, Content, EvidenceStore, IdGen, JobRunner, PlanStore,
@@ -38,6 +38,7 @@ class Deps:
     ids: IdGen
     verbs: VerbRegistry
     learner: str
+    _all: tuple = field(default=(None, ()), init=False, repr=False, compare=False)   # (最后一条的序号, 全部证据)
 
     def ts(self) -> str:
         return self.clock.now().isoformat(timespec="seconds")
@@ -49,7 +50,12 @@ class Deps:
         return e
 
     def all(self) -> list[Evidence]:
-        return self.evidence.query(self.learner)
+        """全部证据。读一次记住，最后一条的序号变了才重读。
+        WHY: 课程列表每个单元都要算学习时长，每次都读全部证据，课程页要 1 秒多（F-094）。"""
+        seq = self.evidence.last_seq(self.learner)
+        if self._all[0] != seq:
+            self._all = (seq, tuple(self.evidence.query(self.learner)))
+        return list(self._all[1])
 
 
 def _version(*parts) -> str:

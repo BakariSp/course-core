@@ -440,3 +440,16 @@ def test_graded_short_answer_shows_reference_answer_and_rubric(app, runtime):
     assert q2["explain"] == "两个问题" and q2["rubric"][0] == "说出 cd 失败不停（0.5）"
     view = {x["id"]: x for x in app.assessment.view(EXAM)["questions"]}
     assert view["q2"]["previous"]["rubric"] == q2["rubric"]
+
+
+def test_all_evidence_is_read_once_until_something_new_is_appended(app, unit):
+    """课程列表每个单元都要算学习时长：全部证据只读一次，追加了新证据才重读（证据只追加，最后一条没变就没变，F-094）。"""
+    d = app.course.d
+    calls = []
+    query = d.evidence.query
+    d.evidence.query = lambda *a, **kw: (calls.append(1) if not kw else None) or query(*a, **kw)   # 只数读全部的
+    app.course.record(unit, 0, "open")
+    first = d.all()
+    assert d.all() == first and len(calls) == 1
+    app.course.record(unit, 0, "done")
+    assert len(d.all()) == len(first) + 1 and len(calls) == 2

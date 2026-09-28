@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterable
@@ -189,6 +190,7 @@ class SqliteStore:
 
     def __init__(self, path: Path):
         self.path = path
+        self._local = threading.local()
         path.parent.mkdir(parents=True, exist_ok=True)
         with self._conn() as c:
             version = c.execute("PRAGMA user_version").fetchone()[0]
@@ -199,15 +201,17 @@ class SqliteStore:
 
     @contextmanager
     def _conn(self):
-        conn = sqlite3.connect(self.path, timeout=10, isolation_level=None)
-        try:
+        # 每个线程一个连接，用完不关，同一线程接着用。
+        # WHY: Windows 上开关一次连接约 4ms，课程页一次要读一百多次（F-094）；网页服务每个请求一个线程，请求结束连接随线程回收。
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = sqlite3.connect(self.path, timeout=10, isolation_level=None)
             conn.execute("PRAGMA journal_mode = WAL")
             conn.execute("PRAGMA foreign_keys = ON")
             conn.execute("PRAGMA busy_timeout = 10000")
             conn.row_factory = sqlite3.Row
-            yield conn
-        finally:
-            conn.close()
+            self._local.conn = conn
+        yield conn
 
     @contextmanager
     def _tx(self):
@@ -254,6 +258,10 @@ class SqliteStore:
     def get(self, evidence_id: str) -> Evidence | None:
         rows = self._select("id = ?", [evidence_id])
         return rows[0] if rows else None
+
+    def last_seq(self, learner: str) -> int:
+        with self._conn() as c:
+            return c.execute("SELECT COALESCE(MAX(seq), 0) FROM evidence WHERE learner = ?", (learner,)).fetchone()[0]
 
     def _select(self, where: str, args: list) -> list[Evidence]:
         # WHY: nodes 的顺序有意义（作答的第一个节点是它考的概念），按写入顺序拼回来。
