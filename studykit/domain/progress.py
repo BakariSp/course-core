@@ -19,7 +19,7 @@ def project(plan: dict, pid: str, evidence: list[Evidence], spent: dict[int, flo
     sections = sections_of(plan)
     done: dict[int, bool] = {}
     skipped, ratings, cps, terms = set(), {}, {}, {}
-    last = None
+    last, last_at = None, None
     for e in evidence:
         s, v = e.section, e.verb
         if v == "completed":
@@ -43,8 +43,8 @@ def project(plan: dict, pid: str, evidence: list[Evidence], spent: dict[int, flo
             c["hints"] = max(c["hints"], e.payload.get("level", 0))
         elif v == "voted_term":
             terms[e.object_id] = e.payload["vote"]
-        if v in ("opened", "completed", "answered") and isinstance(s, int):
-            last = s
+        if v in ("opened", "completed", "answered", "skipped") and isinstance(s, int):
+            last, last_at = s, max(last_at or "", e.ts)
     passed = []
     for i, sec in enumerate(sections):
         items = sec.get("checkpoint") or []
@@ -53,11 +53,13 @@ def project(plan: dict, pid: str, evidence: list[Evidence], spent: dict[int, flo
                 passed.append(i)
         elif done.get(i):                       # 没有检查点的小节：自己点「学完了」
             passed.append(i)
-    return {"plan": pid, "passed": passed, "done": passed,
+    # 走过 = 通过、自己点了学完、或跳过（D-064）：各节都走过就算学完这个单元；没通过的检查点照旧是证据，进复习
+    walked = sorted(set(passed) | {i for i in skipped | {k for k, d in done.items() if d} if 0 <= i < len(sections)})
+    return {"plan": pid, "passed": passed, "done": passed, "walked": walked,
             "skipped": sorted(s for s in skipped if s not in passed),
             "checkpoints": cps, "ratings": ratings, "terms": terms,
             "spent_minutes": {str(k): round(v, 1) for k, v in sorted(spent.items())},
-            "total_spent": round(sum(spent.values()), 1), "last_section": last}
+            "total_spent": round(sum(spent.values()), 1), "last_section": last, "last_at": last_at}
 
 
 def hints_used(evidence: list[Evidence], section: int, idx: int) -> int:

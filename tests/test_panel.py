@@ -18,7 +18,7 @@ def test_overview_maps_curriculum_to_study_and_prep_status(app, unit, root):
     _add_unit(root)
     units = _units(app)
     shell, git = units["tools-01-shell"], units["tools-02-git"]
-    assert shell["requests"] == ["零基础"] and shell["course"] == {"passed": 0, "sections": 3}
+    assert shell["requests"] == ["零基础"] and shell["course"] == {"passed": 0, "walked": 0, "skipped": 0, "sections": 3, "last_at": None}
     quizzes = {q["ref"]: q for q in shell["quizzes"]}                      # 一个单元可以有几套题
     assert quizzes["t/01-x"]["questions"] == 4 and quizzes["t/01-x"]["answered"] == 0
     assert shell["prep"]["stage"] == "published"                 # 发布过（样例计划没有对应的运行记录）

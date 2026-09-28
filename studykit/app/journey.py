@@ -27,8 +27,7 @@ class Journey:
                 quiz = f["quizzes"][0] if f["quizzes"] else None
                 state = curriculum.unit_state(
                     scope_open=u.scope_open, prep_stage=f["prep"]["stage"],
-                    passed=f["course"]["passed"] if f["course"] else None, sections=f["course"]["sections"] if f["course"] else None,
-                    quiz_answered=quiz["answered"] if quiz else None, quiz_questions=quiz["questions"] if quiz else None)
+                    walked=f["course"]["walked"] if f["course"] else None, sections=f["course"]["sections"] if f["course"] else None)
                 row = {"id": u.id, "title": u.title, "requests": list(u.requests), "scope_open": u.scope_open,
                        "sources": [{"title": (s.source(x.ref) or curriculum.Source(x.ref, x.ref, "")).title,
                                     "url": x.url or (s.source(x.ref).url if s.source(x.ref) else ""), "note": x.note}
@@ -36,7 +35,7 @@ class Journey:
                        "course": f["course"], "quiz": quiz, "state": state, "knowledge": bool(f["knowledge"]),
                        "prep": {k: f["prep"].get(k) for k in ("stage", "progress", "stuck", "stopped", "job_error")},
                        "queued_after": curriculum.queued_after(order, u.id) if state["key"] == "queued" else None,
-                       "serves": cdef.serves(u.id)}
+                       "serves": cdef.serves(u.id), "last_at": (f["course"] or {}).get("last_at")}
                 units.append(row)
                 flat.append(row)
             subjects.append({"id": s.id, "title": s.title, "priority": s.priority, "stage": s.stage, "goal": s.goal, "scope": s.scope,
@@ -55,15 +54,16 @@ class Journey:
                 "next": [self._detail(n, {u["id"]: u for u in flat}) for n in curriculum.next_steps(flat)]}
 
     def _detail(self, step: dict, units: dict) -> dict:
-        """下一步补上具体是哪一节、多少分钟（继续学 / 开始学），或者哪套单元题。"""
+        """下一步补上具体是哪一节、多少分钟：接着上次那一节；上次那节走过了，就是它后面第一节没走过的（D-064）。"""
         u = units[step["unit"]]
         out = {**step, "title": u["title"]}
-        if step["kind"] == "quiz":
-            return {**out, "quiz": u["quiz"]}
         plan = self.course.plan(u["id"])
-        passed = set(self.course.progress(u["id"])["passed"])
-        secs = plans.sections_of(plan)
-        i = next((k for k in range(len(secs)) if k not in passed), None)
+        p = self.course.progress(u["id"])
+        secs, walked, last = plans.sections_of(plan), set(p["walked"]), p["last_section"]
+        order = list(range(len(secs)))
+        if last is not None and 0 <= last < len(secs):
+            order = order[last:] + order[:last]
+        i = next((k for k in order if k not in walked), None)
         if i is not None:
             out["section"] = {"index": i, "title": secs[i].get("title", ""), "minutes": secs[i].get("minutes")}
         return out
