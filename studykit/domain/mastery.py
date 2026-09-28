@@ -1,6 +1,7 @@
 """掌握度规则（D-003）：每个概念的掌握等级 = 最近几次平均分达标的最高一级（0-4）。
 
 算分的证据：answered（练习题）、graded（批改，替代它指向的待批改作答）、logged_practice（课外练习）。
+带 parts 的作答 / 批改（D-056）：每个得分点记到自己的知识点和等级上，同一个知识点、同一级的得分点取平均。
 "今天"由调用方给出。
 """
 from __future__ import annotations
@@ -35,6 +36,7 @@ class Scored:
     ref: str                   # 题目（<课时>#<题号>）或 external
     note: str = ""
     feedback: tuple[str, ...] = ()
+    misconceptions: tuple[str, ...] = ()     # 这次命中的误解（得分点上标的）
 
 
 def scored(evidence: list[Evidence]) -> tuple[list[Scored], list[Evidence]]:
@@ -50,15 +52,27 @@ def scored(evidence: list[Evidence]) -> tuple[list[Scored], list[Evidence]]:
                 if e.id not in graded_ids:
                     pending.append(e)
                 continue
-            out.append(Scored(e.nodes[0], int(e.payload.get("level", 1)), e.score, e.ts, e.object_id,
-                              "", tuple(e.payload.get("feedback") or ())))
+            fb = tuple(e.payload.get("feedback") or ())
+            out += _by_part(e, e.object_id, "", fb) or [
+                Scored(e.nodes[0], int(e.payload.get("level", 1)), e.score, e.ts, e.object_id, "", fb)]
         elif e.verb == "graded" and e.caused_by in answers and last_grade[e.caused_by] == e.id:
             a = answers[e.caused_by]
-            out.append(Scored(a.nodes[0], int(a.payload.get("level", 1)), e.score, e.ts, a.object_id,
-                              e.payload.get("note", "")))
+            note = e.payload.get("note", "")
+            out += _by_part(e, a.object_id, note) or [
+                Scored(a.nodes[0], int(a.payload.get("level", 1)), e.score, e.ts, a.object_id, note)]
         elif e.verb == "logged_practice":
             out.append(Scored(e.nodes[0], int(e.payload["level"]), e.score, e.ts, "external", e.payload.get("note", "")))
     return out, pending
+
+
+def _by_part(e: Evidence, ref: str, note: str, feedback: tuple[str, ...] = ()) -> list[Scored]:
+    """一条带 parts 的证据 → 每个（知识点, 等级）一条：分数取这些得分点的平均，带上命中的误解。"""
+    groups: dict[tuple[str, int], list[dict]] = defaultdict(list)
+    for p in e.payload.get("parts") or []:
+        groups[(p["concept"], int(p["level"]))].append(p)
+    return [Scored(c, lv, round(sum(p["score"] for p in ps) / len(ps), 3), e.ts, ref, note, feedback,
+                   tuple(dict.fromkeys(p["misconception"] for p in ps if p.get("misconception"))))
+            for (c, lv), ps in groups.items()]
 
 
 def concept_stats(evidence: list[Evidence], today: dt.date) -> dict[str, dict]:
@@ -94,7 +108,8 @@ def concept_stats(evidence: list[Evidence], today: dt.date) -> dict[str, dict]:
             "stale": stale,
             "weak": bool(failing) or stale,
             "recent_mistakes": [{"ref": r.ref, "level": r.level, "score": r.score, "note": r.note,
-                                 "feedback": list(r.feedback)} for r in all_recs if r.score < PASS_SCORE][-3:],
+                                 "feedback": list(r.feedback), "misconceptions": list(r.misconceptions)}
+                                for r in all_recs if r.score < PASS_SCORE][-3:],
         }
     return stats
 

@@ -33,12 +33,13 @@ from studykit.app.ports import (AgentDef, AgentRuntime, Clock, Content, Fetcher,
                                  Spec)
 from studykit.app.paths import safe_path
 from studykit.app.versions import Versions, load_prompt, prompt_texts
-from studykit.domain import course_eval, harness as h, plan_check
+from studykit.domain import course_eval, curriculum, harness as h, plan_check
 from studykit.domain.artifact import Finding, blocking, repair_scope, within
 from studykit.domain.errors import CourseError, DomainError
-from studykit.domain.ids import UnitId
+from studykit.domain.ids import NODE_ID_RE, UnitId
 from studykit.domain.plan import (PLAN_SCHEMA_VERSION, assemble, fill_stub, plan_addresses, plan_minutes, replace_part,
                                   sections_of, stubs_of, with_section)
+from studykit.domain.transcript import parse_range, slice_text, youtube_target
 
 MAX_TEXT = 15000          # fetch_url 一次最多返回多少字
 MAX_LINKS = 80
@@ -60,21 +61,11 @@ def _read_jsonl(path: Path) -> list[dict]:
     return [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()] if path.exists() else []
 
 
-def _norm_host(host: str) -> str:
-    host = (host or "").lower().split(":")[0]
-    return host[4:] if host.startswith("www.") else host
-
-
-def allowed_hosts(curriculum: str) -> set[str]:
-    """白名单 = curriculum.md 里出现过的所有网站。改白名单就改 curriculum.md。"""
-    from urllib.parse import urlparse
-    return {_norm_host(urlparse(u).netloc) for u in re.findall(r"https?://[^\s)>\]]+", curriculum)}
-
-
 def is_allowed(url: str, hosts: set[str]) -> bool:
+    """白名单 = 课程定义里所有材料的域名（CourseDef.hosts，D-047）。"""
     from urllib.parse import urlparse
     p = urlparse(url)
-    return p.scheme in ("http", "https") and _norm_host(p.netloc) in hosts
+    return p.scheme in ("http", "https") and curriculum.norm_host(p.netloc) in hosts
 
 
 class Harness:
@@ -85,6 +76,16 @@ class Harness:
         self.course, self.learner, self.specs, self.clock, self.ids = course, learner, specs, clock, ids
         self.root, self.workspace, self.learner_id = root, workspace, learner_id
         self.versions = Versions(runs, clock)
+        self.extra_tools: dict[str, tuple[dict, object]] = {}   # 别的 agent 的环境工具（出题 agent 的 submit_quiz，D-041）
+
+    @property
+    def modules(self) -> tuple[plan_check.PracticeModule, ...]:
+        """练习形式目录（D-052）：core 的选择、填空 + 各学科 spec 加的（练习场……）。"""
+        return (*plan_check.CORE_MODULES, *(m for s in self.specs for m in s.modules))
+
+    def register_tool(self, name: str, schema: dict, fn) -> None:
+        """登记一个环境工具：schema = {description, parameters}，fn(ws, args) → 给模型看的文字；出错抛 ToolError。"""
+        self.extra_tools[name] = (schema, fn)
 
     # ---------- agent 定义与版本 ----------
 
@@ -96,14 +97,17 @@ class Harness:
 
     def model(self, agent: AgentDef, override: str | None = None) -> dict:
         m = dict(agent.spec["model"])
-        if override:
-            m["id"] = override
+        if override:  # "模型 id" 只换模型；"提供方/模型 id" 连提供方一起换
+            provider, _, mid = override.rpartition("/")
+            m["id"] = mid
+            if provider:
+                m["provider"] = provider
         return m
 
     def variant(self, agent: AgentDef, model: dict) -> h.Variant:
         """一次运行用的版本组合（D-022），每个文本组成的内容都存下来（D-033）。
         上下文配方和工具是代码，存的是源码：改了代码就是新版本（H1）。"""
-        spec_rules = [r for s in self.specs for r in (*s.plan_rules, *s.checkpoint_rules.values())]
+        spec_rules = [*(r for s in self.specs for r in s.plan_rules), *(m.rule for m in self.modules if m.rule)]
         src = lambda *objs: "\n\n".join(inspect.getsource(o) for o in objs)  # noqa: E731
         texts = {
             **prompt_texts(load_prompt(agent.dir, agent.spec)),
@@ -115,6 +119,8 @@ class Harness:
                                        Harness._submit_section, Harness._submit_repair, plan_check),
                                    src(*spec_rules) if spec_rules else ""]),
             "context": src(Harness.build_input, Harness.render_brief, Harness.render_section, Harness._reading),
+            # 练习形式目录是给 agent 看的文字，和 prompt 一样按内容记版本（D-052）
+            "modules": plan_check.render_catalog(self.modules, guides=True),
         }
         labels = {"model": f"{model['provider']}/{model['id']}" + (f":{model['thinking']}" if model.get("thinking") else ""),
                   "runtime": self.runtime.version}
@@ -124,30 +130,36 @@ class Harness:
 
     def build_input(self, unit: str) -> dict:
         """给 agent 的全部输入数据。只给和这个单元相关的学习者模型（D-020 第 1 级），不给全部。"""
-        unit = UnitId(unit)
-        topic_id, topic, u = self._find_unit(unit)
-        curriculum = (self.root / "curriculum.md").read_text(encoding="utf-8")
+        unit = str(UnitId(unit))
+        course = self.content.course()
+        subject, u = course.find(unit)
+        topic_id = subject.id
         nodes = self.content.graph()
         states = self.learner.states(nodes)
-        profile = self.root / "progress" / "learner.md"
         return {
-            "unit": unit, "unit_title": u.get("title", unit), "unit_notes": u.get("notes") or "无",
-            "topic_id": topic_id, "topic_title": topic.get("title", topic_id),
-            "curriculum_row": _curriculum_row(curriculum, topic_id),
-            "hosts": sorted(allowed_hosts(curriculum)),
+            "unit": unit, "unit_title": u.title, "unit_requests": "；".join(u.requests) or "无",
+            "topic_id": topic_id, "topic_title": subject.title,
+            "course_info": curriculum.render_for_brief(course, unit),
+            "hosts": sorted(course.hosts()),
             **self.course.settings(),
             # WHY: 命令和术语不分学科——Shell 单元学会的 echo、python，备 test 学科的课时也算已经会的
             "known_terms": sorted(self.learner.known()),
-            "known_titles": sorted(s.node.title for s in states.values() if s.state == "mastered" and s.node.topic == topic_id),
+            # WHY: 掌握的知识点也不分学科。只给本学科的，net-01 的简报里"已经掌握"是空的，agent 就从 pwd、ls 讲起
+            "known_titles": sorted({s.node.title for s in states.values() if s.state == "mastered"}),
+            # 学过（D-051）：路线上前面的单元教过、还没到掌握的。直接用、不当新词，第一次用到时回顾
+            "studied": self.learner.studied_before(unit),
             "existing_nodes": {nid: n.title for nid, n in nodes.items() if n.topic == topic_id},
             "related": self.learner.related(unit),
-            "learner": re.sub(r"<!--.*?-->", "", profile.read_text(encoding="utf-8"), flags=re.DOTALL).strip()
-            if profile.exists() else "（没有学习者画像）",
+            "learner": self.learner.brief_profile(),
         }
 
     @staticmethod
     def render_brief(task: str, i: dict) -> str:
         lines = ["已经掌握（讲解里可以直接用，不用再解释）：" + ("、".join(i["known_titles"]) or "（还没有）")]
+        if i.get("studied"):
+            lines.append("学过（路线上前面的单元教过，还没到掌握。直接用、不当新词；某一节第一次用到时，"
+                         "在那一节放一个回顾 recall：一句定义，页面问学习者还记不记得）：")
+            lines.append("、".join(f"{s['title']}（`{s['id']}`）" for s in i["studied"]))
         rel = i["related"]
         if rel["weak"]:
             lines.append("和这个单元相关的薄弱点（讲到时放慢、多给例子）：")
@@ -158,24 +170,21 @@ class Harness:
             lines.append("知识图里这个学科已有的节点（新词和检查点的 concept 优先用这些 id，不要重复提议）：")
             lines += [f"- `{nid}` {title}" for nid, title in sorted(i["existing_nodes"].items())]
         return task.format(unit_id=i["unit"], unit_title=i["unit_title"], topic_id=i["topic_id"],
-                           topic_title=i["topic_title"], unit_notes=i["unit_notes"], curriculum_row=i["curriculum_row"],
+                           topic_title=i["topic_title"], unit_requests=i["unit_requests"], course_info=i["course_info"],
                            learner=i["learner"], knowledge="\n".join(lines),
                            unit_budget_minutes=i["unit_budget_minutes"], session_minutes=i["session_minutes"],
                            max_new_terms=i["max_new_terms"])
-
-    def _find_unit(self, unit: str) -> tuple[str, dict, dict]:
-        for tid, topic in (self.content.syllabus().get("topics") or {}).items():
-            for u in topic.get("units") or []:
-                if u.get("id") == unit:
-                    return tid, topic, u
-        raise DomainError(f"syllabus.yaml 里没有单元 {unit}")
 
     # ---------- 运行 ----------
 
     def stage(self, agent: AgentDef, name: str) -> tuple[str, list[str]]:
         """一步的说明（接在单元简报后面）和这一步开放的工具。"""
         st = agent.spec["stages"][name]
-        return (agent.dir / st["task"]).read_text(encoding="utf-8"), list(st["tools"])
+        text = (agent.dir / st["task"]).read_text(encoding="utf-8")
+        # 大纲只看目录（挑形式）；一次写完整份、修复要连写法一起看。写一节只拿它那种的写法（render_section 之后替换）
+        text = (text.replace("{modules}", plan_check.render_catalog(self.modules))
+                .replace("{modules_with_guides}", plan_check.render_catalog(self.modules, guides=True)))
+        return text, list(st["tools"])
 
     def _start(self, agent: AgentDef, unit: str, suffix: str, data: dict, brief: str,
                files: dict[str, object] | None = None, grounded: list[dict] = ()) -> tuple[str, Path]:
@@ -213,13 +222,13 @@ class Harness:
         agent = self.agent(name)
         full = self.build_input(unit)
         # INVARIANT: 只放和学习者无关的输入；known_terms 为空（检查新词时不按任何学习者算）
-        data = {k: full[k] for k in ("unit", "unit_title", "topic_id", "topic_title", "curriculum_row", "hosts",
+        data = {k: full[k] for k in ("unit", "unit_title", "topic_id", "topic_title", "course_info", "hosts",
                                      "existing_nodes", "unit_budget_minutes", "session_minutes", "max_new_terms")}
         data["known_terms"] = []
         nodes = "\n".join(f"- `{nid}` {title}" for nid, title in sorted(data["existing_nodes"].items())) or "（还没有）"
         brief = (self.stage(agent, "research")[0].replace("{unit_id}", data["unit"]).replace("{unit_title}", data["unit_title"])
                  .replace("{topic_id}", data["topic_id"]).replace("{topic_title}", data["topic_title"])
-                 .replace("{curriculum_row}", data["curriculum_row"]).replace("{existing_nodes}", nodes))
+                 .replace("{course_info}", data["course_info"]).replace("{existing_nodes}", nodes))
         return self._go(agent, "research", unit, "-k", data, brief, model, timeout)
 
     def knowledge(self, name: str, unit: str) -> h.Run | None:
@@ -249,7 +258,8 @@ class Harness:
         base = self._base(outline_run.input)
         pages = self._fetched(self.dir(agent.name, outline_run.id))
         brief = (self.render_brief(agent.file("task").read_text(encoding="utf-8"), base)
-                 + self.render_section(self.stage(agent, "section")[0], outline, index, pages))
+                 + self.render_section(self.stage(agent, "section")[0], outline, index, pages, base)
+                 .replace("{check_guide}", plan_check.module_guide(self.modules, (stubs_of(outline)[index].get("check") or {}).get("type", ""))))
         data = {**base, "index": index, "outline_run": outline_run.id}
         return self._go(agent, "section", outline_run.unit, f"-s{index + 1}", data, brief, model, timeout,
                         files={"context.json": {"outline": outline}}, grounded=pages)
@@ -275,7 +285,20 @@ class Harness:
         return {k: v for k, v in inp.items() if k not in STAGE_KEYS}
 
     @staticmethod
-    def render_section(task: str, outline: dict, index: int, pages: list[dict]) -> str:
+    def learner_now(outline: dict, index: int, inp: dict) -> str:
+        """学到第 index 节时学习者会什么（D-043）：初学者基线 + 前面几节的新词和要点。
+        WHY: 各节并行写，每个写作者要拿到同一份"学习者此刻会什么"，不然各自假设、出现跳跃（F-064、F-065）。"""
+        lines = ["- 初学者基线（已经掌握的知识点）：" + ("、".join(inp.get("known_titles") or []) or "（还没有）"),
+                 "- 学过（路线上前面的单元教过，直接用；大纲给这一节放了回顾的，页面上会先回顾）："
+                 + ("、".join(s["title"] for s in inp.get("studied") or []) or "（没有）"),
+                 "- 已经会的命令和词：" + ("、".join(t for t in inp.get("known_terms") or [] if not NODE_ID_RE.match(t)) or "（还没有）")]
+        for i, st in enumerate(stubs_of(outline)[:index]):
+            terms = "、".join(t.get("term", "") for t in st.get("terms") or []) or "无"
+            lines.append(f"- 第 {i + 1} 节「{st.get('title', '')}」学过：{terms}；要点：" + ("；".join(st.get("teaches") or []) or "无"))
+        return "\n".join(lines)
+
+    @staticmethod
+    def render_section(task: str, outline: dict, index: int, pages: list[dict], inp: dict | None = None) -> str:
         stubs = stubs_of(outline)
         stub = stubs[index]
         dump = lambda v: "```json\n" + json.dumps(v, ensure_ascii=False, indent=1) + "\n```"  # noqa: E731
@@ -297,17 +320,22 @@ class Harness:
                 .replace("{stub}", dump(stub))
                 .replace("{outline}", dump(head) + "\n\n" + "\n\n".join(block(i, st) for i, st in enumerate(stubs)))
                 .replace("{lab}", dump(outline.get("lab") or {}))
-                .replace("{reading}", Harness._reading(pages, stub.get("reading") or [])))
+                .replace("{learner_now}", Harness.learner_now(outline, index, inp or {}))
+                .replace("{reading}", Harness._reading(pages, stub.get("reading") or [], parse_range(str(stub.get("video") or "")))))
 
     @staticmethod
-    def _reading(pages: list[dict], urls: list[str]) -> str:
-        """大纲给这一节列的依据页面 → 读到的原文（按段拼回去，截断）。WHY: 写一节的运行不用重新抓一遍页面。"""
+    def _reading(pages: list[dict], urls: list[str], video: tuple[int, int] | None = None) -> str:
+        """大纲给这一节列的依据页面 → 读到的原文（按段拼回去，截断）。WHY: 写一节的运行不用重新抓一遍页面。
+        视频字幕只给这一节对应的那一段（video = 大纲的时间段，D-043）：整段字幕太长，截断后只剩开头，和这一节无关。"""
         out, total = [], 0
         for url in urls:
             key = plan_check.url_key(url)
             chunks = sorted({f.get("start", 0): f.get("text", "") for f in pages
                              if key in (plan_check.url_key(f["url"]), plan_check.url_key(f.get("final_url", f["url"])))}.items())
-            text = "".join(t for _, t in chunks)[:MAX_READING]
+            text = "".join(t for _, t in chunks)
+            if video and youtube_target(url):
+                text = slice_text(text, *video)
+            text = text[:MAX_READING]
             if not text or total >= MAX_READING_TOTAL:
                 out.append(f"### {url}\n\n（没有读到原文，需要的话用 fetch_url 打开）")
                 continue
@@ -384,8 +412,8 @@ class Harness:
     # ---------- agent 的工具（pi 通过 python -m studykit.agent_tools 调用） ----------
 
     def tool_schemas(self, names: list[str] | None = None) -> list[dict]:
-        types = {**plan_check.CORE_CHECKPOINT_TYPES, **{k: v for s in self.specs for k, v in s.checkpoint_docs.items()}}
-        cp_fields = {k: v for s in self.specs for k, v in s.checkpoint_fields.items()}
+        types = {m.name: f"{m.title}：{m.verifies}" for m in self.modules}
+        cp_fields = {k: v for m in self.modules for k, v in m.fields.items()}
         plan_fields = {k: v for s in self.specs for k, v in s.plan_fields.items()}
         schema = plan_check.plan_schema(types, cp_fields, plan_fields)
         tools = {
@@ -399,7 +427,7 @@ class Harness:
             "submit_research": {"description": "提交这个单元的知识库（和学习者无关）。环境会检查知识点的 id、定义、要点、依据页面是否打开过；不通过会返回错误，改完再提交。",
                                 "parameters": {"type": "object", "properties": {"knowledge": plan_check.kb_schema()},
                                                "required": ["knowledge"]}},
-            "submit_outline": {"description": "提交这个单元的大纲：练习场和每一节的桩。环境会检查时间预算、每节新词数、知识节点、练习场、链接是否打开过；不通过会返回错误，改完再提交。",
+            "submit_outline": {"description": "提交这个单元的大纲：每一节的桩（含用什么形式练、为什么）；有节要用练习场时连练习场一起。环境会检查时间预算、每节新词数、知识节点、练习形式、练习场、链接是否打开过；不通过会返回错误，改完再提交。",
                                "parameters": {"type": "object", "properties": {"outline": plan_check.outline_schema(
                                    types, plan_fields, (cp_fields.get("checks") or {}).get("items"))},
                                               "required": ["outline"]}},
@@ -415,6 +443,7 @@ class Harness:
                                                 "其他顶层字段（/sources、/outcomes、/nodes、/title……）给 {\"<字段名>\": 新值}；整份重写给完整的课程计划"}},
                                   "required": ["address", "value"]}}}, "required": ["parts"]}},
         }
+        tools.update({n: schema for n, (schema, _) in self.extra_tools.items()})
         return [{"name": n, **t} for n, t in tools.items() if names is None or n in names]
 
     def call_tool(self, ws: Path, name: str, args: dict) -> str:
@@ -430,6 +459,8 @@ class Harness:
             return self._submit_outline(ws, args.get("outline") or {})
         if name == "submit_section":
             return self._submit_section(ws, args.get("section") or {})
+        if name in self.extra_tools:
+            return self.extra_tools[name][1](ws, args)
         raise ToolError(f"没有这个工具：{name}")
 
     def _log(self, ws: Path, name: str, rec: dict) -> None:
@@ -489,14 +520,15 @@ class Harness:
         # INVARIANT: 只算打开成功的页面，不算页面上出现过的链接——没打开过的页面，agent 不知道里面是什么。
         for f in self._fetched(ws):
             grounded |= {plan_check.url_key(f["url"]), plan_check.url_key(f.get("final_url", f["url"]))}
-        types = (*plan_check.CORE_CHECKPOINT_TYPES, *(k for s in self.specs for k in s.checkpoints))
+        types = tuple(m.name for m in self.modules)
         return plan_check.PlanLimits(i["unit"], i["unit_budget_minutes"], i["session_minutes"], i["max_new_terms"],
-                                     {t.lower() for t in i["known_terms"]}, dict(i["existing_nodes"]), grounded, tuple(types))
+                                     {t.lower() for t in i["known_terms"]}, dict(i["existing_nodes"]), grounded, tuple(types),
+                                     {s["id"] for s in i.get("studied") or []})
 
     def plan_findings(self, ws: Path, plan: dict) -> list[Finding]:
         """环境检查（D-035）：每个问题带地址。agent 提交时看到的是它们的文字。"""
         return plan_check.plan_findings(plan, self.limits(ws), [r for s in self.specs for r in s.plan_rules],
-                                        {k: r for s in self.specs for k, r in s.checkpoint_rules.items()})
+                                        {m.name: m.rule for m in self.modules if m.rule})
 
     def _submit_plan(self, ws: Path, plan: dict) -> str:
         errors = [f.what for f in self.plan_findings(ws, plan)]
@@ -609,10 +641,7 @@ class Harness:
             secs = sections_of(plan)
             add("shape", "4–8 个小节", 4 <= len(secs) <= 8, f"{len(secs)} 节")
             items_ = [c for s in secs for c in s.get("checkpoint") or []]
-            practice = [s for s in secs if any(c.get("type") not in plan_check.CORE_CHECKPOINT_TYPES for c in s.get("checkpoint") or [])]
-            if len(limits.checkpoint_types) > len(plan_check.CORE_CHECKPOINT_TYPES):
-                add("practice", "至少一半的小节有动手型检查点（D-013、D-014）", 2 * len(practice) >= len(secs),
-                    f"{len(practice)}/{len(secs)} 节")
+            # D-043：不再要求"至少一半小节动手"——它逼着模型在只讲概念的节里编动手内容（F-064）；题型跟着这一节讲的东西走
             traps = [t for c in items_ for t in c.get("traps") or []] + [k["trap"] for c in items_ for k in c.get("checks") or [] if k.get("trap")]
             add("traps", "至少写了 3 个挂在检查点上的坑（答错时才出现，D-015）", len(traps) >= 3, f"{len(traps)} 个")
             tagged = [c for c in items_ if c.get("concept")]
@@ -660,18 +689,24 @@ class Harness:
             "# 助教实际打开过的页面\n\n" + ("\n".join(f"- {f.get('title') or '(无标题)'} — {f['url']}" for f in fetched) or "（没有）"),
             "# 助教写的课程计划\n\n" + (ws / "output.md").read_text(encoding="utf-8"),
         ]), encoding="utf-8")
-        data = h.parse_judge(self.runtime.complete(jm, h.JUDGE_SYSTEM, ws / "judge_input.md", ws, 600), h.rubric_ids(rubric))
+        reply = self.runtime.complete(jm, h.JUDGE_SYSTEM, ws / "judge_input.md", ws, 600)
+        data = h.parse_judge(reply.text, h.rubric_ids(rubric))
         model = f"{jm['provider']}/{jm['id']}"
         jv = self.versions.record(f"{agent.name}#judge", {"system": h.JUDGE_SYSTEM, "rubric": rubric}, {"model": model})
         judge = self._grade(run, "judge", jv.id, model,
                             score=round((data["avg"] - 1) / 4, 3), dims=data["scores"],
                             issues=[{"layer": "prompt", "what": data.get("suggestion", "")}] if data.get("suggestion") else [],
-                            detail={"avg": data["avg"], "top_issue": data.get("top_issue", "")})
+                            detail={"avg": data["avg"], "top_issue": data.get("top_issue", ""),
+                                    "cost_usd": reply.cost_usd, "tokens": reply.tokens})
         checks = h.verify_claims(data.get("suspect_claims") or [], "\n".join(f.get("text", "") for f in fetched))
         claim = self._grade(run, "claim_check", _src(h.verify_claims), "system",
                             score=sum(c["found_in_pages"] for c in checks) / len(checks) if checks else None,
                             refs=[judge.id], detail={"claims": checks})
         return [judge, claim]
+
+    def model_cost(self, run_id: str) -> float:
+        """这次运行的评分里调模型花的钱（评审、评分模型）：记在 Grade.detail["cost_usd"]。"""
+        return round(sum(float(g.detail.get("cost_usd") or 0) for g in self.runs.grades(run_id)), 6)
 
     def reviewer(self, run: h.Run) -> h.Grade:
         """评审模型（D-035）：兼任命令的安全闸门（D-030）和质量评审，给出带地址的发现。同一次运行只评一次（结果存在 Grade 里）。"""
@@ -693,13 +728,15 @@ class Harness:
         ]), encoding="utf-8")
         model = f"{conf['model']['provider']}/{conf['model']['id']}"
         rv = self.versions.record(f"{agent.name}#reviewer", {"system": system, "rubric": rubric}, {"model": model})
+        cost, tokens = 0.0, 0
         try:
-            found = h.parse_review(self.runtime.complete(conf["model"], system, ws / "review_input.md", ws, 600),
-                                   plan_addresses(plan))
+            reply = self.runtime.complete(conf["model"], system, ws / "review_input.md", ws, 600)
+            cost, tokens = reply.cost_usd, reply.tokens
+            found = h.parse_review(reply.text, plan_addresses(plan))
         except Exception as e:  # noqa: BLE001  评审失败 = 没被放行：安全闸门不能默认通过
             found = [Finding("", f"评审模型没有给出可用的结论：{e}", "reviewer_safety")]
         return self._grade(run, "reviewer", rv.id, model, verdict="fail" if blocking(found) else "pass",
-                           detail={"findings": [f.as_dict() for f in found]})
+                           detail={"findings": [f.as_dict() for f in found], "cost_usd": cost, "tokens": tokens})
 
     def review(self, run: h.Run, verdict: str, note: str, issues: list[dict], actor: str = "tutor") -> h.Grade:
         """导师审阅（结构化）：结论 + 问题出在哪一层，喂回下一次迭代（D-022）。"""
@@ -740,7 +777,16 @@ class Harness:
 
     def publish(self, run: h.Run) -> list[str]:
         """把通过检查的产出发布给学习者。返回并入知识图的新节点。"""
-        # INVARIANT: 只有产出循环放行的运行能发布（D-035）：自动检查、评审模型（含命令安全）、练习场实跑都没有阻断。
+        return self.course.publish(self._accepted_plan(run))
+
+    def offer(self, run: h.Run) -> str:
+        """通过检查、但单元已经开始学：存成一个可选的版本，不替换现在用的（D-034、D-044）。返回版本 id。"""
+        plan = self._accepted_plan(run)
+        self.course.offer(plan)
+        return plan["provenance"]["run"]
+
+    def _accepted_plan(self, run: h.Run) -> dict:
+        # INVARIANT: 只有产出循环放行的运行能发布或成为可选版本（D-035）：自动检查、评审模型（含命令安全）、练习场实跑都没有阻断。
         loop = self._latest(run, "loop")
         if loop is None or loop.verdict != "accepted":
             raise DomainError(f"这次运行没有通过产出循环，不能发布：{run.id}")
@@ -752,7 +798,7 @@ class Harness:
                                "judge_avg": judge.detail.get("avg") if judge else None,
                                "published": self.clock.now().isoformat(timespec="seconds"),
                                "known_terms": run.input.get("known_terms", [])}}
-        return self.course.publish(plan)
+        return plan
 
     def export(self, agent: str) -> list[dict]:
         """每次运行一行：版本组成、用量、全部评分。进 git，用来在 diff 里看 agent 是怎么变好的。"""
@@ -823,11 +869,3 @@ class Harness:
                     lines.append(f"    疑点：{c.get('claim', '')}「{c.get('quote', '')}」→ {verdict}")
         return "\n".join(lines)
 
-
-def _curriculum_row(text: str, topic_id: str) -> str:
-    lines = text.splitlines()
-    header = next((l for l in lines if l.startswith("| id ")), "")
-    row = next((l for l in lines if l.startswith(f"| `{topic_id}` ")), "")
-    if not row:
-        raise DomainError(f"curriculum.md 里找不到学科 {topic_id}")
-    return "\n".join([header, "|" + "---|" * (header.count("|") - 1), row]) if header else row

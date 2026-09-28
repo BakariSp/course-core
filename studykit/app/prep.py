@@ -93,7 +93,9 @@ class CoursePrep:
                 progress.set(round=progress.state["round"] + 1)
                 return self.generate(inp["unit"], model, progress=progress)
             progress.repairing(repair_scope(findings))
-            return attempt(hs.repair(self._run(prev), findings, model=model))
+            a = attempt(hs.repair(self._run(prev), findings, model=model))
+            a.costs = {"修复": a.cost}
+            return a
 
         def check(a: Attempt) -> list[Finding]:
             run = self._run(a)
@@ -124,7 +126,7 @@ class CoursePrep:
         return Kind("course_plan", generate, repair,
                     [Evaluator("check", check), Evaluator("safety", safety), Evaluator("lab_verify", lab),
                      Evaluator("quality", quality)],
-                    plan_parts)
+                    plan_parts, review_cost=lambda a: hs.model_cost(a.run))
 
     # ---------- 分步生成（D-038） ----------
 
@@ -134,8 +136,9 @@ class CoursePrep:
         WHY: 各节只依赖大纲，所以并行：一个单元的生成时间从"大纲 + 各节之和"降到"大纲 + 最慢的一节"。"""
         hs, progress = self.harness, progress or Progress()
         kb, spent, last = self.knowledge(unit, model, tries, progress)
+        costs = {"调研": spent}                             # 知识库已有时是 0（复用，不花钱）
         if kb is None:                                      # 调研交不出知识库：交给循环按"没有提交"处理
-            return Attempt({}, last.id, spent)
+            return Attempt({}, last.id, spent, costs)
         progress.set(step="outline", label="按你的情况从知识库编大纲", sections=None)
 
         def step(fn) -> tuple[h.Run, bool, float]:
@@ -149,8 +152,9 @@ class CoursePrep:
 
         outline, ok, cost = step(lambda: hs.outline(AGENT, unit, model=model, kb_run=kb))
         spent += cost
+        costs["大纲"] = cost
         if not ok:
-            return Attempt({}, outline.id, spent)
+            return Attempt({}, outline.id, spent, costs)
         n = len(stubs_of(self._output(outline)))
         progress.sections(n)
 
@@ -162,18 +166,20 @@ class CoursePrep:
 
         with ThreadPoolExecutor(max_workers=max(1, min(n, self.workers))) as pool:
             results = list(pool.map(write, range(n)))
-        spent += sum(c for _, _, c in results)
+        costs["各节"] = sum(c for _, _, c in results)
+        spent += costs["各节"]
         failed = [run for run, ok, _ in results if not ok]
         if failed:
-            return Attempt({}, failed[0].id, spent)
+            return Attempt({}, failed[0].id, spent, costs)
         plan = hs.assemble(outline, [run for run, _, _ in results])        # 按节的顺序拼，和谁先写完无关
-        return Attempt(self._output(plan), plan.id, spent)
+        return Attempt(self._output(plan), plan.id, spent, costs)
 
     def knowledge(self, unit: str, model: str | None = None, tries: int = 2,
-                  progress: Progress | None = None) -> tuple[h.Run | None, float, h.Run | None]:
+                  progress: Progress | None = None, redo: bool = False) -> tuple[h.Run | None, float, h.Run | None]:
         """单元知识库（D-040 ③）：已经有就直接用（和学习者无关，不用重做）；没有就调研一次。
+        redo：调研方法变了（如 D-043 开始读视频字幕）时重做，新的一份成为这个单元的知识库。
         返回（知识库运行或 None，花费，最后一次调研运行）。"""
-        kb = self.harness.knowledge(AGENT, unit)
+        kb = None if redo else self.harness.knowledge(AGENT, unit)
         if kb is not None:
             return kb, 0.0, kb
         (progress or Progress()).set(step="research", label="调研：读讲义、整理知识点（只做一次，以后复用）", sections=None)
@@ -185,11 +191,12 @@ class CoursePrep:
                 return run, spent, run
         return None, spent, run
 
-    def build_knowledge(self, units: list[str], model: str | None = None) -> dict[str, str]:
-        """为一批单元并行备好知识库（curriculum 同意后就可以做，D-040）。返回 单元 → 知识库运行 id（失败是 ""）。"""
-        todo = [u for u in units if self.harness.knowledge(AGENT, u) is None]
+    def build_knowledge(self, units: list[str], model: str | None = None, redo: bool = False) -> dict[str, str]:
+        """为一批单元并行备好知识库（curriculum 同意后就可以做，D-040）。返回 单元 → 知识库运行 id（失败是 ""）。
+        redo：已有的也重做。"""
+        todo = [u for u in units if redo or self.harness.knowledge(AGENT, u) is None]
         with ThreadPoolExecutor(max_workers=max(1, min(len(todo), self.workers))) as pool:
-            done = list(pool.map(lambda u: (u, self.knowledge(u, model)[0]), todo)) if todo else []
+            done = list(pool.map(lambda u: (u, self.knowledge(u, model, redo=redo)[0]), todo)) if todo else []
         return {u: (r.id if r else "") for u, r in done}
 
     def _output(self, run: h.Run) -> dict:
@@ -228,6 +235,8 @@ class CoursePrep:
         if verdict == "accepted" and self.can_autopublish(unit):
             self.harness.publish(final)
             published = True
+        elif verdict == "accepted":                 # 已经开始学：存成可选版本，学习者在课程页上看过再选（D-044）
+            self.harness.offer(final)
         return {"unit": unit, "status": verdict, "run": final.id, "published": published, **self._summary(result)}
 
     def can_autopublish(self, unit: str) -> bool:
@@ -258,6 +267,6 @@ class CoursePrep:
     @staticmethod
     def _summary(result: LoopResult) -> dict:
         return {"spent_usd": result.spent,
-                "rounds": [{"run": r.run, "cost_usd": round(r.cost, 4),
+                "rounds": [{"run": r.run, "cost_usd": round(r.cost, 4), "costs": r.costs,
                             "findings": [f.as_dict() for f in r.findings]} for r in result.rounds],
                 "blocking": [f.as_dict() for f in result.blocking]}

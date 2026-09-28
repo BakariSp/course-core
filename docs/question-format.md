@@ -51,12 +51,41 @@
 | 4 | 分析 | 在陌生代码里找出问题，判断设计取舍 |
 
 某个概念某一级最近 3 次的平均分 ≥ 0.7，这一级就算通过。概念的掌握度 = 已通过的最高一级。
+题目标了得分点的，"一次"是一道题里这个概念、这一级的得分点的平均分（见下面「得分点」）。
 
 ## 概念 id
 
 格式为 `<topic>.<领域>.<概念>`，全部小写英文，例如 `os.sync.race`、`tools.git.branch`。
-第一段必须是 `curriculum.md` 里的学科 id。新概念要同时加进 `progress/syllabus.yaml` 对应学科的 `concepts`，并写上中文名。
+第一段必须是 `progress/course.yaml` 里的学科 id。新概念加进 `knowledge/<学科>.yaml`（`python study.py kg check` 会报出没登记的）。
 粒度：一个概念对应"一个能单独答错的点"。太粗（`os.sync`）就看不出薄弱点在哪，太细又不好积累练习次数。
+
+## 得分点（`key.parts`，D-056）
+
+一道题常常同时考几个知识点（一道多选题的选项分别讲转发、选路、排队）。`key.parts` 把每个得分点记到它自己的知识点上：
+
+| 检验器 | 一个得分点是 | 得分点的分 |
+|---|---|---|
+| `choice` | 一个选项 | 该选的选了、不该选的没选：1，否则 0 |
+| `fill` | 一个空 | 对 1，错 0 |
+| `short` | 一条 rubric | 这条的得分 ÷ 这条的满分；加分项拿到算 1，没拿到不算 |
+| `terminal` | 一条 check | 过 1，没过 0 |
+| `code` | 不分，整题算 | — |
+
+```yaml
+# key.yaml
+q4:
+  answer: [A, B, D]
+  parts:                                   # 个数和选项一样，按顺序对应
+    - {concept: net.overview.forwarding}
+    - {concept: net.overview.packet_switching}
+    - {concept: net.overview.circuit_switching, misconception: circuit_lends_idle}
+    - {concept: net.overview.routing, level: 3}   # level 和题目不同时才写
+```
+
+- 作答证据里记 `payload.parts: [{concept, level, score, misconception?}]`，证据的知识节点是题目的 `concept` 加上各得分点的 `concept`。
+- 掌握度读得分点：同一个知识点、同一级的得分点取平均。没写 `parts`（或个数对不上）的题照旧按整题算。
+- `misconception`：没拿到这个得分点时说明的误解，id 必须在知识图里这个知识点的 `misconceptions` 下。
+  误解是知识图里的事实（和学习者无关）：`knowledge/<学科>.yaml` 的节点下写 `misconceptions: {<id>: {desc, by}}`；出题 agent 在整套题的 `misconceptions` 里提出新的，发布时写进知识图。
 
 ## 文件
 

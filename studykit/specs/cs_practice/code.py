@@ -185,3 +185,23 @@ class Code:
     def check(self, q, key, ctx, response):
         result, record = self._run(q, ctx, (response or {}).get("code"), submit=True)
         return Verdict(result.score, [f"通过 {result.passed}/{result.total} 个测试"], result.as_dict(), [record])
+
+    def verify(self, q: dict, key: dict, files: dict[str, str], workdir: Path) -> list[tuple[str, str]]:
+        """出题 agent 出的代码题能不能用（D-041）：初始代码下测试必须是红的，换成参考实现必须全绿。返回 [(问题, 证据)]。"""
+        for rel, text in files.items():
+            p = safe_path(workdir, rel)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(text, encoding="utf-8", newline="\n")
+        problems = []
+        red = run_code_tests(workdir, q, workdir)
+        if red.total == 0:
+            problems.append(("测试一个都没跑起来（导入或收集阶段就出错了）", red.output[-1200:]))
+        elif red.passed == red.total:
+            problems.append(("初始代码就能通过全部测试：测试没在测学习者要写的东西", red.output[-600:]))
+        safe_path(workdir, q["file"]).write_text(str(key.get("solution") or ""), encoding="utf-8", newline="\n")
+        green = run_code_tests(workdir, q, workdir)
+        if green.total == 0 or green.passed != green.total:
+            failed = [t["name"] for t in green.tests if t["outcome"] != "passed"]
+            problems.append((f"参考实现没通过全部测试（{green.passed}/{green.total}）：{'、'.join(failed) or '收集失败'}",
+                             green.output[-1500:]))
+        return problems

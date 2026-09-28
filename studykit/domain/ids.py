@@ -19,6 +19,7 @@ NODE_ID_RE = re.compile(r"^[a-z][a-z0-9]*(\.[a-z0-9][a-z0-9_-]*)+$")
 UNIT_ID_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 LESSON_REF_RE = re.compile(r"^[a-z0-9_-]+/[a-z0-9_.-]+$")
 LEARNER_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+MISCONCEPTION_ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")     # 知识点下的误解 id，如 transport_vs_link（D-056）
 
 
 class _Id(str):

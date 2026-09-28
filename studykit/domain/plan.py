@@ -21,6 +21,14 @@ def sections_of(plan: dict) -> list[dict]:
     return [s for p in plan.get("parts") or [] for s in p.get("sections") or []]
 
 
+def taught_nodes(plan: dict) -> list[str]:
+    """这一版课程教哪些知识点（D-047）：计划里提议的节点 + 各节的新词，按出现顺序、去重。
+    "哪个单元教哪个知识点"只从这里投影，知识图上不再记。"""
+    ids = [n["id"] for n in plan.get("nodes") or [] if n.get("id")]
+    ids += [t["id"] for s in sections_of(plan) for t in s.get("terms") or [] if t.get("id")]
+    return list(dict.fromkeys(ids))
+
+
 def plan_minutes(plan: dict) -> int:
     return sum(int(s.get("minutes") or 0) for s in sections_of(plan))
 
@@ -60,7 +68,9 @@ def fill_stub(stub: dict, section: dict) -> dict:
         练习场实跑时，没兑现约定的是这一节自己，而不是等到依赖它的下一节才出错。
     """
     out = {k: copy.deepcopy(v) for k, v in section.items() if k not in STUB_ONLY_KEYS}
-    out.update({k: copy.deepcopy(stub[k]) for k in ("title", "minutes", "goal", "mission", "terms") if k in stub})
+    out.update({k: copy.deepcopy(stub[k]) for k in ("title", "minutes", "goal", "mission", "terms", "recall") if k in stub})
+    if (stub.get("check") or {}).get("why"):     # 为什么这一节用这种形式练（D-052）：评审和「为什么这样教」要看
+        out["check_why"] = stub["check"]["why"]
     contract = stub.get("state_after") or []
     want = (stub.get("check") or {}).get("type")
     target = next((c for c in out.get("checkpoint") or [] if c.get("type") == want), None)
@@ -159,6 +169,10 @@ def checkpoint_item(plan: dict, index: int, idx) -> dict:
     return items[idx]
 
 
+def section_recalls(plan: dict, index: int) -> list[str]:
+    return [r["id"] for r in section(plan, index).get("recall") or [] if r.get("id")]
+
+
 def section_terms(plan: dict, index: int) -> list[str]:
     return [t["id"] for t in section(plan, index).get("terms") or [] if t.get("id")]
 
@@ -177,7 +191,7 @@ def public_view(plan: dict) -> dict:
 
 # ---------- 课程页发来的事件 → 证据 ----------
 
-CLIENT_EVENTS = {"open", "done", "undone", "skip", "activity", "resume", "term", "term_miss", "load_rating"}
+CLIENT_EVENTS = {"open", "done", "undone", "skip", "activity", "resume", "term", "term_miss", "load_rating", "recall"}
 
 
 @dataclass
@@ -224,6 +238,13 @@ def client_event(plan: dict, unit: str, index, event: str, minutes: float | None
         if action == "open":
             return ClientEvent("viewed", "node", node, index, (node,))
         return ClientEvent("voted_term", "node", node, index, (node,), {"vote": action})
+    if event == "recall":                        # 回顾（D-051）：学习者自己说记不记得
+        node, remembered = extra.get("node"), extra.get("remembered")
+        if node not in section_recalls(plan, index):
+            raise CourseError(f"这一节没有回顾 {node}")
+        if not isinstance(remembered, bool):
+            raise CourseError("remembered 要是 true / false")
+        return ClientEvent("recalled", "node", node, index, (node,), {"remembered": remembered})
     if event == "term_miss":
         text = str(extra.get("text") or "").strip()
         if not 0 < len(text) <= 80:

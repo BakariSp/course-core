@@ -271,6 +271,21 @@ class Terminal:
             return ActResult({"output": sb.run(line)})
         raise ValueError(f"终端题不支持 {op}")
 
+    def verify(self, q: dict, key: dict, files: dict[str, str], workdir: Path) -> list[tuple[str, str]]:
+        """出题 agent 出的终端题能不能用（D-041）：搭好场景后检查不能已经满足；在学习者用的受限终端里按参考做法敲完，检查必须全过。"""
+        sb = Sandbox(workdir)
+        self._setup(q, sb)
+        checks = key.get("checks") or []
+        before = [evaluate(sb, c) for c in checks]
+        problems = []
+        if before and all(ok for ok, _ in before):
+            problems.append(("场景搭好后什么都不做，检查就已经全部满足", "；".join(d for _, d in before)))
+        outs = [f"$ {line}\n{sb.run(str(line))}" for line in key.get("solution") or []]     # 不是 trusted：学习者能敲的才算
+        failed = [d for ok, d in (evaluate(sb, c) for c in checks) if not ok]
+        if failed:
+            problems.append((f"在练习终端里按参考做法做完仍然没通过：{'；'.join(failed)}", "\n".join(outs)[-1500:]))
+        return problems
+
     def check(self, q, key, ctx, response):
         sb = self._sandbox(ctx)
         checks = key.get("checks") or []
@@ -278,4 +293,5 @@ class Terminal:
             return Verdict(0.0, ["没有找到练习现场，或者这道题没有配置检查项。"])
         results = [evaluate(sb, c) for c in checks]
         feedback = [f"{'✓' if ok else '✗'} {desc}" for ok, desc in results]
-        return Verdict(sum(ok for ok, _ in results) / len(results), feedback)
+        return Verdict(sum(ok for ok, _ in results) / len(results), feedback,
+                       units=[1.0 if ok else 0.0 for ok, _ in results])

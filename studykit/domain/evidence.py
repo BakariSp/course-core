@@ -99,12 +99,12 @@ class Verb:
 
 CORE_VERBS = (
     Verb("answered", "core", ("question", "checkpoint"), ("response",), ("learner",), title="作答", feeds=(
-        Feed("mastery", "score · 题目等级 · 考的概念", "question"),
+        Feed("mastery", "score · 题目等级 · 考的概念 · 得分点（parts）", "question"),
         Feed("node_state", "做对没有 · 考的知识点", "checkpoint"),
         Feed("progress", "做对没有 · 第几题", "checkpoint"),
         Feed("course_eval", "第一次就对了吗 · 试了几次", "checkpoint"))),
     Verb("graded", "core", ("question",), ("note",), ("agent", "learner"), needs_cause=True, title="批改",
-         feeds=(Feed("mastery", "score（替代被批改的那条作答）· 备注"),)),
+         feeds=(Feed("mastery", "score（替代被批改的那条作答）· 备注 · 得分点（parts）"),)),
     Verb("submitted_exam", "core", ("lesson",), ("answers",), ("learner",), title="交卷（整卷一次交，D-031）"),
     Verb("logged_practice", "core", ("external",), ("level", "note"), ("learner", "agent"), title="课外练习",
          feeds=(Feed("mastery", "score · 等级 · 概念"),)),
@@ -123,6 +123,8 @@ CORE_VERBS = (
     Verb("voted_term", "core", ("node",), ("vote",), ("learner",), title="新词 👍👎", feeds=(
         Feed("node_state", "「我早就知道」= 会了"), Feed("progress", "每个新词的投票"),
         Feed("course_eval", "新词预测准不准"))),
+    # 回顾（D-051）：自己说记不记得。先只记下来；掌握度、复习排程怎么用它由 D-056 定
+    Verb("recalled", "core", ("node",), ("remembered",), ("learner",), title="回顾：记不记得"),
     Verb("flagged_unexplained", "core", ("section",), ("text",), ("learner",), title="划出没讲的词",
          feeds=(Feed("course_eval", "漏报的新词"),)),
     Verb("rated_load", "core", ("section",), ("rating",), ("learner",), title="费劲程度",
@@ -135,6 +137,11 @@ CORE_VERBS = (
     Verb("observed", "core", ("node",), ("polarity", "note"), ("agent", "learner"), title="观察",
          feeds=(Feed("node_state", "薄弱 / 会了 · 原话 · 谁观察的"),)),
     Verb("logged_time", "core", ("time",), ("start", "minutes"), ("learner", "agent"), title="补录学习时间"),
+    # 老师对学习者的观察（D-047）：什么讲法有效、在哪会过载。学习者说"不对"就推翻它
+    Verb("proposed_strategy", "core", ("learner",), ("text",), ("agent", "learner"), title="老师的观察",
+         feeds=(Feed("profile", "现在还有效的观察 · 出处"),)),
+    Verb("refuted_strategy", "core", ("learner",), (), ("learner", "agent"), needs_cause=True, title="推翻一条观察",
+         feeds=(Feed("profile", "这条观察不再给老师看"),)),
 )
 
 

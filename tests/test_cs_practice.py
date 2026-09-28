@@ -140,7 +140,7 @@ def test_lab_rules():
     [f] = plan_rules.declared_commands(p, limits)                      # 规则直接给出带地址的发现（D-035）
     assert (f.address, f.evaluator) == ("/sections/0", "plan_check") and "还不认识的命令 ls" in f.what
     p.pop("lab")
-    assert [(f.address, f.what) for f in plan_rules.lab_defined(p, limits)] == [("/lab", "有 lab 类型的检查点，但没有定义练习场（lab）")]
+    assert [(f.address, f.what) for f in plan_rules.lab_defined(p, limits)] == [("/lab", "有练习场任务（lab），但没有定义练习场（lab）")]
     p["lab"] = {"story": "x", "files": [{"path": "../evil"}, {"path": "logs/"}]}
     assert [f.what for f in plan_rules.lab_defined(p, limits)] == ["lab 文件路径要是练习场里的相对路径：'../evil'"]
     assert "要有 solution" in plan_rules.lab_checkpoint("第 1 题", {"checks": [{"run": "ls", "desc": "d"}]})[0]
@@ -272,3 +272,49 @@ def test_undeclared_command_advice_fits_a_writer_who_cannot_change_terms():
     p["parts"][0]["sections"][0]["try"] = [{"command": "ls | grep x", "expect": "e"}]
     [f] = plan_rules.declared_commands(p, PlanLimits("tools-01-shell", known_terms={"grep"}))
     assert "列进这一节的 terms" not in f.what and "大纲" in f.what             # 写节的人改不了新词（D-038）
+
+
+# ---------- 改文件的动手步骤、练习场的文件（D-039、D-057） ----------
+
+def test_edit_steps_are_their_own_kind_of_hands_on():
+    """动手分两种：command（在终端里敲）和 edit（改练习场里的一个文件，带改完后的内容）。"""
+    limits = PlanLimits("tools-01-shell", known_terms={"grep"})
+    p = plan_v2()
+    p["parts"][0]["sections"][0]["try"] = [{"edit": "tests/test_a.py", "content": "def test_a():\n    assert 1\n", "expect": "文件里有一条测试"}]
+    assert plan_rules.edit_steps(p, limits) == [] and plan_rules.declared_commands(p, limits) == []
+    for bad, msg in [({"edit": "../x.py", "content": "x", "expect": "e"}, "相对路径"),
+                     ({"edit": "a.py", "expect": "e"}, "content"),
+                     ({"edit": "a.py", "content": "x", "command": "ls", "expect": "e"}, "只能是一种"),
+                     ({"edit": "logs/", "content": "x", "expect": "e"}, "文件")]:
+        p["parts"][0]["sections"][0]["try"] = [bad]
+        assert msg in plan_rules.edit_steps(p, limits)[0].what, bad
+
+
+@needs_bash
+def test_lab_verify_writes_edit_steps_like_the_learner_would(tmp_path):
+    env = BashPractice(tmp_path / "labs", tmp_path / "state")
+    p = plan_v2()
+    p["parts"][0]["sections"][1]["try"] = [{"edit": "count.sh", "content": "grep -c ERROR logs/app.log\n", "expect": "写好脚本"},
+                                           {"command": "bash count.sh", "expect": "打印 2"}]
+    r = env.verify(p, tmp_path / "v")
+    assert r["ok"], r["findings"]
+    steps = r["sections"][1]["try"]
+    assert steps[0]["edit"] == "count.sh" and steps[1]["rc"] == 0 and steps[1]["output"].strip() == "2"
+
+
+@needs_bash
+def test_learner_edits_lab_files_in_the_page(app, unit, tmp_path):
+    app.course.lab(unit, "open", 0)
+    files = app.course.lab(unit, "files", 0)["files"]
+    assert "logs/app.log" in files
+    assert app.course.lab(unit, "read", 0, path="logs/app.log")["content"].startswith("INFO ok")
+    app.course.lab(unit, "write", 0, path="notes/report.md", content="两条 ERROR\n")
+    assert (tmp_path / "labs" / unit / "notes" / "report.md").read_text(encoding="utf-8") == "两条 ERROR\n"
+    assert app.course.lab(unit, "run", 0, "cat notes/report.md")["output"] == "两条 ERROR"
+    for bad in ("../outside.txt", "/etc/passwd", "C:/x.txt", ""):
+        with pytest.raises(DomainError):
+            app.course.lab(unit, "write", 0, path=bad, content="x")
+    with pytest.raises(DomainError):
+        app.course.lab(unit, "write", 0, path="big.txt", content="x" * 300_000)
+    [w] = [e for e in app.store.query("me", verbs=["practiced"]) if e.payload["op"] == "write"]   # 写失败的不记
+    assert w.payload == {"op": "write", "path": "notes/report.md", "chars": 9}

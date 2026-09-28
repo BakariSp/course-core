@@ -50,12 +50,12 @@ def within(address: str, prefix: str) -> bool:
 
 
 def repair_unit(address: str) -> str:
-    """一个发现允许重写的最小单位：小节里的任何地方 → 整节；其余 → 它所在的顶层字段；"" → 整份。"""
+    """一个发现允许重写的最小单位：列表里一项之内的任何地方 → 整项（一节、一道题）；其余 → 它所在的顶层字段；"" → 整份。"""
     segs = address.strip("/").split("/") if address else []
     if not segs:
         return ""
-    if segs[0] == "sections" and len(segs) >= 2:
-        return f"/sections/{segs[1]}"
+    if len(segs) >= 2 and segs[1].isdigit():            # 列表里的一项（/sections/3、/questions/2）是修复的最小单位
+        return f"/{segs[0]}/{segs[1]}"
     return f"/{segs[0]}"
 
 

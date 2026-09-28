@@ -1,7 +1,7 @@
 """学科 spec：代码学习（D-023）。core 只通过 app.ports.Spec 认识它。
 
     检验器      code（pytest 判分）、terminal（受限的 git 练习终端）
-    检查点题型  lab（在练习场里完成任务，检查练习场的状态）
+    练习形式    lab（在练习场里完成任务，检查练习场的状态；D-052：备课 agent 按内容挑，不是每个单元都有）
     练习环境    真实的 bash 练习场（practice.BashPractice）
     verb        ran_tests（代码题每跑一次测试）
 """
@@ -12,7 +12,8 @@ from pathlib import Path
 from studykit.app.ports import Spec
 from studykit.domain.assessment import CheckpointResult
 from studykit.domain.evidence import Feed, Verb
-from studykit.specs.cs_practice import plan_rules
+from studykit.domain.plan_check import PracticeModule
+from studykit.specs.cs_practice import plan_rules, safety  # noqa: F401  safety：组合根把命令安全规则交给出题（D-041）
 from studykit.specs.cs_practice.code import Code
 from studykit.specs.cs_practice.practice import BashPractice
 from studykit.specs.cs_practice.terminal import Terminal
@@ -34,5 +35,6 @@ def spec(lab_root: Path, state_root: Path, bash_path: str | None = None) -> Spec
             checks=[{"ok": ok, "desc": desc} for ok, desc, _ in results],
             reveal={"solution": item.get("solution") or []})
 
-    return Spec(NAME, VERBS, (Code(), Terminal()), {"lab": grade_lab}, {"lab": plan_rules.CHECKPOINT_TYPE_DOC}, practice,
-                tuple(plan_rules.RULES), plan_rules.CHECKPOINT_RULES, plan_rules.PLAN_FIELDS, plan_rules.CHECKPOINT_FIELDS)
+    lab = PracticeModule("lab", **plan_rules.LAB_MODULE_TEXT, fields=plan_rules.CHECKPOINT_FIELDS,
+                         rule=plan_rules.lab_checkpoint, grade=grade_lab)
+    return Spec(NAME, VERBS, (Code(), Terminal()), (lab,), practice, tuple(plan_rules.RULES), plan_rules.PLAN_FIELDS)

@@ -26,7 +26,7 @@ python study.py serve
 | 你说 | 导师做什么 | 你接下来做什么 |
 |---|---|---|
 | "准备看 X"（比如"准备看 shell 那一讲"） | 让助教 agent 做课前讲解和练习场，审阅、验证通过后发布，给你课程页 `/?unit=<单元>` | 在课程页上读讲解、按检查点动手练 |
-| "我看完了 X" | 在 `progress/syllabus.yaml` 里标记这节课，问你课上讲了哪些要点 | 说说要点 |
+| "我看完了 X" | 在 `progress/course.yaml` 里找到这节课（学没学完由你的作答算），问你课上讲了哪些要点 | 说说要点 |
 | （说完要点后） | 读你的薄弱点，为每个要验证的能力选检验器、出一套题（6-8 道，30-45 分钟），打开答题网页 | 在网页上作答：选择、填空当场出结果，代码题可以反复跑测试，终端题在练习终端里敲 git |
 | "做完了" / "批改" | 给简答题打分，写 `review.md`，告诉你每个概念的掌握度、薄弱点和下次重点 | 看 review，有疑问接着问 |
 | "X 没懂" | 把原话记到对应知识点上，下次出题时针对它出变体 | — |
@@ -35,7 +35,7 @@ python study.py serve
 
 卡住时导师不直接给答案，提示分三级给：方向 → 关键概念 → 接近答案。
 
-学什么、按什么顺序学，由你决定，写在 [curriculum.md](curriculum.md)；导师的完整规则见 [CLAUDE.md](CLAUDE.md)。
+学什么、按什么顺序学，由你决定，写在 [progress/course.yaml](progress/course.yaml)（课程原则在 [docs/curriculum-notes.md](docs/curriculum-notes.md)）；导师的完整规则见 [CLAUDE.md](CLAUDE.md)。
 
 ## 在自己的终端里练
 
@@ -56,7 +56,8 @@ python study.py serve
 ## 进度数据
 
 ```
-progress/syllabus.yaml    学了哪些课 —— 你可以直接改（比如标记看完、写笔记）
+progress/course.yaml      课程定义：阶段 → 学科 → 单元，看哪些材料、你的要求 —— 你可以直接改（D-047）
+progress/profile.yaml     你的资料和时间偏好 —— 你可以直接改
 knowledge/<学科>.yaml      知识图：知识点 + 先修关系（D-020）—— 你和导师都可以改；状态不写在这里
 data/study.db             证据：每一次答题、代码运行、检查点、提示、终端命令、新词反馈、导师观察……（D-021）
                           只追加，数据库触发器拒绝修改和删除；不进 git

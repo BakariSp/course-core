@@ -1,11 +1,16 @@
 """答题网页的本地服务器（HTTP 适配器）。只监听 127.0.0.1；只做路由和 JSON 编解码，用例都在 app/。
 
 GET  /                      答题页面
+GET  /app                   新界面（D-046）：课程 · 我的 · 老师；/app/<文件> 是它的样式和脚本（只读 web/app/ 下）
 GET  /api/lessons           所有课时
 GET  /api/lesson?ref=...    一套题（每道题的 view + 最近一次作答结果）
 GET  /api/runs?ref=&qid=    一道代码题的运行记录（每次的代码快照和测试结果）
+GET  /api/exam?lesson=&exam=  一次交卷的结果；还在后台批的简答题列在 grading 里（D-049）
+GET  /api/course            学习者看到的课程：阶段 → 学科 → 单元（状态算好）、下一步（D-046、D-047）
+GET  /api/profile           我的资料、时间偏好、老师的观察（D-047）
+POST /api/profile/refute    学习者推翻一条老师的观察
 GET  /api/units             已发布的课程页（D-010）
-GET  /api/unit?id=...       一个单元的课程计划 + 学习进度
+GET  /api/unit?id=...       一个单元的课程计划 + 学习进度 + 先修要求（readiness）
 GET  /api/kg?topic=...      知识树：节点（带状态）+ 先修边（D-020）
 GET  /api/kg/node?id=...    一个节点的详情和证据
 GET  /flow                  流程看板（D-024）
@@ -15,10 +20,10 @@ GET  /api/flow/stream       新记录的实时推送（SSE）；?cursor= 从某�
 POST /api/unit/progress     课程页事件：打开小节、心跳、跳过、新词反馈、费劲程度……
 POST /api/unit/check        检查点判分（D-013）
 POST /api/unit/hint         检查点的下一级提示
-POST /api/unit/lab          练习场：执行命令、还原到本节开始、重置、用参考做法补齐（D-014）
+POST /api/unit/lab          练习场：执行命令、还原到本节开始、重置、用参考做法补齐（D-014）；列出 / 读 / 写文件（D-057）
 POST /api/act               作答过程中的交互（跑测试、执行终端命令）
 POST /api/submit            提交一道题：检验器判分 → 记一条证据（整卷模式的单元题不能单题提交）
-POST /api/exam/submit       交卷：整套题一次判分，简答题由 LLM 批改（D-031）
+POST /api/exam/submit       交卷：整套题一次判分，简答题由 LLM 在后台批改（D-031、D-049）
 """
 from __future__ import annotations
 
@@ -27,11 +32,13 @@ import secrets
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from studykit.bootstrap import App, build
 
 WEB = Path(__file__).resolve().parent.parent / "web"
+APP = WEB / "app"
+APP_TYPES = {".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".svg": "image/svg+xml"}
 MAX_BODY = 2 * 1024 * 1024    # 代码题提交的代码也不会超过这个大小
 STREAM_POLL = 1.0             # 秒：多久查一次数据库有没有新行
 STREAM_PING = 15.0            # 秒：多久发一次心跳，让代理和浏览器知道连接还活着
@@ -48,10 +55,22 @@ def make_handler(app: App, token: str, port: int):
             return app.assessment.view(one("ref"), one("retake", "0") == "1")
         if path == "/api/runs":
             return app.assessment.runs(one("ref"), one("qid"))
+        if path == "/api/exam":
+            return app.assessment.exam_result(one("lesson"), one("exam"))
         if path == "/api/units":
             return app.course.list()
         if path == "/api/unit":
-            return app.course.page(one("id"))
+            uid = one("id")
+            page = app.course.page(uid, one("plan") or None)
+            page = {**page, "readiness": app.learner.readiness(uid)}      # 先修要求（D-047）
+            try:
+                return {**page, "quiz_state": app.quizzes.state(uid)}     # 单元题出到哪了（D-041）
+            except Exception:  # noqa: BLE001  出题状态读不到不能影响学习
+                return page
+        if path == "/api/course":
+            return app.journey.overview()
+        if path == "/api/profile":
+            return app.learner.profile()
         if path == "/api/panel":
             return app.panel.overview()
         if path == "/api/panel/unit":
@@ -82,7 +101,7 @@ def make_handler(app: App, token: str, port: int):
         if path == "/api/exam/submit":
             return app.assessment.submit_exam(body["lesson"], body.get("responses") or {})
         if path == "/api/unit/progress":
-            extra = {k: body.get(k) for k in ("kind", "node", "action", "text", "rating", "away_minutes", "counted")}
+            extra = {k: body.get(k) for k in ("kind", "node", "action", "text", "rating", "away_minutes", "counted", "remembered")}
             extra = {k: v for k, v in extra.items() if v is not None}
             out = app.course.record(body["unit"], body.get("section"), body["event"], body.get("minutes"), **extra)
             if body["event"] == "open":                     # 学第 N 单元时，第 N+1 单元在后台备好（D-040 ②）
@@ -92,19 +111,32 @@ def make_handler(app: App, token: str, port: int):
                     nxt = None
                 if nxt:
                     out = {**out, "prefetch": nxt}
+                try:                                         # 打开最后一节：在后台出单元题（D-041）
+                    if app.quizzes.prefetch(body["unit"], body.get("section")):
+                        out = {**out, "quiz": "preparing"}
+                except Exception:  # noqa: BLE001
+                    pass
             return out
+        if path == "/api/profile/refute":
+            e = app.learner.refute_strategy(body["id"], body.get("note") or "")
+            return {"refuted": body["id"], "evidence": e.id}
         if path == "/api/panel/prepare":
             return app.panel.prepare(body["unit"])
+        if path == "/api/quiz/start":
+            return app.quizzes.start(body["unit"])
         if path == "/api/panel/knowledge":
             return app.panel.build_knowledge()
         if path == "/api/panel/publish":
             return app.panel.publish(body["unit"])
+        if path == "/api/unit/switch":                 # 改用某一版课程（新的或旧的），进度按版本保留（D-034、D-044）
+            return app.course.switch(body["unit"], body["plan"])
         if path == "/api/unit/check":
             return app.course.check(body["unit"], body["section"], body["idx"], body.get("response"))
         if path == "/api/unit/hint":
             return app.course.hint(body["unit"], body["section"], body["idx"])
         if path == "/api/unit/lab":
-            return app.course.lab(body["unit"], body["op"], body.get("section"), body.get("cmd", ""))
+            return app.course.lab(body["unit"], body["op"], body.get("section"), body.get("cmd", ""),
+                                  path=str(body.get("path") or ""), content=str(body.get("content") or ""))
         return None
 
     class Handler(BaseHTTPRequestHandler):
@@ -142,11 +174,24 @@ def make_handler(app: App, token: str, port: int):
             if url.path == "/":
                 html = (WEB / "index.html").read_text(encoding="utf-8").replace("__TOKEN__", token)
                 return self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
+            if url.path in ("/app", "/app/"):
+                html = (APP / "index.html").read_text(encoding="utf-8").replace("__TOKEN__", token)
+                return self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
+            if url.path.startswith("/app/"):
+                return self._app_file(url.path[len("/app/"):])
             if url.path == "/flow":
                 return self._send(200, (WEB / "flow.html").read_bytes(), "text/html; charset=utf-8")
             if url.path == "/api/flow/stream":
                 return self._stream(parse_qs(url.query).get("cursor", [""])[0])
             self._dispatch(get, url.path, parse_qs(url.query))
+
+        def _app_file(self, rel: str) -> None:
+            # WHY: 路径来自浏览器，先解码再解析成绝对路径，必须还在 web/app/ 里面；只给样式和脚本，别的类型一律 404。
+            path = (APP / unquote(rel)).resolve()
+            ctype = APP_TYPES.get(path.suffix)
+            if not ctype or not path.is_relative_to(APP.resolve()) or not path.is_file():
+                return self._json({"error": "not found"}, 404)
+            self._send(200, path.read_bytes(), ctype)
 
         def _stream(self, cursor: str) -> None:
             """SSE：一条长连接，服务器有新记录就推一条 `data: <JSON>`。

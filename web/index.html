@@ -283,6 +283,17 @@ main.wide { max-width: 1560px; }
 .labterm .lab-where { font-size: 12px; overflow-wrap: anywhere; }
 .labterm .term { flex: 1 1 auto; display: flex; flex-direction: column; margin-top: 0; min-height: 0; cursor: text; }
 .labterm .term .out { flex: 1 1 auto; max-height: none; }
+.labterm .lab-tabs { display: flex; gap: 4px; }
+.labterm .lab-tabs button { font-size: 12.5px; padding: 3px 12px; }
+.labterm .lab-tabs button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.labterm .files { flex: 1 1 auto; display: flex; flex-direction: column; gap: 6px; min-height: 0; }
+.labterm .files .file-bar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.labterm .files select, .labterm .files input { font: inherit; font-size: 13px; padding: 3px 6px; min-width: 0; }
+.labterm .files select { flex: 1 1 12em; }
+.labterm .files textarea.code { flex: 1 1 auto; min-height: 0; resize: none; }
+.labterm .files .file-status { font-size: 12px; }
+.try .edit-content { margin: 4px 0 0; max-height: 280px; overflow: auto; }
+.cmd .edit-label { align-self: center; padding-left: 12px; color: #9aa4b2; font-size: 13px; white-space: nowrap; }
 .term .warn { color: #f0a44b; }
 .term .ps { white-space: nowrap; }
 .term .ps.outside { color: #f0a44b; }
@@ -306,6 +317,10 @@ main.wide { max-width: 1560px; }
 .mission { background: var(--code-bg); border-left: 4px solid var(--accent); border-radius: 8px; padding: 10px 14px; margin: 0 0 14px; }
 .mission b { color: var(--accent); }
 .terms { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin: 0 0 12px; }
+.recall { border: 1px dashed var(--border); border-radius: 8px; padding: 8px 12px; margin: 0 0 12px; display: grid; gap: 6px; }
+.recall .r-item { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.recall .r-item button { font-size: 12.5px; padding: 2px 10px; }
+.recall .r-done { font-size: 12.5px; }
 .term-chip { font-size: 13px; padding: 1px 10px; border-radius: 999px; border: 1px dashed var(--accent); color: var(--accent); background: transparent; }
 .term-chip.unknown { border-style: solid; background: var(--accent-soft); }
 .term-chip.known { border-color: var(--border); color: var(--muted); text-decoration: line-through; }
@@ -321,6 +336,9 @@ main.wide { max-width: 1560px; }
 .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 70; background: var(--text); color: var(--bg);
   padding: 8px 16px; border-radius: 8px; font-size: 14px; }
 .watch { margin-top: 14px; }
+.version-bar { margin: 6px 0; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.version-bar select { max-width: 100%; }
+.version-bar.preview { padding: 6px 10px; border-radius: 8px; background: var(--warn-soft); }
 .checkpoints { margin-top: 24px; padding-top: 6px; border-top: 1px solid var(--border); }
 .cp { border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: 8px; padding: 12px 14px; margin-top: 12px; }
 .cp.ok { border-left-color: var(--ok); }
@@ -501,7 +519,8 @@ async function api(path, body) {
 // ---------- 结果 ----------
 function resultBox(r) {
   const cls = r.result || "pending";
-  const label = r.result === "pending" ? "⏳ 已提交，等批改（LLM 没批成，导师会批）"
+  const label = r.grading ? "⏳ 批改中：LLM 正在按评分标准批，一道题可能要几分钟，批完会自动出现"
+    : r.result === "pending" ? "⏳ 已提交，等批改（LLM 没批成，导师会批）"
     : `${r.result === "pass" ? "✅" : r.result === "partial" ? "🟡" : "❌"} 得分 ${Math.round(r.score * 100)}%`;
   const box = $("div", { class: `result ${cls}` }, $("div", { class: "score" }, label));
   const fb = (r.feedback || []).filter(Boolean);
@@ -983,11 +1002,12 @@ function renderSummary(lesson) {
     return;
   }
   const graded = done.map(q => state[q.id]).filter(r => r.result !== "pending");
-  const pending = done.length - graded.length;
+  const grading = done.filter(q => state[q.id].grading).length;
+  const pending = done.length - graded.length - grading;
   const avg = graded.length ? graded.reduce((a, r) => a + r.score, 0) / graded.length : 0;
   box.replaceChildren(
-    $("div", { class: "big" }, graded.length ? `${Math.round(avg * 100)}%` : "—"),
-    $("div", {}, `已判分 ${graded.length} 题${pending ? `，${pending} 题等导师批改` : ""}`),
+    $("div", { class: "big" }, graded.length && !grading ? `${Math.round(avg * 100)}%` : "—"),
+    $("div", {}, `已判分 ${graded.length} 题${grading ? `，${grading} 题批改中（总分等批完再算）` : ""}${pending ? `，${pending} 题等导师批改` : ""}`),
     lesson.exam ? $("p", { class: "hint exam-note" }, "简答题由 LLM 按评分标准批改；觉得判得不对，回到对话里说，导师会复核。")
       : $("p", {}, "回到对话，对导师说：", $("code", {}, `批改 ${lesson.ref}`)),
     $("a", { href: `?lesson=${encodeURIComponent(lesson.ref)}&retake=1` }, "整套重做"));
@@ -1000,7 +1020,7 @@ function renderExamBar(lesson, box) {
   const btn = $("button", { class: "primary", onclick: () => submitExam(lesson, btn) }, "交卷");
   box.replaceChildren(
     $("div", {}, `已作答 ${lesson.questions.length - missing.length} / ${lesson.questions.length} 题`),
-    $("p", { class: "hint exam-note" }, "单元题整卷一次交：交卷前看不到对错；代码题每题最多运行 5 次测试。交卷后简答题由 LLM 批改，要等几十秒。"),
+    $("p", { class: "hint exam-note" }, "单元题整卷一次交：交卷前看不到对错；代码题每题最多运行 5 次测试。交卷后马上出分，简答题由 LLM 在后台批改，批完自动出现。"),
     btn);
 }
 
@@ -1013,16 +1033,35 @@ async function submitExam(lesson, btn) {
   });
   const warn = missing.length ? `第 ${missing.join("、")} 题还没作答，按 0 分算。\n` : "";
   if (!confirm(warn + "交卷后就不能再改了，确定交卷？")) return;
-  btn.disabled = true; btn.textContent = "判分中…（简答题在等 LLM 批改）";
+  btn.disabled = true; btn.textContent = "判分中…";
   try {
     const r = await api("/api/exam/submit", { lesson: lesson.ref, responses });
     lesson.questions.forEach(q => cards[q.id].showResult(r.questions[q.id], true));
     renderDots(lesson); renderSummary(lesson);
     document.getElementById("summary").scrollIntoView({ behavior: "smooth", block: "center" });
+    if (r.grading.length) pollGrading(lesson, () => api(`/api/exam?lesson=${encodeURIComponent(lesson.ref)}&exam=${r.exam}`).then(x => x.questions));
   } catch (e) {
     btn.disabled = false; btn.textContent = "交卷";
     alert("交卷失败：" + e.message);
   }
+}
+
+// 简答题在后台批（D-049）：每 5 秒问一次，批完的题换上批改结果；fetch 返回 {qid: 结果}
+function pollGrading(lesson, fetch) {
+  const tick = async () => {
+    let qs;
+    try { qs = await fetch(); } catch { return setTimeout(tick, 10000); }
+    let still = false;
+    lesson.questions.forEach(q => {
+      const r = qs[q.id];
+      if (!r) return;
+      if (r.grading) { still = true; return; }
+      if (state[q.id]?.grading) cards[q.id].showResult(r, true);
+    });
+    renderDots(lesson); renderSummary(lesson);
+    if (still) setTimeout(tick, 5000);
+  };
+  setTimeout(tick, 5000);
 }
 
 async function showLesson(ref) {
@@ -1037,11 +1076,17 @@ async function showLesson(ref) {
     $("section", { class: "card summary", id: "summary" }));
   renderDots(lesson);
   renderSummary(lesson);
+  if (lesson.questions.some(q => q.previous?.grading))      // 批改中刷新了页面：接着等
+    pollGrading(lesson, () => api(`/api/lesson?ref=${encodeURIComponent(ref)}`)
+      .then(x => Object.fromEntries(x.questions.filter(q => q.previous).map(q => [q.id, q.previous]))));
 }
 
 // ---------- 课程页（D-010、D-013 ~ D-017）：讲解在左，练习场终端在右，检查点做对才算学完 ----------
-async function showCourse(unitId) {
-  let data = await api(`/api/unit?id=${encodeURIComponent(unitId)}`);
+async function showCourse(unitId, planId) {
+  let data = await api(`/api/unit?id=${encodeURIComponent(unitId)}` + (planId ? `&plan=${encodeURIComponent(planId)}` : ""));
+  // 预览（D-044）：打开的不是现在用的那一版——只读，不记进度、不能答题、不动练习场；要做就先「改用这个版本」
+  const PREVIEW_MSG = "这是预览。先点页面顶上的「改用这个版本」，再做题、用练习场。";
+  const uapi = (url, body) => data.preview ? Promise.reject(new Error(PREVIEW_MSG)) : api(url, body);
   const { plan, settings, sessions } = data;
   const sections = plan.parts.flatMap(p => p.sections.map(s => ({ ...s, part: p.title })));
   const N = sections.length;
@@ -1051,7 +1096,7 @@ async function showCourse(unitId) {
   let progress = data.progress;
   const isPassed = i => progress.passed.includes(i);
   const isSkipped = i => progress.skipped.includes(i);
-  const post = (event, extra = {}) => api("/api/unit/progress", { unit: unitId, event, ...extra });
+  const post = (event, extra = {}) => data.preview ? Promise.resolve(progress) : api("/api/unit/progress", { unit: unitId, event, ...extra });
   const fromHash = Number((location.hash.match(/^#s(\d+)$/) || [])[1]);
   let current = Number.isInteger(fromHash) && fromHash >= 1 && fromHash <= N ? fromHash - 1
     : (sections.findIndex((_, i) => !isPassed(i) && !isSkipped(i)) + 1 || N + 1) - 1;
@@ -1125,6 +1170,7 @@ async function showCourse(unitId) {
       $("a", { href: `?kg=${encodeURIComponent(unitId.split("-")[0])}` }, "知识树"), " · ",
       $("a", { href: "?log=1" }, "学习记录"), " · ",
       $("a", { href: "/" }, "全部课程")),
+    versionBar(),
     budgetEl);
   const tocList = $("div");
   const tocSummary = $("summary");
@@ -1133,6 +1179,26 @@ async function showCourse(unitId) {
   const term = hasLab ? labTerminal() : null;
   document.getElementById("app").replaceChildren(
     $("div", { class: "course" + (hasLab ? " has-lab" : "") }, toc, lesson, term ? term.el : null));
+
+  // ---- 版本（D-034、D-044）：每一版都在，进度按版本记；切换只是换"现在用哪一版" ----
+  function versionBar() {
+    const vs = data.versions || [];
+    if (vs.length < 2 && !data.preview) return null;
+    const viewing = data.plan.provenance?.run;
+    const label = v => `${v.current ? "现在用的" : v.published ? "以前用过" : "新版本"} · ${(v.created_at || "").slice(5, 10)} · 学到 ${v.passed}/${v.sections} 节`;
+    const select = $("select", { onchange: e => { location.href = `?unit=${encodeURIComponent(unitId)}` + (vs.find(v => v.plan_id === e.target.value)?.current ? "" : `&plan=${encodeURIComponent(e.target.value)}`); } },
+      ...vs.map(v => $("option", { value: v.plan_id, selected: v.plan_id === viewing }, label(v))));
+    const switchTo = async () => {
+      const v = vs.find(x => x.plan_id === viewing);
+      if (!confirm(`改用这个版本？
+你在现在那一版的进度都保留，随时可以切回去。这一版你学到 ${v?.passed ?? 0}/${v?.sections ?? N} 节。`)) return;
+      try { await api("/api/unit/switch", { unit: unitId, plan: viewing }); location.href = `?unit=${encodeURIComponent(unitId)}`; }
+      catch (e) { alert(e.message); }
+    };
+    return $("div", { class: "version-bar" + (data.preview ? " preview" : "") }, "版本：", select,
+      ...(data.preview ? [$("span", { class: "hint" }, " 预览中：只能看，不记进度。"),
+        $("button", { class: "primary", onclick: switchTo }, "改用这个版本")] : []));
+  }
 
   function renderBudget() {
     const planned = data.planned_minutes;
@@ -1200,11 +1266,12 @@ async function showCourse(unitId) {
       $("h2", {}, s.title),
       $("div", { class: "goal" }, $("b", {}, "目标 "), s.goal),
       s.mission ? $("div", { class: "mission" }, $("b", {}, "任务 "), s.mission) : null,
+      s.recall?.length ? recallBlock(s.recall, i) : null,
       terms.length ? $("div", { class: "terms" }, $("span", { class: "hint" }, "本节新词（点开看解释）："),
         ...terms.map(t => termChip(t))) : null,
       explain,
       s.try?.length ? $("h3", {}, "动手") : null,
-      s.try?.length ? $("ol", { class: "try" }, s.try.map(t => $("li", {},
+      s.try?.length ? $("ol", { class: "try" }, s.try.map(t => t.edit ? editStep(t) : $("li", {},
         $("div", { class: "cmd" }, $("code", {}, t.command),
           term ? $("button", { onclick: () => term.put(t.command), title: "放进右边的终端，按回车运行" }, "放进终端") : null,
           copyBtn(t.command)),
@@ -1213,6 +1280,42 @@ async function showCourse(unitId) {
       s.checkpoint?.length ? checkpointBlock(s, i) : legacyExtras(s),
       navBar());
     lesson.scrollIntoView({ block: "start" });
+  }
+
+  // 回顾（D-051）：这一节要用到的、前面单元学过的东西。解释一直显示（万一记错了），只问一句记不记得
+  function recallBlock(items, i) {
+    const key = r => `recall:${unitId}:${r.id}`;
+    const answered = r => { try { return localStorage.getItem(key(r)); } catch { return null; } };
+    return $("div", { class: "recall" }, $("span", { class: "hint" }, "回顾：前面学过的，这一节会用到"),
+      ...items.map(r => {
+        const done = $("span", { class: "r-done hint" });
+        const answer = async remembered => {
+          try {
+            await post("recall", { section: i, node: r.id, remembered });
+            try { localStorage.setItem(key(r), remembered ? "1" : "0"); } catch {}
+            row.querySelectorAll("button").forEach(b => b.remove());
+            done.textContent = remembered ? "✓ 记得" : "记下了：没记住，回头再看这一条";
+          } catch (e) { toast(e.message); }
+        };
+        const prev = answered(r);
+        if (prev != null) done.textContent = prev === "1" ? "✓ 记得" : "记下了：没记住，回头再看这一条";
+        const row = $("div", { class: "r-item" }, $("b", {}, r.term), $("span", {}, r.explain),
+          prev == null ? $("span", { class: "hint" }, "还记得吗？") : null,
+          prev == null ? $("button", { onclick: () => answer(true) }, "记得") : null,
+          prev == null ? $("button", { onclick: () => answer(false) }, "不记得了") : null, done);
+        return row;
+      }));
+  }
+
+  // 改文件的一步（D-057）：在右边的「文件」里打开、改成下面的样子、保存
+  function editStep(t) {
+    return $("li", {},
+      $("div", { class: "cmd" }, $("span", { class: "edit-label" }, "改文件"), $("code", {}, t.edit),
+        term ? $("button", { onclick: () => term.openFile(t.edit), title: "在右边的「文件」里打开（没有就新建）" }, "在「文件」里打开") : null),
+      $("div", {},
+        $("div", { class: "expect" }, $("b", {}, "改成这样："), " ", copyBtn(t.content || "")),
+        $("pre", { class: "edit-content" }, $("code", {}, t.content || "")),
+        $("div", { class: "expect", html: "<b>应该看到：</b>" + inlineMd(t.expect) })));
   }
 
   // 旧版课程计划（没有检查点）：常见坑收起来，出事了再看（D-015）
@@ -1272,7 +1375,7 @@ async function showCourse(unitId) {
     const checkBtn = $("button", { class: "primary", onclick: () => check() }, st.ok ? "再检查一次" : "检查");
     const hintBtn = $("button", { onclick: async () => {
       try {
-        const h = await api("/api/unit/hint", { unit: unitId, section: i, idx });
+        const h = await uapi("/api/unit/hint", { unit: unitId, section: i, idx });
         fill(hintsBox, h.hints.map((t, n) => $("div", { class: "cp-hint" }, $("b", {}, ["方向", "关键概念", "接近答案"][n] || `提示 ${n + 1}`), " ", $("span", { html: inlineMd(t) }))));
         hintBtn.textContent = h.level >= h.total ? "提示已经全部给出" : `再要一级提示（${h.level}/${h.total}）`;
         hintBtn.disabled = h.level >= h.total;
@@ -1283,7 +1386,7 @@ async function showCourse(unitId) {
       if (response == null) { alert("还没作答"); return; }
       checkBtn.disabled = true; checkBtn.textContent = "检查中…";
       try {
-        const r = await api("/api/unit/check", { unit: unitId, section: i, idx, response });
+        const r = await uapi("/api/unit/check", { unit: unitId, section: i, idx, response });
         const wasPassed = isPassed(i);
         progress = r.progress;
         fill(result, r.ok
@@ -1352,7 +1455,7 @@ async function showCourse(unitId) {
       progress = await post("skip", { section: i });
       const needsLab = hasLab && sections[i].checkpoint?.some(c => c.type === "lab");
       if (needsLab && confirm("后面的节会用到这一节在练习场里的结果。要用参考做法把练习场补齐吗？（推荐）")) {
-        const r = await api("/api/unit/lab", { unit: unitId, op: "fill", section: i });
+        const r = await uapi("/api/unit/lab", { unit: unitId, op: "fill", section: i });
         term?.print(r.output, "dim");
       }
     }
@@ -1366,15 +1469,43 @@ async function showCourse(unitId) {
       $("h2", {}, left === 0 ? "这个单元学完了" : `还有 ${left} 节没通过检查点`),
       $("p", {}, "学完之后，你应该能做到下面这些事。练习题就按这些出："),
       $("ol", {}, plan.outcomes.map(o => $("li", {}, o))),
-      data.quiz
-        ? $("a", { class: "primary-link", href: `?lesson=${encodeURIComponent(data.quiz)}` }, $("button", { class: "primary" }, "开始练习题 →"))
-        : $("p", {}, "练习题还没出。回到对话，对导师说：", $("code", {}, `我学完了 ${unitId}，出题`)),
+      quizBlock(data),
       data.sources?.length ? $("details", { class: "deeper" }, $("summary", {}, "这个单元的出处"),
         $("ul", {}, data.sources.map(x => $("li", {}, $("a", { href: x.url, target: "_blank", rel: "noopener" }, x.title))))) : null,
       plan.later?.length ? $("details", { class: "deeper" }, $("summary", {}, "以后再学（这次没放进来的内容）"),
         $("ul", {}, plan.later.map(x => $("li", {}, $("b", {}, x.title), "：", x.why, " ",
           x.url ? $("a", { href: x.url, target: "_blank", rel: "noopener" }, "链接") : null)))) : null,
       $("div", { class: "sec-nav" }, $("button", { onclick: () => go(N - 1) }, "← 回到最后一节"))));
+  }
+
+  // ---- 单元题（D-041）：出题 agent 在后台出，这里显示出到哪了 ----
+  function quizBlock(d) {
+    const q = d.quiz_state || (d.quiz ? { stage: "ready", lesson: d.quiz } : { stage: "todo" });
+    const start = async () => {
+      try { await api("/api/quiz/start", { unit: unitId }); } catch (e) { return alert(e.message); }
+      refreshQuiz();
+    };
+    const box = $("div", { class: "quiz-state" });
+    const fillBox = s => {
+      if (s.stage === "ready")
+        return fill(box, $("a", { class: "primary-link", href: `?lesson=${encodeURIComponent(s.lesson)}` },
+          $("button", { class: "primary" }, "开始单元题 →")));
+      if (s.stage === "preparing") {
+        setTimeout(refreshQuiz, 5000);
+        return fill(box, $("p", {}, "单元题正在按你在这个单元的表现出题：", $("b", {}, s.progress?.label || "开始了"),
+          $("div", { class: "hint" }, "出好后这里会变成「开始单元题」，大约 5–10 分钟。")));
+      }
+      if (s.stage === "escalated")
+        return fill(box, $("p", { class: "error" }, "出题没有通过检验：" + (s.stuck?.[0] || "")), $("button", { onclick: start }, "重新出题"));
+      if (s.stage === "interrupted")
+        return fill(box, $("p", { class: "hint" }, "上次出题没走完。"), $("button", { onclick: start }, "重新出题"));
+      fill(box, $("p", { class: "hint" }, "单元题还没出（打开最后一节时会自动开始）。"), $("button", { onclick: start }, "现在出单元题"));
+    };
+    async function refreshQuiz() {
+      try { fillBox((await api(`/api/unit?id=${encodeURIComponent(unitId)}`)).quiz_state || { stage: "todo" }); } catch (e) { /* 下次再试 */ }
+    }
+    fillBox(q);
+    return box;
   }
 
   // ---- 新词（D-017）：下划线标出，点开看解释，👍 / 👎 ----
@@ -1463,7 +1594,7 @@ async function showCourse(unitId) {
       ps.textContent = (inside ? "练习场" + cwd.slice(labPosix.length) : cwd) + " $";
       ps.classList.toggle("outside", !inside);
     };
-    const act = (op, extra = {}) => api("/api/unit/lab", { unit: unitId, op, section: current < N ? current : undefined, ...extra });
+    const act = (op, extra = {}) => uapi("/api/unit/lab", { unit: unitId, op, section: current < N ? current : undefined, ...extra });
     input.addEventListener("keydown", async e => {
       if (e.key === "Tab") { e.preventDefault(); if (!tabTold) { print("（这里没有 Tab 补全。想练 Tab 补全，就在 Git Bash 里 cd 到上面那个路径试。）", "dim"); tabTold = true; } return; }
       if (e.key === "l" && e.ctrlKey) { e.preventDefault(); out.innerHTML = ""; return; }
@@ -1494,10 +1625,57 @@ async function showCourse(unitId) {
       if (!confirm("把练习场重置成单元开始时的样子？所有节的改动都会丢掉。")) return;
       const r = await act("reset"); print(r.output, "dim"); showCwd(r.cwd);
     } }, "重置练习场");
+    // 「文件」（D-039、D-057）：终端里没有编辑器，改文件在这里做。只能读写练习场里的文本文件
+    const pick = $("select", { "aria-label": "练习场里的文件" });
+    const newName = $("input", { placeholder: "新文件，如 test_calc.py", spellcheck: "false", "aria-label": "新文件的路径" });
+    const area = $("textarea", { class: "code", spellcheck: "false", "aria-label": "文件内容", disabled: true });
+    const status = $("span", { class: "file-status hint" }, "选一个文件，或者新建一个");
+    let openPath = "", dirty = false;
+    const setStatus = (t, cls = "hint") => { status.textContent = t; status.className = "file-status " + cls; };
+    async function listFiles(select) {
+      const r = await act("files");
+      pick.innerHTML = "";
+      pick.append($("option", { value: "" }, r.files.length ? "打开一个文件…" : "（练习场里还没有文件）"), ...r.files.map(f => $("option", { value: f }, f)));
+      pick.value = select && r.files.includes(select) ? select : "";
+    }
+    async function openFile(path) {
+      if (dirty && !confirm(`${openPath} 还没保存，丢掉改动？`)) { pick.value = openPath; return; }
+      let content = "";
+      try { content = (await act("read", { path })).content; setStatus(`打开了 ${path}`); }
+      catch (e) { if (!/没有这个文件/.test(e.message)) { setStatus(e.message, "warn"); return; } setStatus(`新文件 ${path}：写好后点「保存」`); }
+      openPath = path; area.value = content; area.disabled = false; dirty = false; area.focus();
+      await listFiles(path).catch(() => {});
+      if (pick.value !== path) pick.append($("option", { value: path, selected: true }, path + "（未保存）"));
+    }
+    async function save() {
+      if (!openPath) return;
+      try { await act("write", { path: openPath, content: area.value }); dirty = false; setStatus(`已保存 ${openPath}`); await listFiles(openPath); }
+      catch (e) { setStatus(e.message, "warn"); }
+    }
+    area.addEventListener("input", () => { if (!dirty) { dirty = true; setStatus(`${openPath} 有改动，没保存`); } });
+    area.addEventListener("keydown", e => {
+      if (e.key === "s" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save(); }
+      if (e.key === "Tab") { e.preventDefault(); area.setRangeText("    ", area.selectionStart, area.selectionEnd, "end"); area.dispatchEvent(new Event("input")); }
+    });
+    pick.addEventListener("change", () => { if (pick.value) openFile(pick.value); });
+    newName.addEventListener("keydown", e => { if (e.key === "Enter" && newName.value.trim()) { openFile(newName.value.trim()); newName.value = ""; } });
+    const files = $("div", { class: "files", hidden: true },
+      $("div", { class: "file-bar" }, pick, newName, $("button", { onclick: () => newName.value.trim() && openFile(newName.value.trim()) }, "新建")),
+      area,
+      $("div", { class: "file-bar" }, $("button", { class: "primary", onclick: save }, "保存"), $("span", { class: "hint" }, "Ctrl+S"), status));
+    const termBox = $("div", { class: "term", onclick: () => { if (!getSelection().toString()) input.focus(); } }, out, $("div", { class: "line" }, ps, input));
+    const tabT = $("button", { class: "on", onclick: () => show("term") }, "终端");
+    const tabF = $("button", { onclick: () => show("files") }, "文件");
+    function show(name) {
+      termBox.hidden = name !== "term"; files.hidden = name !== "files";
+      tabT.classList.toggle("on", name === "term"); tabF.classList.toggle("on", name === "files");
+      if (name === "files") listFiles(openPath).catch(e => setStatus(e.message, "warn")); else input.focus();
+    }
     const el = $("aside", { class: "labterm" },
-      $("div", { class: "lab-head" }, $("b", {}, "练习场终端"), $("span", { class: "hint" }, "真实的 bash"), $("span", { class: "spacer" }), restore, reset),
+      $("div", { class: "lab-head" }, $("b", {}, "练习场"), $("div", { class: "lab-tabs", role: "tablist" }, tabT, tabF),
+        $("span", { class: "spacer" }), restore, reset),
       $("div", { class: "lab-where hint" }, "位置：", where, " · 也可以在 Git Bash 里 cd 过去"),
-      $("div", { class: "term", onclick: () => { if (!getSelection().toString()) input.focus(); } }, out, $("div", { class: "line" }, ps, input)));
+      termBox, files);
     act("open").then(r => {
       labPosix = r.lab_posix;
       where.textContent = r.lab_posix;
@@ -1505,7 +1683,8 @@ async function showCourse(unitId) {
       if (String(r.bash).startsWith("error")) print(r.bash.slice(7), "warn");
       else print("练习场准备好了。命令都在这个目录里执行，变量和 cd 会保留到下一条命令。", "dim");
     }).catch(e => print(e.message, "warn"));
-    return { el, print, put: cmd => { input.value = cmd; input.focus(); } };
+    return { el, print, put: cmd => { show("term"); input.value = cmd; input.focus(); },
+             openFile: path => { show("files"); openFile(path); } };
   }
 
   function go(i) {
@@ -1615,9 +1794,9 @@ function courseCard(u, reload) {
     acts.push($("button", { onclick: prepare }, "重新备课"));
   } else if (p.stage === "ready") {
     state = [$("div", { class: "state ready" }, `能学 · 学到 ${u.course.passed}/${u.course.sections} 节`),
-      $("div", { class: "hint" }, "有新版本等你确认（进度按版本记，旧版本的记录都保留）")];
+      $("div", { class: "hint" }, "有一版新的课程：可以先看看，再决定换不换（两版的进度都保留，随时能切回来）")];
     acts.push($("button", { onclick: () => { location.href = go; } }, "进入学习"),
-      $("button", { onclick: () => act("/api/panel/publish", `把「${u.title}」换成新版本？`) }, "换成新版本"));
+      $("button", { onclick: () => { location.href = `?unit=${encodeURIComponent(u.id)}&plan=${encodeURIComponent(p.run)}`; } }, "看看新版本"));
   } else if (u.course) {
     const done = u.course.passed >= u.course.sections;
     state = [$("div", { class: "state ready" }, done ? "学完了" : `能学 · 学到 ${u.course.passed}/${u.course.sections} 节`)];
@@ -1721,8 +1900,8 @@ async function showPanel() {
   document.getElementById("app").replaceChildren(list, detail, versionsBox);
 
   const study = u => {
-    const s = { todo: "没开始", watching: "在学", done: `学完 ${u.done_on}` }[u.status] || u.status;
-    const bits = [s];
+    // 学没学完由证据算（D-047），课程定义里不再手写 status
+    const bits = [u.scope_open ? "范围没定" : !u.course ? "还没课程页" : u.course.passed >= u.course.sections ? "学完" : u.course.passed ? "在学" : "没开始"];
     if (u.course) bits.push(`课程页 ${u.course.passed}/${u.course.sections} 节`);
     u.quizzes.forEach(q => bits.push(`题 ${q.answered}/${q.questions}`));
     return bits.join(" · ");
@@ -1827,7 +2006,7 @@ async function showPanel() {
 
 const UNIT = params.get("unit");
 const KG = params.get("kg");
-(UNIT ? showCourse(UNIT) : KG ? showKnowledge(KG) : REF ? showLesson(REF) : params.has("log") ? showLog()
+(UNIT ? showCourse(UNIT, params.get("plan")) : KG ? showKnowledge(KG) : REF ? showLesson(REF) : params.has("log") ? showLog()
   : params.has("panel") ? showPanel() : showIndex()).catch(e => {
   document.getElementById("app").replaceChildren($("p", { class: "error" }, "加载失败：" + e.message));
 });

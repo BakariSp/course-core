@@ -50,7 +50,7 @@ def stub_of(sec):
     cp = sec["checkpoint"][0]
     stub = {"title": sec["title"], "minutes": sec["minutes"], "goal": sec["goal"], "mission": sec.get("mission", "m"),
             "terms": sec.get("terms") or [], "teaches": [f"{sec['title']} 的要点"],
-            "check": {"type": cp["type"], "what": "做到 X"}, "reading": [SRC]}
+            "check": {"type": cp["type"], "what": "做到 X", "why": f"这一节练的能力用 {cp['type']} 最能检验"}, "reading": [SRC]}
     if cp["type"] == "lab":                    # 约定：做完这一节，练习场满足它的检查点
         stub["state_after"] = [{k: v for k, v in c.items() if k != "trap"} for c in cp["checks"]]
     return stub
@@ -200,6 +200,10 @@ def test_prepare_repairs_only_the_broken_section_and_publishes(app, runtime, pag
            [["fetch_url", "submit_section"]] * 4 + [["fetch_url", "submit_repair"]]   # 知识库 → 大纲 → 4 节 → 只修第 3 节
     assert r["rounds"][0]["run"].endswith("-a")                         # 第 1 轮检验的是拼好的课程计划
     assert len(runtime.reviews) == 2 and "## /sections/2 · 第 3 节 s2" in runtime.reviews[0]   # 评审模型每轮看一次，按地址
+    # 每一轮按步骤记账，评审模型的钱也算进去（假 runtime：每次运行 $0.01，每次评审 $0.002）
+    assert r["rounds"][0]["costs"] == {"调研": 0.01, "大纲": 0.01, "各节": 0.04, "评审": 0.002}
+    assert r["rounds"][1]["costs"] == {"修复": 0.01, "评审": 0.002}
+    assert r["spent_usd"] == round(0.062 + 0.012, 4)
     page = app.course.page(UNIT)
     assert page["plan"]["provenance"]["run"] == r["run"] and r["run"].endswith("-r1")
     stage = app.panel.unit(UNIT)["prep"]
@@ -246,6 +250,32 @@ def test_a_unit_the_learner_already_started_waits_for_confirmation(app, runtime,
     assert app.course.page(UNIT)["plan"]["provenance"]["run"] == r["run"]
 
 
+@needs_bash
+def test_a_new_version_can_be_previewed_and_switched_back_and_forth(app, runtime, pages, clock):
+    """D-034、D-044：新版本通过检验后存成可选版本；先预览再换，换过去、换回来，两版的进度都在。"""
+    staged(runtime, good_plan())
+    old = app.prep.prepare(UNIT)["run"]
+    app.course.check(UNIT, 0, 0, ["B"])                                           # 在旧版学完第 1 节
+    clock.tick(60)
+    again = good_plan()
+    again["nodes"] = []
+    staged(runtime, again)
+    new = app.prep.prepare(UNIT)["run"]
+    vs = {v["plan_id"]: v for v in app.course.page(UNIT)["versions"]}
+    assert vs[old]["current"] and vs[old]["passed"] == 1
+    assert not vs[new]["current"] and not vs[new]["published"] and vs[new]["passed"] == 0
+    preview = app.course.page(UNIT, new)
+    assert preview["preview"] and preview["plan"]["provenance"]["run"] == new and not app.course.page(UNIT)["preview"]
+    app.course.switch(UNIT, new)
+    assert app.course.page(UNIT)["plan"]["provenance"]["run"] == new and app.course.page(UNIT)["progress"]["passed"] == []
+    app.course.switch(UNIT, old)                                                  # 换回来：旧版的进度还在
+    page = app.course.page(UNIT)
+    assert page["plan"]["provenance"]["run"] == old and page["progress"]["passed"] == [0]
+    assert {v["plan_id"]: v["published"] for v in page["versions"]} == {old: True, new: True}
+    with pytest.raises(Exception, match="没有这一版"):
+        app.course.page(UNIT, "nope")
+
+
 def test_publish_needs_an_accepted_loop(app, runtime, pages):
     runtime.script = generate(good_plan())
     run = app.harness.run("tutor-prep", UNIT)
@@ -269,8 +299,7 @@ def test_outline_is_checked_before_any_section_is_written():
     bad["parts"][0]["sections"][3]["reading"] = []
     whats = {(f.address, f.what.split("：")[-1][:12]) for f in outline_findings(bad, _limits())}
     assert ("/sections/1", "check.what") in {(a, w[:10]) for a, w in whats}
-    assert any(a == "" and "至少一半" in w for a, w in
-               {(f.address, f.what) for f in outline_findings(bad, _limits())})     # 动手型检查点不够一半
+    assert not any("至少一半" in f.what for f in outline_findings(bad, _limits()))   # D-043：题型跟着内容走，不再要求一半动手
     assert any(a == "/sections/3" and "reading" in w for a, w in {(f.address, f.what) for f in outline_findings(bad, _limits())})
 
 
@@ -281,7 +310,11 @@ def test_assemble_fills_stubs_and_the_outline_wins_on_title_and_minutes():
     assert (filled["title"], filled["minutes"]) == ("认识练习场", 20) and "check" not in filled
     partial = assemble(o, [filled])
     assert len(sections_of(partial)) == 1 and partial["lab"] == LAB and partial["sources"] == plan["sources"]
-    assert plan_parts(assemble(o, sections_of(plan))) == plan_parts(plan)          # 全写完 = 原来的课程计划
+    full = assemble(o, sections_of(plan))
+    assert all(s["check_why"] for s in sections_of(full))                          # 为什么这样练：从大纲带进课程计划（D-052）
+    for s in sections_of(full):
+        s.pop("check_why")
+    assert plan_parts(full) == plan_parts(plan)                                    # 除此之外，全写完 = 原来的课程计划
     # 新词和定义归大纲：写节的人交来的 terms 不算数
     mine = fill_stub(sections_of(o)[0], {**sections_of(plan)[0], "terms": [{"id": "tools.cmd.ls", "term": "ls", "explain": "x"}]})
     assert mine["terms"] == sections_of(plan)[0]["terms"]
@@ -506,6 +539,13 @@ def test_build_knowledge_for_many_units_at_once(app, runtime, pages, root):
     done = app.prep.build_knowledge([UNIT, "tools-02-git"])
     assert set(done) == {UNIT, "tools-02-git"} and all(done.values())
     assert app.prep.build_knowledge([UNIT, "tools-02-git"]) == {}             # 已经有的不再做
+
+
+def test_redo_replaces_the_units_knowledge_base(app, runtime, pages):
+    runtime.script = [("fetch_url", {"url": SRC}), ("fetch_url", {"url": OTHER}), ("submit_research", {"knowledge": kb_of(good_plan())})]
+    first = app.prep.build_knowledge([UNIT])[UNIT]
+    again = app.prep.build_knowledge([UNIT], redo=True)[UNIT]                # 调研方法变了：重做一份
+    assert again and again != first and app.harness.knowledge("tutor-prep", UNIT).id == again
 
 
 @needs_bash

@@ -50,6 +50,9 @@ NODES = {
                  "desc": "这一版课程里每节的检查点、提示、跳过、自评。", "code": "domain/progress.py"},
     "course_eval": {"label": "课程评测", "sub": "预测 vs 实际", "kind": "projection",
                     "desc": "计划分钟 vs 实际、预测负荷 vs 自评、新词预测准不准、检查点难度。", "code": "domain/course_eval.py"},
+    "profile": {"label": "老师的观察", "sub": "还有效的观察", "kind": "projection",
+                "desc": "老师对学习者的观察（讲法、容易过载的地方），没被学习者推翻的那些；每条带出处（D-047）。",
+                "code": "domain/profile.py · observations"},
     "context": {"label": "备课上下文", "sub": "下一次的简报", "kind": "projection",
                 "desc": "给 agent 的：已掌握的词、相关薄弱点、没掌握的先修、已有知识节点、时间预算。",
                 "code": "app/harness.py · build_input"},
@@ -62,6 +65,7 @@ NODES = {
 # 计算之间的依赖（静态）：谁的结果被谁用
 LINKS = [
     ("mastery", "node_state", "掌握等级"), ("node_state", "context", "已掌握的词 · 相关薄弱点"),
+    ("profile", "context", "老师的观察"),
     ("timeline", "progress", "每节用时"), ("timeline", "course_eval", "实际分钟"), ("progress", "course_eval", "通过没有"),
     ("course_eval", "grades", "学习结果评分"), ("context", "agent", "简报"), ("grades", "gate", "检查通过了吗"),
     ("grades", "report", "按版本汇总"), ("gate", "plans", "发布"), ("plans", "course_page", "当前版本"),

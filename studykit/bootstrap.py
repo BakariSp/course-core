@@ -6,6 +6,7 @@
         labs/           练习场的快照和状态。**不可重建**：删了就回不到"第 N 节开始时"
         runs/           agent 每次运行的工作目录（简报、输入、产出；raw/ 下的原始日志可以清理）
         prep/           每个单元的备课现在走到哪、哪个进程在跑（D-040；随时可以删）
+        cache/transcripts/  讲课视频的字幕（D-043；和学习者无关，删了会重新下载）
 """
 from __future__ import annotations
 
@@ -19,15 +20,19 @@ from studykit.adapters.pi import PiRuntime
 from studykit.adapters.prep_status import FilePrepStatus
 from studykit.adapters.sqlite import SqliteStore
 from studykit.adapters.system import SystemClock, UuidIds
+from studykit.adapters.video_fetch import VideoFetcher
 from studykit.adapters.web_fetch import UrllibFetcher
 from studykit.app.grading import LlmShortGrader
 from studykit.app.harness import Harness
+from studykit.app.journey import Journey
 from studykit.app.learning import Assessment, Course, Deps, LearnerModel
 from studykit.app.observe import Observer
 from studykit.app.panel import Panel
 from studykit.app.prep import CoursePrep
+from studykit.app.quiz import QuizMaker
 from studykit.app.ports import AgentRuntime, Clock, Fetcher, IdGen, JobRunner, PracticeEnv, Spec
-from studykit.domain.assessment import CORE_CHECKERS, CORE_CHECKPOINTS
+from studykit.domain.assessment import CORE_CHECKERS
+from studykit.domain.plan_check import CORE_MODULES
 from studykit.domain.evidence import VerbRegistry
 from studykit.specs import cs_practice
 
@@ -57,7 +62,9 @@ class App:
     observer: Observer
     practice: PracticeEnv | None
     prep: CoursePrep
+    quizzes: QuizMaker
     panel: Panel
+    journey: Journey
 
     def close(self) -> None:
         if self.practice:
@@ -82,7 +89,7 @@ def build(config: Config | None = None, *, clock: Clock | None = None, ids: IdGe
         for v in s.verbs:
             verbs.register(v)
     checkers = {c.kind: c for c in (*CORE_CHECKERS, *(c for s in enabled for c in s.checkers))}
-    checkpoints = {**CORE_CHECKPOINTS, **{k: g for s in enabled for k, g in s.checkpoints.items()}}
+    checkpoints = {m.name: m.grade for m in (*CORE_MODULES, *(m for s in enabled for m in s.modules)) if m.grade}
     practice = next((s.practice for s in enabled if s.practice), None)
     clock, ids = clock or SystemClock(), ids or UuidIds()
     deps = Deps(store, store, content, clock, ids, verbs, config.learner)
@@ -90,12 +97,17 @@ def build(config: Config | None = None, *, clock: Clock | None = None, ids: IdGe
     course = Course(deps, learner, checkpoints, practice)
     runtime = runtime or PiRuntime(config.root / "agents" / "_pi" / "env_bridge.ts", config.root / "agents" / "_pi" / "home",
                                    config.root / "local.env", root=config.root)
-    harness = Harness(runs=store, runtime=runtime, fetcher=fetcher or UrllibFetcher(), content=content, course=course,
+    harness = Harness(runs=store, runtime=runtime, fetcher=fetcher or VideoFetcher(UrllibFetcher(), config.data / "cache" / "transcripts"), content=content, course=course,
                       learner=learner, specs=enabled, clock=clock, ids=ids, root=config.root,
                       workspace=config.data / "runs", learner_id=config.learner)
     grader = LlmShortGrader(runtime, config.root, config.data / "runs", clock, harness.versions)
     prep = CoursePrep(harness, course, store, FilePrepStatus(config.data / "prep"))
+    jobs = jobs or ThreadJobs()
+    quizzes = QuizMaker(harness=harness, course=course, learner=learner, content=content, plans=store, checkers=checkers,
+                        status=FilePrepStatus(config.data / "prep" / "quiz"), jobs=jobs,
+                        command_problems=cs_practice.safety.command_problems)
     panel = Panel(content=content, harness=harness, prep=prep, course=course, runs=store, plans=store, evidence=store,
-                  jobs=jobs or ThreadJobs(), learner_id=config.learner)
-    return App(config, store, content, Assessment(deps, checkers, config.data / "sandbox", config.root, grader),
-               course, learner, harness, Observer(store, verbs, config.learner), practice, prep, panel)
+                  jobs=jobs, learner_id=config.learner)
+    return App(config, store, content, Assessment(deps, checkers, config.data / "sandbox", config.root, grader, jobs),
+               course, learner, harness, Observer(store, verbs, config.learner), practice, prep, quizzes, panel,
+               Journey(content=content, course=course, panel=panel))

@@ -31,6 +31,7 @@ class Verdict:
     feedback: list[str] = field(default_factory=list)    # 给学习者看的逐条反馈
     detail: dict = field(default_factory=dict)           # 给导师看的附加信息（测试输出等）
     records: list[Record] = field(default_factory=list)
+    units: list[float | None] | None = None              # 每个得分点的分（选项 / 空 / 检查项……），和 key.parts 一一对应（D-056）
 
 
 @dataclass
@@ -119,7 +120,10 @@ class Choice(PureChecker):
         else:
             # WHY: 多选按"选对的减去选错的"给部分分，防止全选也能拿分。
             score = max(0.0, (len(got & want) - len(got - want)) / len(want))
-        return Verdict(score, [f"正确答案：{'、'.join(sorted(want))}"])
+        # 每个选项一个得分点：该选的选了、不该选的没选，才算这个选项对
+        letters = [chr(65 + i) for i in range(len(q.get("options") or []))]
+        units = [1.0 if (x in got) == (x in want) else 0.0 for x in letters] or None
+        return Verdict(score, [f"正确答案：{'、'.join(sorted(want))}"], units=units)
 
 
 BLANK = "____"
@@ -139,7 +143,7 @@ class Fill(PureChecker):
     def check(self, q, key, ctx, response):
         answers = response if isinstance(response, list) else [response]
         blanks = [b if isinstance(b, list) else [b] for b in key["blanks"]] if "blanks" in key else [key.get("accept", [])]
-        feedback, right = [], 0
+        feedback, right, units = [], 0, []
         for i, accept in enumerate(blanks):
             got = answers[i] if i < len(answers) else ""
             if key.get("regex"):
@@ -147,8 +151,9 @@ class Fill(PureChecker):
             else:
                 ok = _norm(got) in {_norm(a) for a in accept}
             right += ok
+            units.append(1.0 if ok else 0.0)
             feedback.append(f"第 {i + 1} 空：{'✓' if ok else '✗'} 你填的是「{got}」")
-        return Verdict(right / len(blanks), feedback)
+        return Verdict(right / len(blanks), feedback, units=units)
 
 
 class Short(PureChecker):
@@ -161,6 +166,48 @@ class Short(PureChecker):
 
 
 CORE_CHECKERS = (Choice(), Fill(), Short())
+
+
+# ---------- 得分点（D-056）：key.parts 和选项 / 空 / 评分点 / 检查项一一对应，各挂一个知识点 ----------
+#
+#   parts: [{concept, level?, misconception?}]   level 默认是这道题的等级；misconception 是这个得分点没拿到时说明的误解
+#   （知识图里 concept 节点下的误解 id）。没有 parts、或个数对不上，就照旧按整题算。
+
+UNIT_PASS = 0.7          # 一个得分点拿到这个比例以上，就不算命中误解（和掌握度的通过线一致）
+
+
+def rubric_units(key: dict, items: list[dict]) -> list[float | None]:
+    """简答题的批改 → 每条评分点的得分比例；加分项拿到算 1，没拿到是 None（不算这个得分点）。"""
+    got = {int(x["id"]): float(x.get("score") or 0) for x in items}
+    out: list[float | None] = []
+    for it in rubric_items(key):
+        s = got.get(it["id"], 0.0)
+        if it["max"]:
+            out.append(round(min(1.0, s / it["max"]), 3))
+        else:
+            out.append(1.0 if s > 0 else None)
+    return out
+
+
+def score_parts(q: dict, key: dict, units: list[float | None] | None) -> list[dict]:
+    """每个得分点的分 + key.parts 里的标注 → 记进证据的 parts。"""
+    parts = key.get("parts") or []
+    if not parts or units is None or len(parts) != len(units):
+        return []
+    out = []
+    for p, u in zip(parts, units):
+        if u is None:
+            continue
+        item = {"concept": p.get("concept") or q["concept"], "level": int(p.get("level") or q["level"]), "score": u}
+        if u < UNIT_PASS and p.get("misconception"):
+            item["misconception"] = p["misconception"]
+        out.append(item)
+    return out
+
+
+def part_concepts(q: dict, key: dict) -> tuple[str, ...]:
+    """这道题考到的知识点：题目的知识点在前（证据的第一个节点 = 它考的概念），再加得分点上的。"""
+    return tuple(dict.fromkeys([q["concept"], *(p.get("concept") or q["concept"] for p in key.get("parts") or [])]))
 
 
 # ---------- 简答题的 LLM 批改（D-031）：拼 prompt、解析回复。调用模型在 app 层 ----------

@@ -31,6 +31,7 @@ from studykit.specs.cs_practice.terminal import TerminalError, evaluate
 MARK = "__STUDY_DONE_" + uuid.uuid4().hex[:8] + "__"
 TIMEOUT = 20            # 一条命令最多跑多久（秒）
 MAX_OUTPUT = 60_000     # 一条命令最多返回多少字
+MAX_FILE = 200_000      # 页面上「文件」一次最多读写多少字（D-057）
 
 
 class LabError(DomainError):
@@ -213,6 +214,43 @@ class BashPractice:
         self.ensure(unit, files)
         self._remove(self.state_dir(unit) / "snapshots")
 
+    # ---------- 页面上的「文件」（D-039、D-057）：只读写练习场里的文本文件 ----------
+
+    def files(self, unit: str) -> list[str]:
+        d = self.lab_dir(unit)
+        if not d.exists():
+            return []
+        return sorted(p.relative_to(d).as_posix() for p in d.rglob("*")
+                      if p.is_file() and ".git" not in p.relative_to(d).parts and "__pycache__" not in p.relative_to(d).parts)
+
+    def _file(self, unit: str, rel: str) -> Path:
+        if re.match(r"^[A-Za-z]:", rel or ""):
+            raise LabError(f"练习场文件路径不合法：{rel!r}")
+        d = self.lab_dir(unit)
+        p = d / _safe_rel(rel)
+        if not p.resolve().is_relative_to(d.resolve()):         # 符号链接也不能指到外面
+            raise LabError(f"练习场文件路径不合法：{rel!r}")
+        return p
+
+    def read(self, unit: str, rel: str) -> str:
+        p = self._file(unit, rel)
+        if not p.is_file():
+            raise LabError(f"练习场里没有这个文件：{rel}")
+        if p.stat().st_size > MAX_FILE:
+            raise LabError(f"文件太大（上限 {MAX_FILE // 1000} KB），用终端看")
+        try:
+            return p.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            raise LabError(f"{rel} 不是文本文件，用终端看") from None
+
+    def write(self, unit: str, rel: str, content: str) -> None:
+        if rel.endswith(("/", "\\")):
+            raise LabError(f"要写一个文件，不是目录：{rel!r}")
+        if len(content) > MAX_FILE:
+            raise LabError(f"内容太长（上限 {MAX_FILE // 1000} KB）")
+        self._file(unit, rel)
+        write_files(self.lab_dir(unit), [{"path": rel, "content": content}])
+
     def run_once(self, unit: str, cmd: str) -> tuple[int, str]:
         """判分、参考做法用：不影响学习者终端里的当前目录和变量。"""
         return run_in(self.bash(), self.lab_dir(unit), cmd)
@@ -250,6 +288,10 @@ class BashPractice:
                     block(checkpoint_address(i0, j - 1), f"第 {i} 节检查点 {j}：练习场里本来就满足，什么都不做就能通过",
                           "；".join(d for _, d, _ in start))
             for t in s.get("try") or []:
+                if t.get("edit"):           # 改文件的一步（D-057）：学习者在页面上改，这里按 content 写
+                    write_files(workdir, [{"path": t["edit"], "content": t.get("content", "")}])
+                    sec["try"].append({"edit": t["edit"], "rc": 0, "output": ""})
+                    continue
                 rc, out = run_in(bash, workdir, t["command"])
                 sec["try"].append({"command": t["command"], "rc": rc, "output": out[-600:]})
                 if rc != 0:
