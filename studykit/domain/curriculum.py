@@ -83,12 +83,25 @@ class Capability:
 
 
 @dataclass(frozen=True)
+class Phase:
+    """路线上的一个阶段（D-064）：一组连着学的单元，fills 是它补终点地图的哪几段。"""
+    title: str
+    units: tuple[str, ...]
+    fills: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class CourseDef:
     goal: str
     stages: tuple[Stage, ...]
     subjects: tuple[Subject, ...]
     destination: tuple[Capability, ...] = ()
-    path: tuple[str, ...] = ()            # 学习路径（D-048）：从终点按先修倒推出的顺序，可以跨学科
+    phases: tuple[Phase, ...] = ()        # 学习路线（D-048、D-064）：按阶段分组，可以跨学科
+
+    @property
+    def path(self) -> tuple[str, ...]:
+        """路线上的单元，按学习顺序（各阶段首尾相接）。"""
+        return tuple(u for p in self.phases for u in p.units)
 
     def units(self) -> list[tuple[Subject, Unit]]:
         """全部单元，按学习顺序：路径里的按路径顺序在前，没进路径的按学科顺序排在后面。"""
@@ -170,11 +183,29 @@ def parse_course(data: dict) -> CourseDef:
         links = tuple(ProjectLink(str(x.get("where", "")), str(x.get("concept", ""))) for x in s.get("project_links") or [])
         subjects.append(Subject(sid, str(s.get("title") or sid), str(s.get("priority") or ""), str(s.get("stage") or ""),
                                 str(s.get("goal") or ""), sources, tuple(units), links, str(s.get("scope") or "")))
-    path = tuple(str(x) for x in data.get("path") or [])
-    bad = [x for x in path if x not in seen_units]
+    destination = _destination(data, seen_units)
+    phases = _phases(data, seen_units, {c.id for c in destination})
+    return CourseDef(str(data.get("goal") or ""), stages, tuple(subjects), destination, phases)
+
+
+def _phases(data: dict, units: set[str], caps: set[str]) -> tuple[Phase, ...]:
+    out = []
+    for i, x in enumerate(data.get("path") or []):
+        if not isinstance(x, dict):
+            raise CourseDefError(f"路径的第 {i + 1} 项要是一个阶段（title、fills、units），不是 {x!r}")
+        title = _req(x, "title", f"路径的第 {i + 1} 个阶段")
+        pu = tuple(str(u) for u in x.get("units") or [])
+        if not pu:
+            raise CourseDefError(f"阶段「{title}」没有单元")
+        fills = tuple(str(f) for f in x.get("fills") or [])
+        if any(f not in caps for f in fills):
+            raise CourseDefError(f"阶段「{title}」的 fills 里有终点没有的一项：{[f for f in fills if f not in caps]}")
+        out.append(Phase(title, pu, fills))
+    path = [u for p in out for u in p.units]
+    bad = [x for x in path if x not in units]
     if bad or len(set(path)) != len(path):
         raise CourseDefError(f"路径里有不存在或重复的单元：{bad or path}")
-    return CourseDef(str(data.get("goal") or ""), stages, tuple(subjects), _destination(data, seen_units), path)
+    return tuple(out)
 
 
 def _destination(data: dict, units: set[str]) -> tuple[Capability, ...]:
@@ -233,28 +264,26 @@ def render_for_brief(course: CourseDef, unit: str) -> str:
 
 # ---------- 单元状态（学习者看到的词表，PRD_V2 §0.2） ----------
 #
-# 内容线（备课）和学习线（检查点、单元题）合并成一个状态。只返回 key 和事实，文字由界面决定。
-#   queued 排队中 · preparing 准备中 · blocked 暂时不能学 · ask 待确认 · ready 能学 · learning 在学 · quiz 单元题 · done 学完
+# 内容线（备课）和学习线（检查点）合并成一个状态。只返回 key 和事实，文字由界面决定。
+#   queued 排队中 · preparing 准备中 · blocked 暂时不能学 · ask 待确认 · ready 能学 · learning 在学 · done 学完
 # 附加标签：new_version（有通过检验、还没换过去的新版本）
+# 学完 = 各节都走过了（通过、点学完、或跳过，D-064）。检查点对了几道、单元题几分是事实，由界面显示，不挡学完。
 
-UNIT_STATES = ("queued", "preparing", "blocked", "ask", "ready", "learning", "quiz", "done")
+UNIT_STATES = ("queued", "preparing", "blocked", "ask", "ready", "learning", "done")
 
 
-def unit_state(*, scope_open: bool, prep_stage: str, passed: int | None, sections: int | None,
-               quiz_answered: int | None = None, quiz_questions: int | None = None) -> dict:
+def unit_state(*, scope_open: bool, prep_stage: str, walked: int | None, sections: int | None, started: bool = False) -> dict:
     """prep_stage 是备课记录算出的阶段（todo / preparing / published / ready / escalated / interrupted）；
-    passed / sections 是现在这一版课程页的进度，没有课程页时是 None。"""
+    walked / sections 是现在这一版课程页走过几节、一共几节，没有课程页时是 None；started = 打开过这一版。"""
     tags = ["new_version"] if prep_stage == "ready" else []
     if scope_open:
         return {"key": "ask", "tags": []}
     if prep_stage == "preparing" and sections is None:
         return {"key": "preparing", "tags": []}
     if sections is not None:
-        if passed >= sections:
-            if quiz_questions and (quiz_answered or 0) < quiz_questions:
-                return {"key": "quiz", "tags": tags}
+        if walked >= sections:
             return {"key": "done", "tags": tags}
-        return {"key": "learning" if passed else "ready", "tags": tags}
+        return {"key": "learning" if walked or started else "ready", "tags": tags}
     if prep_stage in ("escalated", "interrupted"):
         # 学习者不需要决定什么（原则一）：自动续跑 / 换策略 / 上报开发者是系统的事
         return {"key": "blocked", "tags": []}
@@ -264,20 +293,20 @@ def unit_state(*, scope_open: bool, prep_stage: str, passed: int | None, section
 
 
 def next_steps(units: list[dict]) -> list[dict]:
-    """下一步学什么（推理，不存）。units 按学习顺序，每个带 id、state（unit_state 的结果）。
-    规则：先学完正在学的单元；再做出好的单元题；都没有就开始第一个能学的单元。每一条带理由。"""
-    out = []
-    for u in units:
-        if u["state"]["key"] == "learning":
-            out.append({"unit": u["id"], "kind": "continue", "reason": "这个单元学到一半"})
-    for u in units:
-        if u["state"]["key"] == "quiz":
-            out.append({"unit": u["id"], "kind": "quiz", "reason": "各节都通过了，单元题已经出好"})
-    if not out:
-        first = next((u for u in units if u["state"]["key"] == "ready"), None)
-        if first:
-            out.append({"unit": first["id"], "kind": "start", "reason": "前面的单元都学完了，这个已经备好"})
+    """下一步学什么（推理，不存）。units 按学习顺序，每个带 id、state（unit_state 的结果）、last_at（最近一次学的时间）。
+    规则（D-064）：先接着学最近一次学的单元（其余在学的按时间往后排）；再开始路线上第一个能学的。每一条带理由。"""
+    learning = sorted((u for u in units if u["state"]["key"] == "learning"), key=lambda u: u.get("last_at") or "", reverse=True)
+    out = [{"unit": u["id"], "kind": "continue", "reason": "你上次学到这里" if i == 0 else "这个单元学到一半"}
+           for i, u in enumerate(learning)]
+    first = next((u for u in units if u["state"]["key"] == "ready"), None)
+    if first:
+        out.append({"unit": first["id"], "kind": "start", "reason": "路线上下一个已经备好的单元"})
     return out
+
+
+def current_phase(phases: tuple[Phase, ...], states: dict[str, str]) -> int | None:
+    """你在第几个阶段（D-064）：第一个还有没学完单元的阶段。全学完了是 None。"""
+    return next((i for i, p in enumerate(phases) if any(states.get(u) != "done" for u in p.units)), None)
 
 
 def queued_after(order: list[str], unit: str) -> str | None:

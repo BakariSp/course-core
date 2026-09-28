@@ -8,7 +8,7 @@
 # 原来的 curriculum.md（表格）和 syllabus.yaml 合并到了这里；课程原则和验证阶梯在 docs/curriculum-notes.md。
 
 schema_version: 2
-goal: 能验证 AI 写的代码对不对、能独立判断架构、能交付稳定的产品
+goal: 能设计、分析、验证一个学习类 AI 产品的全链路（前端 → 后端 → agent → 学习者模型 → 存储），知道每一段怎么运作、怎么优化、AI 写的对不对
 
 # 终点（D-062，替换 D-048 的 C1–C5）：产品全链路地图。6 段（S，数据流经过的层）+ 3 个横切面（X）。
 # 每一项都要能回答三问：机制（它怎么运作）/ 优化（慢在哪、会在哪坏、怎么改）/ 验证（AI 写了这段，怎么判断对不对）。
@@ -51,40 +51,34 @@ destination:
     accept: 把一份设计交给便宜模型实现，通过测试、架构测试、类型检查；故意塞一个越层写法，护栏拦得住
     units: [tools-01-shell, tools-02-git, tools-03-debug, test-01-batchelder, test-02-pytest, tools-04-quality]
 
-# 学习路径（D-062）：学完、在学的留在最前面（不动已学的）；之后按数据流和先修排。没列进来的单元排在后面。
+# 学习路线（D-062、D-064）：分阶段，每个阶段写它补终点地图的哪几段（fills）。学完、在学的在最前面（不动已学的）；
+# 之后按数据流和先修排。没列进来的单元排在后面，在「课程设置」里。
 # 先修：SSE 要 TCP 长连接和 async；并发控制要线程和锁；多租户审查要先会读分层；学习者模型要落到存储（事务）。
 path:
-  - tools-01-shell
-  - tools-02-git
-  - tools-03-debug
-  - test-01-batchelder
-  - net-01-overview
-  - net-02-http
-  - test-02-pytest
-  - db-01-sqlbolt
-  - sec-01-access
-  - sec-02-auth
-  - design-01-ousterhout
-  - design-02-layers
-  - os-01-process
-  - os-02-thread
-  - os-03-sync
-  - lang-01-asyncio
-  - net-03-tcp
-  - net-04-sse
-  - db-02-index
-  - db-03-txn
-  - db-04-cc
-  - os-04-fs
-  - sec-03-path
-  - sec-04-ssrf
-  - sec-05-tenant
-  - lm-01-model
-  - agent-01-effective
-  - tools-05-agentic
-  - tools-04-quality
-  - lang-02-react
-  - agent-02-capstone
+  - title: 动手与验证：Shell、Git、调试、测试
+    fills: [X3]
+    units: [tools-01-shell, tools-02-git, tools-03-debug, test-01-batchelder, test-02-pytest]
+  - title: 从请求到数据：HTTP 与 SQL
+    fills: [S2, S6]
+    units: [net-01-overview, net-02-http, db-01-sqlbolt]
+  - title: 鉴权：访问控制与身份认证
+    fills: [X1]
+    units: [sec-01-access, sec-02-auth]
+  - title: 后端结构与运行：分层、进程、线程、异步
+    fills: [S3]
+    units: [design-01-ousterhout, design-02-layers, os-01-process, os-02-thread, os-03-sync, lang-01-asyncio]
+  - title: 长连接与推流：TCP 与 SSE
+    fills: [S2]
+    units: [net-03-tcp, net-04-sse]
+  - title: 数据库进阶：索引、事务、并发控制、崩溃一致性
+    fills: [S6, X2]
+    units: [db-02-index, db-03-txn, db-04-cc, os-04-fs]
+  - title: 多租户隔离：路径穿越、SSRF、隔离审查
+    fills: [X1]
+    units: [sec-03-path, sec-04-ssrf, sec-05-tenant]
+  - title: AI 产品层：学习者模型、Agent、界面、验收项目
+    fills: [S5, S4, S1, X3]
+    units: [lm-01-model, agent-01-effective, tools-05-agentic, tools-04-quality, lang-02-react, agent-02-capstone]
 
 stages:
   - id: verify

@@ -42,8 +42,18 @@ def test_routes(req):
     assert "因为 B" not in json.dumps(req("GET", "/api/lesson?ref=t/01-x")[1], ensure_ascii=False)
     assert req("GET", "/api/kg?topic=tools")[1]["nodes"] == []
     assert req("GET", "/api/nope")[0] == 404
-    status, page = req("GET", "/")
+    status, page = req("GET", "/old")
     assert status == 200 and b"__TOKEN__" not in page
+
+
+def test_one_home_page_new_app_at_root_old_one_under_old(req):
+    """F-096：只有一个首页。`/` 去新界面；老首页挪到 /old；学习页、答题页、开发者视图（/?unit= 等）地址不变。"""
+    assert req("GET", "/")[0] == 302
+    old = req("GET", "/old")[1]
+    for path in ("/?unit=tools-01-shell", "/?lesson=t/01-x", "/?panel=1", "/old?unit=tools-01-shell"):
+        status, page = req("GET", path)
+        assert status == 200 and page == old, path                # 同一个老页面，按查询参数显示学习页 / 答题页 / 面板
+    assert req("GET", "/app")[0] == 200
 
 
 def test_bad_input_is_400(req):
@@ -151,18 +161,21 @@ def test_course_for_the_learner_has_states_next_step_and_curriculum(req, app, ro
 
 
 def test_course_follows_the_learning_path_across_subjects(req, root):
-    """D-048：路径跨学科排顺序，排队、下一步都按路径走；终点的每条能力列出来，单元标出服务哪条。"""
+    """D-048、D-064：路线跨学科、分阶段，排队、下一步都按路线走；终点的每条能力列出来，单元标出服务哪条。"""
     import yaml
     from tests.conftest import add_unit
     add_unit(root, "tools-02-git", "Git")
     p = root / "progress" / "course.yaml"
     data = yaml.safe_load(p.read_text(encoding="utf-8"))
     data["subjects"].append({"id": "sec", "title": "安全", "units": [{"id": "sec-01-access", "title": "访问控制"}]})
-    data["path"] = ["tools-01-shell", "sec-01-access", "tools-02-git"]
+    data["path"] = [{"title": "基本功", "units": ["tools-01-shell"]},
+                    {"title": "隔离", "fills": ["C5"], "units": ["sec-01-access", "tools-02-git"]}]
     data["destination"] = [{"id": "C5", "can": "审多租户隔离", "accept": "审一个接口", "units": ["sec-01-access"]}]
     p.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
     c = req("GET", "/api/course")[1]
     assert c["path"] == ["tools-01-shell", "sec-01-access", "tools-02-git"]
+    assert c["phases"] == [{"title": "基本功", "fills": [], "units": ["tools-01-shell"], "current": True},
+                           {"title": "隔离", "fills": ["C5"], "units": ["sec-01-access", "tools-02-git"], "current": False}]
     assert c["destination"] == [{"id": "C5", "can": "审多租户隔离", "accept": "审一个接口", "units": ["sec-01-access"]}]
     units = {u["id"]: u for s in c["subjects"] for u in s["units"]}
     assert units["sec-01-access"]["queued_after"] == "tools-01-shell" and units["tools-02-git"]["queued_after"] == "sec-01-access"

@@ -2,26 +2,26 @@
 // 状态怎么推出来只在后端；这里只管怎么显示（PRD_V2 §0.1.1 的词表）。
 import { questions } from "../data/mock.js";
 
+// 学习者看到的状态（D-064）：学完 / 在学 / 备好了 / 还没备好（正在备是它的一种，带转圈）。待确认只在课程设置里出现。
 export const STATE = {
-  queued: { label: "排队中", tone: "wait" },
-  preparing: { label: "准备中", tone: "info", busy: true },
-  blocked: { label: "暂时不能学", tone: "bad" },
+  queued: { label: "还没备好", tone: "wait" },
+  preparing: { label: "正在备", tone: "info", busy: true },
+  blocked: { label: "还没备好", tone: "wait" },
   ask: { label: "待确认", tone: "warn" },
-  ready: { label: "能学", tone: "ok" },
+  ready: { label: "备好了", tone: "ok" },
   learning: { label: "在学", tone: "info" },
-  quiz: { label: "单元题", tone: "info" },
   done: { label: "学完", tone: "ok" },
 };
 export const TAGS = { new_version: "有新版本" };
 
 export const badgeOf = u => STATE[u.state.key] || { label: u.state.key, tone: "wait" };
 
-// 行尾的数字：一眼能读的进度
+// 行上的事实：学到第几节、跳过几节、单元题几分。只陈述，不评判学没学完（学完由后端按"各节走过"算）
 export function shortOf(u) {
   const k = u.state.key, c = u.course, q = u.quiz;
-  if (k === "learning") return `${c.passed}/${c.sections} 节`;
+  if (k === "learning") return `${c.walked}/${c.sections} 节`;
   if (k === "ready") return `${c.sections} 节`;
-  if (k === "quiz" || k === "done") return q ? `单元题 ${q.answered}/${q.questions}` : `${c.sections}/${c.sections} 节`;
+  if (k === "done") return [c.skipped ? `跳过 ${c.skipped} 节` : "", q ? `单元题 ${q.answered}/${q.questions}` : ""].filter(Boolean).join(" · ");
   if (k === "preparing") { const s = prepStep(u.prep.progress); return `${s.index + 1}/${PREP_STEPS.length} ${s.name}${s.detail ? " " + s.detail : ""}`; }
   return "";
 }

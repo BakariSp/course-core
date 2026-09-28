@@ -206,6 +206,20 @@ def test_progress_projection():
     assert r["spent_minutes"] == {"0": 12.0} and r["last_section"] == 2
 
 
+def test_walked_sections_count_skips_so_the_unit_can_be_finished():
+    """D-064：学完 = 每一节都走过了（通过、点学完、或跳过）。跳过的检查点照旧是证据，但不挡住走完。"""
+    p = plan_v2()
+    evs = [cp(0, 0, False, ts="2026-09-26T10:00:00"), ev("skipped", "section", "u#0", ts="2026-09-26T10:01:00", section=0),
+           ev("completed", "section", "u#1", ts="2026-09-26T10:05:00", section=1),
+           ev("opened", "section", "u#2", ts="2026-09-26T10:09:00", section=2)]
+    r = progress.project(p, "run-2", evs, {})
+    assert r["passed"] == [] and r["skipped"] == [0] and r["walked"] == [0, 1]   # 第 1 节有检查点：点学完算走过，不算通过
+    assert r["last_at"] == "2026-09-26T10:09:00" and r["last_section"] == 2
+    evs.append(ev("skipped", "section", "u#2", ts="2026-09-26T10:10:00", section=2))
+    assert progress.project(p, "run-2", evs, {})["walked"] == [0, 1, 2]
+    assert progress.project(p, "run-2", [], {})["last_at"] is None
+
+
 def test_predicted_load_drops_as_terms_become_known():
     assert [x["new_terms"] for x in progress.predicted_load(plan_v2(), set())] == [2, 1, 0]
     assert progress.predicted_load(plan_v2(), {"tools.cmd.pwd", "cd"})[0] == {"new_terms": 0, "per_10min": 0.0, "level": "低"}
@@ -494,20 +508,36 @@ def test_course_definition_is_structured_and_ordered():
         c.find("tools-99-x")
 
 
+DEST = [{"id": "C1", "can": "读路径", "accept": "走一遍提交答案", "units": ["tools-02-git"]}]
+phase = lambda title, *units, fills=(): {"title": title, "fills": list(fills), "units": list(units)}  # noqa: E731
+
+
 def test_path_sets_learning_order_across_subjects_and_destination_names_capabilities():
-    """D-048：终点能力 + 学习路径。路径里的单元按路径顺序在前，没进路径的按学科顺序排在后面。"""
-    c = curriculum.parse_course({**COURSE, "path": ["dist-01", "tools-01-shell"],
-                                 "destination": [{"id": "C1", "can": "读路径", "accept": "走一遍提交答案", "units": ["tools-02-git"]}]})
+    """D-048、D-064：终点能力 + 分阶段的路线。路线上的单元按阶段顺序在前，没进路线的按学科顺序排在后面。"""
+    c = curriculum.parse_course({**COURSE, "destination": DEST,
+                                 "path": [phase("先分布式", "dist-01", fills=["C1"]), phase("再 shell", "tools-01-shell")]})
     assert c.unit_ids() == ["dist-01", "tools-01-shell", "tools-02-git"]
-    assert c.path == ("dist-01", "tools-01-shell")
+    assert c.path == ("dist-01", "tools-01-shell")                         # 各阶段首尾相接
+    assert c.phases[0] == curriculum.Phase("先分布式", ("dist-01",), ("C1",))
     assert c.destination == (curriculum.Capability("C1", "读路径", "走一遍提交答案", ("tools-02-git",)),)
     assert c.serves("tools-02-git") == ["C1"] and c.serves("dist-01") == []
-    assert curriculum.parse_course(COURSE).path == ()                       # 没写路径 = 学科顺序
+    assert curriculum.parse_course(COURSE).path == ()                       # 没写路线 = 学科顺序
+
+
+def test_current_phase_is_the_first_with_an_unfinished_unit():
+    ps = (curriculum.Phase("a", ("u1", "u2")), curriculum.Phase("b", ("u3",)))
+    assert curriculum.current_phase(ps, {"u1": "done", "u2": "learning", "u3": "learning"}) == 0   # 后面阶段在学的不算
+    assert curriculum.current_phase(ps, {"u1": "done", "u2": "done"}) == 1
+    assert curriculum.current_phase(ps, {"u1": "done", "u2": "done", "u3": "done"}) is None
 
 
 @pytest.mark.parametrize("patch, msg", [
-    ({"path": ["tools-99-x"]}, "路径"),
-    ({"path": ["tools-01-shell", "tools-01-shell"]}, "路径"),
+    ({"path": [phase("a", "tools-99-x")]}, "路径"),
+    ({"path": [phase("a", "tools-01-shell"), phase("b", "tools-01-shell")]}, "路径"),   # 跨阶段也不能重复
+    ({"path": ["tools-01-shell"]}, "阶段"),                                              # 旧格式（单元列表）要改成阶段
+    ({"path": [phase("a")]}, "没有单元"),
+    ({"path": [{"units": ["tools-01-shell"]}]}, "title"),
+    ({"path": [phase("a", "tools-01-shell", fills=["C9"])]}, "fills"),
     ({"destination": [{"id": "C1", "can": "x", "accept": "y", "units": ["nope-01-x"]}]}, "C1"),
     ({"destination": [{"id": "C1", "can": "x", "accept": "y"}, {"id": "C1", "can": "z", "accept": "w"}]}, "重复"),
     ({"destination": [{"id": "C1", "can": "x"}]}, "accept"),
@@ -530,28 +560,32 @@ def test_course_definition_rejects_mistakes(patch, msg):
 
 
 @pytest.mark.parametrize("kw, key, tags", [
-    (dict(scope_open=True, prep_stage="todo", passed=None, sections=None), "ask", []),
-    (dict(scope_open=False, prep_stage="todo", passed=None, sections=None), "queued", []),
-    (dict(scope_open=False, prep_stage="preparing", passed=None, sections=None), "preparing", []),
-    (dict(scope_open=False, prep_stage="escalated", passed=None, sections=None), "blocked", []),
-    (dict(scope_open=False, prep_stage="interrupted", passed=None, sections=None), "blocked", []),
-    (dict(scope_open=False, prep_stage="published", passed=0, sections=7), "ready", []),
-    (dict(scope_open=False, prep_stage="ready", passed=6, sections=7), "learning", ["new_version"]),
-    (dict(scope_open=False, prep_stage="published", passed=7, sections=7, quiz_answered=0, quiz_questions=8), "quiz", []),
-    (dict(scope_open=False, prep_stage="published", passed=7, sections=7, quiz_answered=8, quiz_questions=8), "done", []),
-    (dict(scope_open=False, prep_stage="preparing", passed=2, sections=7), "learning", []),   # 能学的单元在备新版本：还是能学
+    (dict(scope_open=True, prep_stage="todo", walked=None, sections=None), "ask", []),
+    (dict(scope_open=False, prep_stage="todo", walked=None, sections=None), "queued", []),
+    (dict(scope_open=False, prep_stage="preparing", walked=None, sections=None), "preparing", []),
+    (dict(scope_open=False, prep_stage="escalated", walked=None, sections=None), "blocked", []),
+    (dict(scope_open=False, prep_stage="interrupted", walked=None, sections=None), "blocked", []),
+    (dict(scope_open=False, prep_stage="published", walked=0, sections=7), "ready", []),
+    (dict(scope_open=False, prep_stage="published", walked=0, sections=7, started=True), "learning", []),   # 打开过就是在学
+    (dict(scope_open=False, prep_stage="ready", walked=6, sections=7), "learning", ["new_version"]),
+    (dict(scope_open=False, prep_stage="published", walked=7, sections=7), "done", []),        # 单元题做没做不挡学完（D-064）
+    (dict(scope_open=False, prep_stage="preparing", walked=2, sections=7), "learning", []),   # 能学的单元在备新版本：还是能学
 ])
 def test_unit_state_merges_prep_and_learning(kw, key, tags):
     assert curriculum.unit_state(**kw) == {"key": key, "tags": tags}
 
 
-def test_next_steps_finish_what_you_started_then_quiz_then_start():
+def test_next_step_is_where_you_left_off_then_the_next_ready_unit():
+    """D-064：继续学 = 最近一次学的那个单元，不是路线上排第一的"在学"。"""
     st = lambda k: {"key": k, "tags": []}  # noqa: E731
-    units = [{"id": "a", "state": st("done")}, {"id": "b", "state": st("quiz")}, {"id": "c", "state": st("learning")},
-             {"id": "d", "state": st("ready")}]
-    assert [(n["unit"], n["kind"]) for n in curriculum.next_steps(units)] == [("c", "continue"), ("b", "quiz")]
-    assert all(n["reason"] for n in curriculum.next_steps(units))
-    assert [n["unit"] for n in curriculum.next_steps([{"id": "d", "state": st("ready")}])] == ["d"]
+    units = [{"id": "a", "state": st("done"), "last_at": "2026-09-28T09:00:00"},
+             {"id": "b", "state": st("learning"), "last_at": "2026-09-27T10:00:00"},
+             {"id": "c", "state": st("learning"), "last_at": "2026-09-28T08:00:00"},
+             {"id": "d", "state": st("ready"), "last_at": None}]
+    steps = curriculum.next_steps(units)
+    assert [(n["unit"], n["kind"]) for n in steps] == [("c", "continue"), ("b", "continue"), ("d", "start")]
+    assert all(n["reason"] for n in steps)
+    assert [n["unit"] for n in curriculum.next_steps([{"id": "d", "state": st("ready"), "last_at": None}])] == ["d"]
     assert curriculum.queued_after(["a", "b"], "b") == "a" and curriculum.queued_after(["a"], "a") is None
 
 

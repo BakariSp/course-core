@@ -223,8 +223,10 @@ class Panel:
     def _course(self, unit: str) -> dict | None:
         if self.plans.current(unit) is None:
             return None
-        # WHY: 只要两个数，不调 page()——它还会算知识图、预测负担、列版本，课程首页每个单元都算一遍很慢。
-        return {"passed": len(self.course.progress(unit)["passed"]), "sections": len(plans.sections_of(self.course.plan(unit)))}
+        # WHY: 只要几个数，不调 page()——它还会算知识图、预测负担、列版本，课程首页每个单元都算一遍很慢。
+        p = self.course.progress(unit)
+        return {"passed": len(p["passed"]), "walked": len(p["walked"]), "skipped": len(p["skipped"]),
+                "sections": len(plans.sections_of(self.course.plan(unit))), "last_at": p["last_at"]}
 
     def _answered(self) -> dict[str, set[str]]:
         out: dict[str, set[str]] = defaultdict(set)

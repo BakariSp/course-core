@@ -15,7 +15,7 @@ const app = document.getElementById("app");
 const navEl = document.getElementById("nav");
 
 const PAGES = {
-  course: () => coursePage(),
+  course: (arg, rerender) => coursePage(rerender),
   settings: () => settingsPage(),
   u: (arg, rerender) => unitPage(arg, rerender),
   q: arg => questionPage(arg),
@@ -31,13 +31,12 @@ function parse() {
   return PAGES[page] ? { page, arg: rest.join(".") } : { page: "course", arg: "" };
 }
 
+// 「课程」上不挂待确认的数字（D-064）：进来只看接着学什么；待确认在课程设置里
 async function renderNav(current) {
-  let qs = 0;
-  try { qs = src.flatUnits(await src.course()).filter(u => u.state.key === "ask").length; } catch { /* 数字拿不到就不显示 */ }
   const fb = get().feedback.length;
   const link = (key, label, n) => h("a", { href: `#${key}`, "aria-current": current === key ? "page" : undefined }, label,
     n ? h("span", { class: "count", "aria-label": `${n} 项` }, n) : null);
-  fill(navEl, link("course", "课程", qs), link("me", "我的"), link("teachers", "老师", fb));
+  fill(navEl, link("course", "课程"), link("me", "我的"), link("teachers", "老师", fb));
 }
 
 // 重画时保住展开的折叠块：记下展开的 <details> 的标题，画完再按标题打开。
@@ -91,4 +90,4 @@ render();
 
 fill(document.getElementById("foot"),
   h("span", {}, "没标 "), mock("示意"), h("span", {}, " 的都是真实数据。新界面在试用（D-046）；"),
-  h("a", { href: "/" }, "旧首页"), h("span", {}, " · "), h("a", { href: "/?panel=1" }, "开发者视图"));
+  h("a", { href: "/old" }, "旧版"), h("span", {}, " · "), h("a", { href: "/?panel=1" }, "开发者视图"));

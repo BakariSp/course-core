@@ -20,6 +20,7 @@ async function write(path, body) {
 }
 export const switchVersion = (unitId, planId) => write("/api/unit/switch", { unit: unitId, plan: planId });
 export const refuteObservation = (id, note) => write("/api/profile/refute", { id, note });
+export const prepare = unitId => write("/api/panel/prepare", { unit: unitId });                // 跳课时现在就备这一课（D-064）
 
 // 老的学习页和答题页（D-046 不改）
 export const learnHref = id => `/?unit=${encodeURIComponent(id)}`;
