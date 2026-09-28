@@ -13,11 +13,11 @@
 - 单元 id：{unit_id}
 - 单元名称：{unit_title}
 - 所属学科：{topic_title}（`{topic_id}`）——知识节点 id 都以 `{topic_id}.` 开头
-- 学习者的备注：{unit_notes}
+- 学习者对这个单元的要求：{unit_requests}
 
-# 课程安排（摘自学习者的课程清单）
+# 课程安排（学习者的课程定义）
 
-{curriculum_row}
+{course_info}
 
 # 学习者
 
