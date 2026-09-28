@@ -33,7 +33,7 @@ from studykit.app.ports import (AgentDef, AgentRuntime, Clock, Content, Fetcher,
                                  Spec)
 from studykit.app.paths import safe_path
 from studykit.app.versions import Versions, load_prompt, prompt_texts
-from studykit.domain import course_eval, curriculum, harness as h, plan_check
+from studykit.domain import course_eval, curriculum, harness as h, knowledge, plan_check
 from studykit.domain.artifact import Finding, blocking, repair_scope, within
 from studykit.domain.errors import CourseError, DomainError
 from studykit.domain.ids import NODE_ID_RE, UnitId
@@ -128,14 +128,19 @@ class Harness:
 
     # ---------- 上下文配方 ----------
 
-    def build_input(self, unit: str) -> dict:
-        """给 agent 的全部输入数据。只给和这个单元相关的学习者模型（D-020 第 1 级），不给全部。"""
+    def build_input(self, unit: str, kb: dict | None = None) -> dict:
+        """给 agent 的全部输入数据。只给和这个单元相关的学习者模型（D-020 第 1 级、D-061 切片），不给全部。
+        kb：这个单元的知识库（调研的产出）。没发布过的单元靠它知道"这个单元教哪些知识点"。"""
         unit = str(UnitId(unit))
         course = self.content.course()
         subject, u = course.find(unit)
         topic_id = subject.id
         nodes = self.content.graph()
         states = self.learner.states(nodes)
+        sl = self.learner.brief_slice(unit, (kb or {}).get("points") or [])
+        if sl is None:      # 切不出来（没发布过、也没有知识库）：给全量
+            sl = {"ids": None, "mastered": sorted({s.node.title for s in states.values() if s.state == "mastered"}),
+                  "elsewhere": [], "elsewhere_other": 0, "related": self.learner.related(unit)}
         return {
             "unit": unit, "unit_title": u.title, "unit_requests": "；".join(u.requests) or "无",
             "topic_id": topic_id, "topic_title": subject.title,
@@ -144,22 +149,49 @@ class Harness:
             **self.course.settings(),
             # WHY: 命令和术语不分学科——Shell 单元学会的 echo、python，备 test 学科的课时也算已经会的
             "known_terms": sorted(self.learner.known()),
-            # WHY: 掌握的知识点也不分学科。只给本学科的，net-01 的简报里"已经掌握"是空的，agent 就从 pwd、ls 讲起
-            "known_titles": sorted({s.node.title for s in states.values() if s.state == "mastered"}),
-            # 学过（D-051）：路线上前面的单元教过、还没到掌握的。直接用、不当新词，第一次用到时回顾
+            # WHY: 掌握的知识点也不分学科。只给本学科的，net-01 的简报里"已经掌握"是空的，agent 就从 pwd、ls 讲起。
+            # 但只列这个单元的切片边界上的（D-061）；其余按单元数一数（known_elsewhere）
+            "known_titles": sl["mastered"],
+            "known_elsewhere": {"units": sl["elsewhere"], "other": sl["elsewhere_other"]},
+            # 学过（D-051）：路线上前面的单元教过、还没到掌握的。直接用、不当新词，第一次用到时回顾。
+            # INVARIANT: 这里是全部——新词检查和回顾的 id 要用全量（limits）；简报上只显示切片里的（brief_nodes）
             "studied": self.learner.studied_before(unit),
+            "brief_nodes": sl["ids"],
             "existing_nodes": {nid: n.title for nid, n in nodes.items() if n.topic == topic_id},
-            "related": self.learner.related(unit),
+            "related": sl["related"],
             "learner": self.learner.brief_profile(),
         }
 
     @staticmethod
+    def shown_studied(i: dict) -> list[dict]:
+        """简报上显示的「学过」：切片里的（D-061）。切不出来时（brief_nodes 为空）是全部。"""
+        ids = i.get("brief_nodes")
+        return list(i.get("studied") or []) if ids is None else [s for s in i.get("studied") or [] if s["id"] in set(ids)]
+
+    @staticmethod
+    def known_elsewhere(i: dict) -> str:
+        """切片外已经掌握的，按单元数一数（D-061）。没有就是空字符串。"""
+        k = i.get("known_elsewhere") or {}
+        parts = [f"{u['unit']}单元教的 {u['count']} 个" for u in k.get("units") or []]
+        if k.get("other"):
+            parts.append(f"其他 {k['other']} 个")
+        out = ("另外还有已经掌握、和这个单元关系不大所以没列出的知识点：" + "、".join(parts)
+               + "。讲解里用到它们可以直接用，不用再解释。") if parts else ""
+        hidden = len(i.get("studied") or []) - len(Harness.shown_studied(i))
+        if hidden:          # WHY: 先修边不全时，学过的点连不到这个单元上；写课的人至少要知道还有学过的，用到时不当新词
+            out += ("\n" if out else "") + f"另外还有学过、没列出的知识点 {hidden} 个（路线上前面的单元教过）：用到时直接用、不当新词。"
+        return out
+
+    @staticmethod
     def render_brief(task: str, i: dict) -> str:
         lines = ["已经掌握（讲解里可以直接用，不用再解释）：" + ("、".join(i["known_titles"]) or "（还没有）")]
-        if i.get("studied"):
+        if Harness.known_elsewhere(i):
+            lines.append(Harness.known_elsewhere(i))
+        studied = Harness.shown_studied(i)
+        if studied:
             lines.append("学过（路线上前面的单元教过，还没到掌握。直接用、不当新词；某一节第一次用到时，"
                          "在那一节放一个回顾 recall：一句定义，页面问学习者还记不记得）：")
-            lines.append("、".join(f"{s['title']}（`{s['id']}`）" for s in i["studied"]))
+            lines.append("、".join(f"{s['title']}（`{s['id']}`）" for s in studied))
         rel = i["related"]
         if rel["weak"]:
             lines.append("和这个单元相关的薄弱点（讲到时放慢、多给例子）：")
@@ -239,13 +271,13 @@ class Harness:
     def outline(self, name: str, unit: str, model: str | None = None, timeout: int = 900, kb_run: h.Run | None = None) -> h.Run:
         """写大纲（D-038）：练习场 + 每节的桩和各节之间的约定。有知识库时从知识库组装（D-040），读过的页面也继承过来。"""
         agent = self.agent(name)
-        data = self.build_input(unit)
+        kb = json.loads((self.dir(name, kb_run.id) / "output.json").read_text(encoding="utf-8")) if kb_run is not None else None
+        data = self.build_input(unit, kb)
         brief = self.render_brief(agent.file("task").read_text(encoding="utf-8"), data) + self.stage(agent, "outline")[0]
         pages: list[dict] = []
         if kb_run is not None:
             kws = self.dir(name, kb_run.id)
-            brief += "\n\n# 这个单元的知识库（调研整理，和学习者无关）\n\n" + plan_check.render_by_address(
-                json.loads((kws / "output.json").read_text(encoding="utf-8")))
+            brief += "\n\n# 这个单元的知识库（调研整理，和学习者无关）\n\n" + plan_check.render_by_address(kb)
             pages = self._fetched(kws)
             data = {**data, "kb_run": kb_run.id}
         return self._go(agent, "outline", unit, "-o", data, brief, model, timeout, grounded=pages)
@@ -289,8 +321,9 @@ class Harness:
         """学到第 index 节时学习者会什么（D-043）：初学者基线 + 前面几节的新词和要点。
         WHY: 各节并行写，每个写作者要拿到同一份"学习者此刻会什么"，不然各自假设、出现跳跃（F-064、F-065）。"""
         lines = ["- 初学者基线（已经掌握的知识点）：" + ("、".join(inp.get("known_titles") or []) or "（还没有）"),
+                 *([f"- {Harness.known_elsewhere(inp)}"] if Harness.known_elsewhere(inp) else []),
                  "- 学过（路线上前面的单元教过，直接用；大纲给这一节放了回顾的，页面上会先回顾）："
-                 + ("、".join(s["title"] for s in inp.get("studied") or []) or "（没有）"),
+                 + ("、".join(s["title"] for s in Harness.shown_studied(inp)) or "（没有）"),
                  "- 已经会的命令和词：" + ("、".join(t for t in inp.get("known_terms") or [] if not NODE_ID_RE.match(t)) or "（还没有）")]
         for i, st in enumerate(stubs_of(outline)[:index]):
             terms = "、".join(t.get("term", "") for t in st.get("terms") or []) or "无"
@@ -723,6 +756,7 @@ class Harness:
         (ws / "review_input.md").write_text("\n\n".join([
             "# 评分标准\n\n" + rubric,
             "# 助教拿到的简报\n\n" + (ws / "brief.md").read_text(encoding="utf-8"),
+            self._used_known(run, plan),
             "# 助教实际打开过的页面\n\n" + ("\n".join(f"- {f.get('title') or '(无标题)'} — {f['url']}" for f in fetched) or "（没有）"),
             "# 课程计划（按地址）\n\n" + plan_check.render_by_address(plan),
         ]), encoding="utf-8")
@@ -737,6 +771,19 @@ class Harness:
             found = [Finding("", f"评审模型没有给出可用的结论：{e}", "reviewer_safety")]
         return self._grade(run, "reviewer", rv.id, model, verdict="fail" if blocking(found) else "pass",
                            detail={"findings": [f.as_dict() for f in found], "cost_usd": cost, "tokens": tokens})
+
+    def _used_known(self, run: h.Run, plan: dict) -> str:
+        """评审输入里的一节（D-061）：课程计划里用到了的、学习者已经掌握或学过的知识点。
+        WHY: 简报只列这个单元切片里的「已经掌握」，评审判跳跃的基线却是学习者会的全部；
+        程序按名字在课程里找出实际用到的，评审就不会把"用了会的、但不在切片里的 ls"当成跳跃。"""
+        nodes = self.content.graph()
+        sts = self.learner.states(nodes)
+        mastered = {nid for nid, s in sts.items() if s.state == "mastered"}
+        studied = {s["id"] for s in run.input.get("studied") or []}
+        used = knowledge.mentioned(nodes, mastered | studied, plan_check.render_by_address(plan))
+        rows = [f"- {nodes[nid].title}（`{nid}`）：{'已经掌握' if nid in mastered else '学过'}" for nid in used]
+        return ("# 课程里用到的、学习者已经会的\n\n程序按名字在课程计划里找到的；判跳跃时和简报里的「已经掌握」「学过」一样算学习者会的。\n\n"
+                + ("\n".join(rows) or "（没有）"))
 
     def review(self, run: h.Run, verdict: str, note: str, issues: list[dict], actor: str = "tutor") -> h.Grade:
         """导师审阅（结构化）：结论 + 问题出在哪一层，喂回下一次迭代（D-022）。"""
