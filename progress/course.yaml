@@ -1,0 +1,253 @@
+# 课程定义（D-047）：阶段 → 学科 → 单元。你和规划老师都可以改；列表顺序就是学习顺序。
+#
+# 这里只写"学什么、看哪些材料、你有什么要求"。学没学完、备没备好都不写：它们由证据和备课记录算出。
+# - sources：主课和材料。所有 url 的域名就是 agent 能打开的网站（白名单）。
+# - 单元的 sources：这个单元看主课的哪一部分（ref 指向学科的 sources，url 是具体那一页）。
+# - requests：你对这个单元的要求（写给备课老师），例如"想学 bisect""例子用我的项目"。
+# - scope: open：范围还没定（一整门讲座、一个频道），系统不会备它，等你确认怎么拆。
+# 原来的 curriculum.md（表格）和 syllabus.yaml 合并到了这里；课程原则和验证阶梯在 docs/curriculum-notes.md。
+
+schema_version: 2
+goal: 能验证 AI 写的代码对不对、能独立判断架构、能交付稳定的产品
+
+# 终点（D-048）：学完能做到什么 + 怎么验收。路径是从这几条按先修关系倒推出来的。
+destination:
+  - id: C1
+    can: 读路径：给一个现有功能，说出它经过哪几层、哪些模块、读写哪些数据、守住哪些不变量
+    accept: 在 cs-study 和 nanoteacher 上各走一遍一个功能（比如"提交一道题"），先预测代码在哪、再到仓库里验证
+    units: [design-01-ousterhout, design-02-layers]
+  - id: C2
+    can: 设计新功能：写出数据模型、放在哪层、新增哪个端口、规则怎么算、怎么评估
+    accept: 为"分析学习者的问题 → 找出知识点 → 更新掌握度"写一份设计文档，经得起追问
+    units: [db-01-sqlbolt, design-01-ousterhout, design-02-layers, db-03-txn, agent-02-capstone]
+  - id: C3
+    can: 搭护栏：让便宜的模型照着现有模块写代码，写错了能被拦下来
+    accept: 把 C2 的设计交给便宜模型实现，通过测试、架构测试、类型检查；故意塞一个越层写法，护栏拦得住
+    units: [test-01-batchelder, test-02-pytest, tools-04-quality, tools-05-agentic, agent-02-capstone]
+  - id: C4
+    can: 评估 AI 部件：给 LLM 负责的那一步建评测，知道改一版 prompt 是变好还是变坏
+    accept: 为"从问题里抽知识点"建一套评测集，说出准确率，对比两版 prompt
+    units: [agent-01-effective, agent-02-capstone]
+  - id: C5
+    can: 审多租户隔离：判断一个接口是不是每个请求都在后端鉴权、数据和文件按租户隔离
+    accept: 在 nanoteacher 上审一个接口，指出隔离靠什么保证、哪里可能漏
+    units: [net-02-http, db-01-sqlbolt, sec-01-access, sec-02-auth, sec-03-path, sec-04-ssrf, sec-05-tenant]
+
+# 学习路径（D-048）：按先修关系排，可以跨学科；没列进来的单元排在后面，用到再学。
+# 多租户（C5）优先：HTTP 和 SQL 是它的先修；审 nanoteacher 要先会读分层（C1），所以 sec-05 排在 design-02 后面。
+path:
+  - tools-01-shell
+  - tools-02-git
+  - tools-03-debug
+  - test-01-batchelder
+  - test-02-pytest
+  - net-02-http
+  - db-01-sqlbolt
+  - sec-01-access
+  - sec-02-auth
+  - sec-03-path
+  - sec-04-ssrf
+  - design-01-ousterhout
+  - design-02-layers
+  - sec-05-tenant
+  - tools-04-quality
+  - tools-05-agentic
+  - db-03-txn
+  - agent-01-effective
+  - agent-02-capstone
+
+stages:
+  - id: verify
+    title: 能验证
+    weeks: [1, 8]
+    pass: 能独立定位并修复一个线上 bug，全程自己验证
+    practice: "学习 50 : 项目 50。给核心路径补测试；按红→绿修 bug；每个 PR 自己写 Test plan"
+  - id: judge
+    title: 能判断
+    weeks: [9, 16]
+    pass: 能写出一篇 ADR，列出 2-3 个方案和取舍，经得起追问
+    practice: "学习 40 : 项目 60。端到端负责一个模块的重构：自己写设计文档，AI 只负责实现"
+  - id: deliver
+    title: 能交付
+    weeks: [17, 24]
+    pass: 能独立判断大改动的架构；连续几次晋升复盘都是绿灯
+    practice: "学习 30 : 项目 70。把 SOP 文档化；和 cofounder 建立 eval 与灰度流程"
+
+subjects:
+  - id: tools
+    title: 开发工具
+    priority: P0
+    stage: verify
+    goal: 能自己 git bisect、看日志、用调试器；知道怎么让 AI 写的代码守住质量
+    scope: shell、git / version control、调试与性能分析、代码质量、agentic coding（2026 版第 1、4、5、7、9 讲）
+    sources:
+      - {id: missing, title: MIT The Missing Semester of Your CS Education（2026 版官网）, url: "https://missing.csail.mit.edu/2026/", kind: course}
+      - {id: missing-yt, title: Missing Semester YouTube 播放列表, url: "https://www.youtube.com/playlist?list=PLyzOVJj3bHQunmnnTXrNbZnBaCA-ieK4L", kind: video}
+    units:
+      - {id: tools-01-shell, title: Shell, sources: [{ref: missing, url: "https://missing.csail.mit.edu/2026/course-shell/"}]}
+      - {id: tools-02-git, title: Git 与版本控制, sources: [{ref: missing, url: "https://missing.csail.mit.edu/2026/version-control/"}]}
+      - {id: tools-03-debug, title: 调试与性能分析, sources: [{ref: missing, url: "https://missing.csail.mit.edu/2026/debugging-profiling/"}]}
+      - {id: tools-04-quality, title: 代码质量, sources: [{ref: missing, url: "https://missing.csail.mit.edu/2026/code-quality/"}]}
+      - {id: tools-05-agentic, title: Agentic Coding, sources: [{ref: missing, url: "https://missing.csail.mit.edu/2026/agentic-coding/"}]}
+
+  - id: test
+    title: 测试
+    priority: P0
+    stage: verify
+    goal: 能判断一个测试有没有真的在测东西
+    scope: 全部
+    sources:
+      - {id: batchelder, title: Ned Batchelder · Getting Started Testing（PyCon 2014 演讲）, url: "https://www.youtube.com/watch?v=FxSsnHeWQBY", kind: video}
+      - {id: pytest, title: pytest 官方教程, url: "https://docs.pytest.org/en/stable/getting-started.html", kind: page}
+    units:
+      - {id: test-01-batchelder, title: Getting Started Testing 演讲, sources: [{ref: batchelder}]}
+      - {id: test-02-pytest, title: pytest 入门教程, sources: [{ref: pytest}]}
+
+  - id: net
+    title: Web 与网络
+    priority: P0
+    stage: verify
+    goal: 能讲清一次聊天请求从浏览器到 LLM 再回来的全过程，懂 SSE / WebSocket
+    scope: 第 1-3 章（应用层、HTTP、TCP）
+    sources:
+      - {id: kurose, title: Kurose & Ross 作者本人的视频讲座（配套 Computer Networking - A Top-Down Approach）, url: "https://gaia.cs.umass.edu/kurose_ross/online_lectures.htm", kind: course}
+    project_links:
+      - {where: 重启会断开所有 SSE 连接, concept: 长连接、部署策略}
+    units:
+      - {id: net-01-overview, title: 第 1 章 概述, sources: [{ref: kurose, note: 第 1 章}]}
+      - {id: net-02-http, title: 第 2 章 应用层与 HTTP, sources: [{ref: kurose, note: 第 2 章}], requests: [路径上跳过了第 1 章，用到的网络基础当场补]}
+      - {id: net-03-tcp, title: 第 3 章 传输层与 TCP, sources: [{ref: kurose, note: 第 3 章}]}
+      - {id: net-04-sse, title: SSE 与 WebSocket（补充）}
+
+  - id: db
+    title: 数据库
+    priority: P0
+    stage: verify
+    goal: 懂事务、索引、隔离级别、为什么需要迁移
+    scope: SQLBolt 全部练习；15-445 只挑索引、事务、并发控制、日志恢复几讲
+    sources:
+      - {id: sqlbolt, title: SQLBolt（交互练习）, url: "https://sqlbolt.com/", kind: exercise}
+      - {id: cmu445, title: CMU 15-445（Andy Pavlo，Fall 2024 播放列表）, url: "https://www.youtube.com/playlist?list=PLSE8ODhjZXjYDBpQnSymaectKjxCy6BYq", kind: video}
+    project_links:
+      - {where: SQLite WAL 模式扛不住 100 以上并发, concept: 事务、隔离级别、写锁}
+    units:
+      - {id: db-01-sqlbolt, title: SQLBolt 全部练习, sources: [{ref: sqlbolt}]}
+      - {id: db-02-index, title: 15-445 索引, sources: [{ref: cmu445, note: 索引}]}
+      - {id: db-03-txn, title: 15-445 事务与隔离级别, sources: [{ref: cmu445, note: 事务与隔离级别}]}
+      - {id: db-04-cc, title: 15-445 并发控制, sources: [{ref: cmu445, note: 并发控制}]}
+      - {id: db-05-recovery, title: 15-445 日志与恢复, sources: [{ref: cmu445, note: 日志与恢复}]}
+
+  - id: os
+    title: 操作系统
+    priority: P1
+    stage: judge
+    goal: 懂进程与线程、锁、文件系统的原子性
+    scope: 进程、线程、同步（锁/条件变量）、文件系统
+    sources:
+      - {id: cs162, title: UC Berkeley CS162 播放列表, url: "https://www.youtube.com/playlist?list=PLF2K2xZjNEf97A_uBCwEl61sdxWVP7VWC", kind: video}
+    project_links:
+      - {where: 线上 4 个 worker，跨请求的状态不能放进程内字典, concept: 进程、内存隔离}
+      - {where: atomic_write_text = 临时文件 + rename, concept: 文件系统原子性、崩溃一致性}
+      - {where: _student_lock, concept: 锁、竞态条件}
+    units:
+      - {id: os-01-process, title: 进程, sources: [{ref: cs162, note: 进程}]}
+      - {id: os-02-thread, title: 线程, sources: [{ref: cs162, note: 线程}]}
+      - {id: os-03-sync, title: 同步：锁与条件变量, sources: [{ref: cs162, note: 同步}]}
+      - {id: os-04-fs, title: 文件系统与崩溃一致性, sources: [{ref: cs162, note: 文件系统}]}
+
+  - id: sec
+    title: 安全
+    priority: P0
+    stage: verify
+    goal: 能审查多租户隔离有没有漏洞
+    scope: 访问控制、身份认证、路径穿越、SSRF
+    sources:
+      - {id: portswigger, title: PortSwigger Web Security Academy（免费，带在线靶场）, url: "https://portswigger.net/web-security", kind: exercise}
+    project_links:
+      - {where: OSS 预签名 URL 会过期, concept: 签名与时效性鉴权}
+      - {where: topic id 校验、is_relative_to(), concept: 路径注入}
+    units:
+      - {id: sec-01-access, title: 访问控制, sources: [{ref: portswigger, url: "https://portswigger.net/web-security/access-control"}]}
+      - {id: sec-02-auth, title: 身份认证, sources: [{ref: portswigger, url: "https://portswigger.net/web-security/authentication"}]}
+      - {id: sec-03-path, title: 路径穿越, sources: [{ref: portswigger, url: "https://portswigger.net/web-security/file-path-traversal"}]}
+      - {id: sec-04-ssrf, title: SSRF, sources: [{ref: portswigger, url: "https://portswigger.net/web-security/ssrf"}]}
+      - {id: sec-05-tenant, title: 多租户隔离审查（项目实战）, requests: [在 nanoteacher 上审一个接口：每个请求都在后端鉴权、数据和文件按租户隔离]}
+
+  - id: dist
+    title: 分布式与数据系统
+    priority: P1
+    stage: judge
+    goal: 能在存储、一致性、扩展方案之间做取舍
+    scope: 全部（约 8 小时）
+    sources:
+      - {id: kleppmann, title: Martin Kleppmann · Distributed Systems（剑桥讲座播放列表）, url: "https://www.youtube.com/playlist?list=PLeKd45zvjcDFUEv_ohr_HdUFe97RItdiB", kind: video}
+      - {id: ddia, title: DDIA 官网（参考书）, url: "https://dataintensive.net/", kind: book}
+    project_links:
+      - {where: JSON 要带 schema_version，字段只增不删, concept: 数据演进、向后兼容}
+      - {where: Session JSONL 是 source of truth，SSE 只是预览, concept: 单一数据源、事件日志}
+    units:
+      - {id: dist-01, title: Kleppmann 讲座, scope: open, sources: [{ref: kleppmann}]}
+
+  - id: design
+    title: 软件设计
+    priority: P1
+    stage: judge
+    goal: 能看出"浅模块""信息泄漏"这类 AI slop
+    scope: 全部
+    sources:
+      - {id: ousterhout, title: John Ousterhout · A Philosophy of Software Design（Talks at Google 演讲）, url: "https://www.youtube.com/watch?v=bmSAYlu0NcY", kind: video}
+      - {id: cosmicpython, title: Architecture Patterns with Python（免费在线版，参考书）, url: "https://www.cosmicpython.com/book/preface.html", kind: book}
+    project_links:
+      - {where: '"current" 是 session_id 的魔法值（issue #78）', concept: 数据建模、哨兵值的坏处}
+    units:
+      - {id: design-01-ousterhout, title: Ousterhout 演讲, sources: [{ref: ousterhout}]}
+      - {id: design-02-layers, title: 分层、端口与依赖注入, sources: [{ref: cosmicpython}], requests: [用 cs-study 自己的代码当例子（studykit 的 domain / app / adapters / bootstrap）]}
+
+  - id: sysdesign
+    title: 系统设计
+    priority: P2
+    stage: deliver
+    goal: 能画出你的产品扩到 1 万用户的架构
+    scope: 挑缓存、队列、限流、多租户相关的视频
+    sources:
+      - {id: bytebytego, title: ByteByteGo 频道, url: "https://www.youtube.com/@ByteByteGo", kind: video}
+    units:
+      - {id: sysdesign-01, title: ByteByteGo 视频, scope: open, sources: [{ref: bytebytego}]}
+
+  - id: agent
+    title: Agent 工程
+    priority: P2
+    stage: deliver
+    goal: 能和 cofounder 一起设计 eval 和护栏
+    sources:
+      - {id: bea, title: Anthropic · Building Effective Agents（短文）, url: "https://www.anthropic.com/engineering/building-effective-agents", kind: page}
+      - {id: evals, title: Hamel Husain & Shreya Shankar 的 evals 课程（Maven，收费，可选）, url: "https://maven.com/parlance-labs/evals", kind: course}
+    units:
+      - {id: agent-01-effective, title: Building Effective Agents, sources: [{ref: bea}]}
+      - {id: agent-02-capstone, title: 验收项目：问题 → 知识点 → 掌握度, requests: [按 C2 → C3 → C4 做：自己写设计，便宜模型实现，建评测；这是把导师手动做的 kg observe 自动化]}
+
+  - id: dsa
+    title: 数据结构与算法
+    priority: P2
+    stage: deliver
+    goal: 能看出 AI 写了 O(n²) 这类复杂度问题
+    scope: 挑 60-80 道 easy/medium：哈希、树、图、堆
+    sources:
+      - {id: neetcode, title: NeetCode 频道, url: "https://www.youtube.com/@NeetCode", kind: video}
+      - {id: neetcode-roadmap, title: NeetCode 150 路线图, url: "https://neetcode.io/roadmap", kind: page}
+      - {id: neetcode-practice, title: NeetCode 练习页, url: "https://neetcode.io/practice", kind: exercise}
+    units:
+      - {id: dsa-01, title: NeetCode, scope: open, sources: [{ref: neetcode-roadmap}]}
+
+  - id: lang
+    title: 语言深度
+    priority: P3
+    stage: deliver
+    goal: 看得懂 async 的坑和前端状态管理的问题
+    scope: asyncio、React 状态管理
+    sources:
+      - {id: asyncio, title: Łukasz Langa · import asyncio 系列, url: "https://www.youtube.com/playlist?list=PLhNSoGM2ik6SIkVGXWBwerucXjgP1rHmB", kind: video}
+      - {id: react, title: react.dev/learn 官方文档（自带挑战题）, url: "https://react.dev/learn", kind: page}
+    units:
+      - {id: lang-01-asyncio, title: import asyncio 系列, sources: [{ref: asyncio}]}
+      - {id: lang-02-react, title: react.dev 状态管理, sources: [{ref: react}]}
