@@ -566,6 +566,7 @@ def test_course_definition_rejects_mistakes(patch, msg):
     (dict(scope_open=False, prep_stage="escalated", walked=None, sections=None), "blocked", []),
     (dict(scope_open=False, prep_stage="interrupted", walked=None, sections=None), "blocked", []),
     (dict(scope_open=False, prep_stage="published", walked=0, sections=7), "ready", []),
+    (dict(scope_open=False, prep_stage="published", walked=0, sections=7, started=True), "learning", []),   # 打开过就是在学
     (dict(scope_open=False, prep_stage="ready", walked=6, sections=7), "learning", ["new_version"]),
     (dict(scope_open=False, prep_stage="published", walked=7, sections=7), "done", []),        # 单元题做没做不挡学完（D-064）
     (dict(scope_open=False, prep_stage="preparing", walked=2, sections=7), "learning", []),   # 能学的单元在备新版本：还是能学

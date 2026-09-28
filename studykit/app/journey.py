@@ -27,7 +27,8 @@ class Journey:
                 quiz = f["quizzes"][0] if f["quizzes"] else None
                 state = curriculum.unit_state(
                     scope_open=u.scope_open, prep_stage=f["prep"]["stage"],
-                    walked=f["course"]["walked"] if f["course"] else None, sections=f["course"]["sections"] if f["course"] else None)
+                    walked=f["course"]["walked"] if f["course"] else None, sections=f["course"]["sections"] if f["course"] else None,
+                    started=bool(f["course"] and f["course"]["last_at"]))
                 row = {"id": u.id, "title": u.title, "requests": list(u.requests), "scope_open": u.scope_open,
                        "sources": [{"title": (s.source(x.ref) or curriculum.Source(x.ref, x.ref, "")).title,
                                     "url": x.url or (s.source(x.ref).url if s.source(x.ref) else ""), "note": x.note}

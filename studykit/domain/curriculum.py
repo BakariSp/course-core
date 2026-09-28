@@ -272,9 +272,9 @@ def render_for_brief(course: CourseDef, unit: str) -> str:
 UNIT_STATES = ("queued", "preparing", "blocked", "ask", "ready", "learning", "done")
 
 
-def unit_state(*, scope_open: bool, prep_stage: str, walked: int | None, sections: int | None) -> dict:
+def unit_state(*, scope_open: bool, prep_stage: str, walked: int | None, sections: int | None, started: bool = False) -> dict:
     """prep_stage 是备课记录算出的阶段（todo / preparing / published / ready / escalated / interrupted）；
-    walked / sections 是现在这一版课程页走过几节、一共几节，没有课程页时是 None。"""
+    walked / sections 是现在这一版课程页走过几节、一共几节，没有课程页时是 None；started = 打开过这一版。"""
     tags = ["new_version"] if prep_stage == "ready" else []
     if scope_open:
         return {"key": "ask", "tags": []}
@@ -283,7 +283,7 @@ def unit_state(*, scope_open: bool, prep_stage: str, walked: int | None, section
     if sections is not None:
         if walked >= sections:
             return {"key": "done", "tags": tags}
-        return {"key": "learning" if walked else "ready", "tags": tags}
+        return {"key": "learning" if walked or started else "ready", "tags": tags}
     if prep_stage in ("escalated", "interrupted"):
         # 学习者不需要决定什么（原则一）：自动续跑 / 换策略 / 上报开发者是系统的事
         return {"key": "blocked", "tags": []}
