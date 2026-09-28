@@ -108,7 +108,7 @@ export function unitAction(u, rerender) {
   if (k === "queued") {                                   // 跳课是学习者的决定；卡住的交给系统和开发者（D-063）
     const label = "现在备这一课";
     return h("button", { class: "btn btn--sm", type: "button", onclick: async e => {
-      if (!confirm(`${label}：AI 会写讲解和练习，再检查一遍，最多 3 轮、大约 $1。开始吗？`)) return;
+      if (!confirm(`${label}：AI 写讲解和练习，再检查一遍，最多 3 轮、大约 $1。点「确定」开始。`)) return;
       e.target.disabled = true;
       try { await src.prepare(u.id); toast("开始备了，备好会显示「备好了」"); rerender?.(); }
       catch (err) { e.target.disabled = false; toast("没能开始：" + err.message); }

@@ -55,28 +55,28 @@ destination:
 # 之后按数据流和先修排。没列进来的单元排在后面，在「课程设置」里。
 # 先修：SSE 要 TCP 长连接和 async；并发控制要线程和锁；多租户审查要先会读分层；学习者模型要落到存储（事务）。
 path:
-  - title: 基本功：动手和验证
+  - title: 动手与验证：Shell、Git、调试、测试
     fills: [X3]
     units: [tools-01-shell, tools-02-git, tools-03-debug, test-01-batchelder, test-02-pytest]
-  - title: 一次请求怎么走：HTTP 和 SQL
+  - title: 从请求到数据：HTTP 与 SQL
     fills: [S2, S6]
     units: [net-01-overview, net-02-http, db-01-sqlbolt]
-  - title: 谁能访问什么：鉴权
+  - title: 鉴权：访问控制与身份认证
     fills: [X1]
     units: [sec-01-access, sec-02-auth]
-  - title: 后端怎么组织、怎么跑
+  - title: 后端结构与运行：分层、进程、线程、异步
     fills: [S3]
     units: [design-01-ousterhout, design-02-layers, os-01-process, os-02-thread, os-03-sync, lang-01-asyncio]
-  - title: 长连接与推流
+  - title: 长连接与推流：TCP 与 SSE
     fills: [S2]
     units: [net-03-tcp, net-04-sse]
-  - title: 数据可靠、查得快
+  - title: 数据库进阶：索引、事务、并发控制、崩溃一致性
     fills: [S6, X2]
     units: [db-02-index, db-03-txn, db-04-cc, os-04-fs]
-  - title: 多租户审查
+  - title: 多租户隔离：路径穿越、SSRF、隔离审查
     fills: [X1]
     units: [sec-03-path, sec-04-ssrf, sec-05-tenant]
-  - title: 学习者模型、Agent、界面、验收项目
+  - title: AI 产品层：学习者模型、Agent、界面、验收项目
     fills: [S5, S4, S1, X3]
     units: [lm-01-model, agent-01-effective, tools-05-agentic, tools-04-quality, lang-02-react, agent-02-capstone]
 
