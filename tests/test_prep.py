@@ -142,9 +142,9 @@ def _g(rid, grader, verdict="", **kw):
 ])
 def test_prep_stage_never_waits_for_a_tutor(grades, published, running, stage):
     s = prep_stage([] if grades is None else [_run("r1")], {"r1": grades or []}, published, running)
-    assert s["stage"] == stage and s["who"] in ("learner", "agent") and s["next"]
+    assert s["stage"] == stage and s["who"] in ("learner", "agent", "developer") and s["next"]
     if stage == "escalated" and grades and grades[0].grader == "loop":
-        assert s["stuck"] == ["第 2 节跑不通"]
+        assert s["stuck"] == ["第 2 节跑不通"] and s["stopped"] == "budget"      # 旧结论没记原因：当时是用完即停
 
 
 # ---------- 修复工具：结构上只能改被指出的部分 ----------
@@ -222,6 +222,8 @@ def test_an_unsafe_verdict_stops_the_loop_before_anything_runs(app, runtime, pag
     assert not app.store.grades(r["run"]) or all(g.grader != "practice_verify" for g in app.store.grades(r["run"]))  # 没被放行，就没在本机跑
     stage = app.panel.unit(UNIT)["prep"]
     assert stage["stage"] == "escalated" and "假装危险" in stage["stuck"][0]
+    # D-063：同一处的阻断修了还在 = 修不动，不自动接着修，交给开发者
+    assert r["stopped"] == "stuck" and stage["stopped"] == "stuck" and stage["who"] == "developer"
 
 
 def test_a_reviewer_failure_counts_as_not_passed(app, runtime, pages):
@@ -230,6 +232,14 @@ def test_a_reviewer_failure_counts_as_not_passed(app, runtime, pages):
     runtime.review_reply = "（超时，没有输出）"
     r = app.prep.prepare(UNIT)
     assert r["status"] == "escalated" and "评审模型没有给出可用的结论" in r["blocking"][0]["what"]
+    assert r["stopped"] == "stuck" and len(r["rounds"]) == 3
+
+
+def test_the_spending_cap_comes_from_settings(app, root):
+    """D-063：一次备课（含自动接着修）最多花多少，学习者在 progress/settings.yaml 里定，默认 $3。"""
+    assert app.prep.cap() == 3.0
+    (root / "progress" / "settings.yaml").write_text("schema_version: 1\nprep_budget_usd: 1.5\n", encoding="utf-8")
+    assert app.prep.cap() == 1.5
 
 
 @needs_bash

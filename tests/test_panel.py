@@ -33,8 +33,10 @@ def test_prepare_runs_the_loop_in_the_background_and_the_stage_follows(app, root
     job = app.panel.prepare("tools-02-git")
     assert job["state"] == "done"
     detail = app.panel.unit("tools-02-git")
-    # 假 agent 只会 submit_plan，而备课第一步（调研）只开放 submit_research：每次都交不出来，3 轮后停在"需要你决定"
-    assert detail["prep"]["stage"] == "escalated" and detail["prep"]["who"] == "learner"
+    # 假 agent 只会 submit_plan，而备课第一步（调研）只开放 submit_research：每次都交不出来，同一个问题修不动，
+    # 3 轮后停下来交给开发者（D-063），不是让学习者去点重新备课
+    assert detail["prep"]["stage"] == "escalated" and detail["prep"]["who"] == "developer"
+    assert detail["prep"]["stopped"] == "stuck"
     assert "没有提交课程计划" in detail["prep"]["stuck"][0]
     assert {r["stage"] for r in detail["runs"]} == {"research"} and len(detail["runs"]) == 6  # 每轮调研重试一次
     assert detail["runs"][0]["loop"]["verdict"] == "escalated"
@@ -79,7 +81,7 @@ def test_build_knowledge_for_the_whole_curriculum_in_the_background(app, root, r
     fetcher.pages[OTHER] = "第二页 " * 10
     runtime.script = [("fetch_url", {"url": SRC}), ("fetch_url", {"url": OTHER}), ("submit_research", {"knowledge": kb_of(good_plan())})]
     job = app.panel.build_knowledge()
-    assert job["units"] == ["tools-01-shell", "tools-02-git"] and job["state"] == "done"
+    assert job["units"] == ["tools-01-shell", "tools-02-git"] and job["state"] == "done", job
     units = {u["id"]: u for t in app.panel.overview()["topics"] for u in t["units"]}
     assert units["tools-01-shell"]["knowledge"] and units["tools-02-git"]["knowledge"]
     with pytest.raises(DomainError, match="都已经有知识库"):
@@ -94,3 +96,17 @@ def test_units_whose_scope_is_open_are_never_prepared(app, root, unit):
     with pytest.raises(DomainError, match="范围还没定"):
         app.panel.prepare("tools-02-kleppmann")
     assert app.panel.prefetch_after("tools-01-shell") is None
+
+
+def test_preps_cut_off_by_a_restart_or_an_error_are_resumed_once(app, root):
+    """D-063：备课的进程没了（服务重启、关机）或中途报错，服务起来时自动重新备，不要学习者点「重新备课」。"""
+    _add_unit(root)
+    started = []
+    app.prep.prepare = lambda u, **kw: started.append(u)
+    app.prep.status._write("tools-01-shell", {"state": "running", "pid": 0, "progress": {}, "error": ""})   # 进程已经不在
+    app.prep.status._write("tools-02-git", {"state": "error", "pid": 0, "progress": {}, "error": "网络断了"})
+    assert app.panel.resume_interrupted() == ["tools-01-shell", "tools-02-git"]
+    assert started == ["tools-01-shell", "tools-02-git"]
+    app.prep.status._write("tools-01-shell", {"state": "done", "pid": 0, "progress": {}, "error": ""})
+    app.prep.status._write("tools-02-git", {"state": "done", "pid": 0, "progress": {}, "error": ""})
+    assert app.panel.resume_interrupted() == []                     # 正常结束的（通过或卡住）不重来

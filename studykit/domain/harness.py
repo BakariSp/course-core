@@ -145,7 +145,8 @@ class Grade:
 PREP_STAGES = {
     "todo": ("还没备课", "点「备课」：系统生成、检验、定点修复，通过就发布", "learner"),
     "preparing": ("备课中", "生成 → 检验 → 定点修复（最多 3 轮 / $1），通过就发布", "agent"),
-    "escalated": ("需要你决定", "修复轮数或花费用完了还有问题：看卡住的地方，决定重新备课，或者让开发助手改 prompt", "learner"),
+    "escalated": ("卡住了，要开发者看", "同一个问题修了一轮还在（stuck），或者花到了上限（cap）：再修也是花钱，"
+                  "问题多半在检验器、prompt 或工具，开发者看卡住的地方改那一层（D-063）", "developer"),
     "interrupted": ("上次备课没走完", "中途出错、被中断，或者是旧流程留下的运行：重新备课", "learner"),
     "ready": ("新版本等你确认", "这个单元你已经开始学了，新版本要你确认才替换", "learner"),
     "published": ("已发布", "去课程页学", "learner"),
@@ -162,6 +163,7 @@ def prep_stage(runs: list[Run], grades: dict[str, list[Grade]], published_run: s
     loops = [g for g in grades.get(latest.id, []) if g.grader == "loop"] if latest else []
     loop = loops[-1] if loops else None
     stuck: list[str] = []
+    stopped = ""                                                  # escalated 时为什么停（D-063）
     if running:
         stage = "preparing"
     elif latest is None:
@@ -175,10 +177,11 @@ def prep_stage(runs: list[Run], grades: dict[str, list[Grade]], published_run: s
     else:
         stage = "escalated"
         stuck = [f["what"] for f in loop.detail.get("blocking") or []]
+        stopped = loop.detail.get("stopped") or "budget"          # 旧的结论没记原因：当时是用完即停
     label, nxt, who = PREP_STAGES[stage]
     return {"stage": stage, "label": label, "next": nxt, "who": who, "run": latest.id if latest else None,
             "published_run": published_run, "behind": bool(published_run and latest and latest.id != published_run),
-            "stuck": stuck}
+            "stuck": stuck, "stopped": stopped}
 
 
 # ---------- 评审模型（reviewer，D-035）：带地址的发现 ----------

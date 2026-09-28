@@ -24,11 +24,12 @@ from studykit.app.learning import Course
 from studykit.app.loop import Attempt, Budget, Evaluator, Kind, LoopResult, run_loop
 from studykit.app.ports import PlanStore, PrepStatus
 from studykit.domain import harness as h
-from studykit.domain.artifact import Finding, blocking, repair_scope
+from studykit.domain.artifact import Finding, blocking, keep_going, repair_scope
 from studykit.domain.errors import DomainError
 from studykit.domain.plan import plan_parts, stubs_of
 
 AGENT = "tutor-prep"
+CAP_USD = 3.0            # 一次备课（含自动接着修）最多花多少；progress/settings.yaml 的 prep_budget_usd 可以改（D-063）
 
 
 class Progress:
@@ -227,7 +228,10 @@ class CoursePrep:
         return result
 
     def _prepare(self, unit: str, start_from: str | None, model: str | None, progress: Progress) -> dict:
-        result = run_loop(self.kind(model, progress), {"unit": unit, "from": start_from}, self.budget)
+        cap = self.cap()
+        # D-063：3 轮 / $1 用完还有阻断，只要每一轮修出的是新问题就自动接着修；同一个问题修不动、或花到上限才停
+        extend = lambda r: keep_going([x.findings for x in r.rounds], r.spent, cap)   # noqa: E731
+        result = run_loop(self.kind(model, progress), {"unit": unit, "from": start_from}, self.budget, extend)
         final = self.runs.run(result.rounds[-1].run)
         verdict = result.status
         self.harness._grade(final, "loop", "d-035", "system", verdict=verdict, detail=self._summary(result))
@@ -238,6 +242,9 @@ class CoursePrep:
         elif verdict == "accepted":                 # 已经开始学：存成可选版本，学习者在课程页上看过再选（D-044）
             self.harness.offer(final)
         return {"unit": unit, "status": verdict, "run": final.id, "published": published, **self._summary(result)}
+
+    def cap(self) -> float:
+        return float(self.harness.content.settings().get("prep_budget_usd") or CAP_USD)
 
     def can_autopublish(self, unit: str) -> bool:
         """第一次学（还没有发布过，或者一节都没学过）→ 直接发布；学过的单元换版本要学习者确认。"""
@@ -266,7 +273,7 @@ class CoursePrep:
 
     @staticmethod
     def _summary(result: LoopResult) -> dict:
-        return {"spent_usd": result.spent,
+        return {"spent_usd": result.spent, "stopped": result.stopped,
                 "rounds": [{"run": r.run, "cost_usd": round(r.cost, 4), "costs": r.costs,
                             "findings": [f.as_dict() for f in r.findings]} for r in result.rounds],
                 "blocking": [f.as_dict() for f in result.blocking]}

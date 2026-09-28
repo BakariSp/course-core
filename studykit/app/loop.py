@@ -59,9 +59,10 @@ class Round:
 
 @dataclass
 class LoopResult:
-    status: str                # accepted：可以进发布闸门；escalated：停下来，需要学习者决定
+    status: str                # accepted：可以进发布闸门；escalated：停下来，交给开发者
     artifact: dict
     rounds: list[Round] = field(default_factory=list)
+    stopped: str = ""          # escalated 时为什么停：budget（轮数 / 钱用完）；或者 extend 给的原因（stuck、cap）
 
     @property
     def spent(self) -> float:
@@ -85,7 +86,10 @@ def evaluate(kind: Kind, attempt: Attempt, frozen: list[Finding] = ()) -> list[F
     return found
 
 
-def run_loop(kind: Kind, inp: dict, budget: Budget = Budget()) -> LoopResult:
+def run_loop(kind: Kind, inp: dict, budget: Budget = Budget(),
+             extend: Callable[[LoopResult], str] | None = None) -> LoopResult:
+    """extend：轮数或钱用完以后，每开一轮新的之前问它一次。返回空串就接着修，返回原因就停（D-063：
+    还在修出新问题就自动接着修，同一个问题修不动、或花到上限才停）。不给就是用完即停。"""
     attempt = kind.generate(inp)
     result = LoopResult("accepted", attempt.artifact)
     frozen: list[Finding] = []
@@ -99,8 +103,10 @@ def run_loop(kind: Kind, inp: dict, budget: Budget = Budget()) -> LoopResult:
         if not todo:
             return result
         if len(result.rounds) >= budget.rounds or result.spent >= budget.usd:
-            result.status = "escalated"
-            return result
+            reason = extend(result) if extend else "budget"
+            if reason:
+                result.status, result.stopped = "escalated", reason
+                return result
         before = kind.parts(attempt.artifact)
         attempt = kind.repair(attempt, todo, inp)
         frozen = [Finding(a, f"没被指出的部分被改了：{a}。修复只能改发现指向的地方，这一处要恢复原样", "freeze")

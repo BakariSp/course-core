@@ -4,10 +4,10 @@
 //   收起：资料；版本
 //   别处：为什么这样教 · 备课记录 → 老师页
 import { h, fmtMinutes } from "../lib/dom.js";
-import { badge, mock, toast } from "../components/ui.js";
+import { badge, mock, stepper, toast } from "../components/ui.js";
 import { challengeButton } from "../components/challenge.js";
 import * as src from "../data/source.js";
-import { badgeOf, TAGS, proposalFor, sectionsOf, remainingMinutes, sectionTitle, reasonText } from "../domain/course.js";
+import { badgeOf, TAGS, proposalFor, sectionsOf, remainingMinutes, sectionTitle, reasonText, prepSteps, STOPPED } from "../domain/course.js";
 
 export async function unitPage(id, rerender) {
   const c = await src.course();
@@ -135,8 +135,14 @@ function notReady(u, units) {
     line = h("div", { class: "panel panel--warn row" },
       h("span", { style: "flex:1;min-width:200px" }, "范围还没定，系统不会备它。", p ? p.why : ""),
       h("a", { class: "btn btn--primary", href: `#q.${u.id}` }, "确认范围"));
-  } else if (k === "preparing") line = h("p", {}, u.prep.progress?.label || "开始了");
-  else if (k === "blocked") line = h("p", {}, u.prep.stage === "interrupted" ? "上次准备中途停了。" : "准备好的内容没通过检验。", h("span", { class: "muted" }, " 可以先学别的。"));
+  } else if (k === "preparing") line = h("div", { class: "stack-sm" }, stepper(prepSteps(u.prep.progress)),
+    h("p", { class: "small muted" }, "备好了这里会自己变成「能学」，不用刷新。"));
+  else if (k === "blocked" && u.prep.stage === "interrupted")
+    line = h("p", {}, "上次备课中途停了，服务下次启动时会自动接着备。", h("span", { class: "muted" }, " 可以先学别的。"));
+  else if (k === "blocked") line = h("div", { class: "stack-sm" },
+    h("p", {}, `备课卡住了：${STOPPED[u.prep.stopped] || STOPPED.budget}。要开发者看一下检验或提示词。`, h("span", { class: "muted" }, " 可以先学别的。")),
+    u.prep.stuck?.length ? h("details", { class: "small" }, h("summary", { class: "muted", style: "cursor:pointer" }, "卡在哪"),
+      h("ul", {}, u.prep.stuck.map(s => h("li", {}, s)))) : null);
   else line = h("p", { class: "muted" }, u.queued_after ? `学「${units.find(x => x.id === u.queued_after)?.title}」时开始准备。` : "按课程顺序准备。");
   return h("section", { class: "stack-sm" }, line,
     h("dl", { class: "kv" },

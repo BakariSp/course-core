@@ -40,6 +40,24 @@ async function renderNav(current) {
   fill(navEl, link("course", "课程", qs), link("me", "我的"), link("teachers", "老师", fb));
 }
 
+// 重画时保住展开的折叠块：记下展开的 <details> 的标题，画完再按标题打开。
+const openFolds = () => new Set([...app.querySelectorAll("details[open] > summary")].map(s => s.textContent));
+const reopen = keep => app.querySelectorAll("details > summary").forEach(s => { if (keep.has(s.textContent)) s.parentElement.open = true; });
+
+// 有单元在准备中（带忙碌标记的徽章或步骤条）：每 5 秒重新拿一次数据，备好了状态自己变（D-063）。页面在后台时不拿。
+let pollTimer = null;
+function pollWhileBusy(key) {
+  clearTimeout(pollTimer);
+  if (!app.querySelector(".badge--busy, .stepper li.now")) return;
+  pollTimer = setTimeout(() => {
+    const { page, arg } = parse();
+    if (`${page}.${arg}` !== key) return;
+    if (document.hidden) return pollWhileBusy(key);
+    src.reset();
+    render({ keepScroll: true });
+  }, 5000);
+}
+
 let seq = 0, lastKey = "";
 async function render({ keepScroll = false } = {}) {
   const { page, arg } = parse();
@@ -49,9 +67,11 @@ async function render({ keepScroll = false } = {}) {
   try {
     const node = await PAGES[page](arg, () => render({ keepScroll: true }));
     if (my !== seq) return;                               // 已经切到别的页了
-    const y = window.scrollY;
+    const y = window.scrollY, folds = key === lastKey ? openFolds() : new Set();
     fill(app, node);
+    reopen(folds);
     window.scrollTo(0, keepScroll || key === lastKey ? y : 0);
+    pollWhileBusy(key);
   } catch (e) {
     if (my === seq) fill(app, h("p", { class: "error" }, "加载失败：" + e.message));
   }
@@ -61,7 +81,7 @@ async function render({ keepScroll = false } = {}) {
 window.addEventListener("hashchange", () => render());
 subscribe(() => render({ keepScroll: true }));
 // 从学习页回来时数据可能变了（学到第几节、单元题）：离开超过一分钟再回来才刷新。
-// WHY: 每次切回来都重画会把展开的折叠块全部收起。
+// WHY: 不是每次切回来都重画：会丢掉页面上正在看的位置。
 let hiddenAt = 0;
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) { hiddenAt = Date.now(); return; }

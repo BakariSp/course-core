@@ -126,6 +126,21 @@ class Panel:
             raise DomainError(f"{unit} 已经在生成了，等这一次跑完")
         return self.jobs.status(key) or {}
 
+    def resume_interrupted(self) -> list[str]:
+        """服务启动时调一次（D-063）：进程没了（服务重启、关机）或中途报错的备课，自动重新备。返回重新开始的单元。
+        知识库已经有的直接复用，重备只花大纲和各节的钱。通过或卡住（escalated）是正常结束，不在这里重来。"""
+        out = []
+        for _, u in self.content.course().units():
+            st = self.prep.status.get(u.id) or {}
+            if u.scope_open or not (st.get("state") == "error" or (st.get("state") == "running" and not st.get("alive"))):
+                continue
+            try:
+                self.prepare(u.id)
+            except DomainError:                               # 已经在备了之类：跳过这一个
+                continue
+            out.append(u.id)
+        return out
+
     def prefetch_after(self, unit: str) -> str | None:
         """预备（D-040 ②）：学习者在学 unit 时，把课程清单里的下一个单元放到后台去备。返回开始备的单元，没有就是 None。
 

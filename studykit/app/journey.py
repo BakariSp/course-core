@@ -34,7 +34,7 @@ class Journey:
                                     "url": x.url or (s.source(x.ref).url if s.source(x.ref) else ""), "note": x.note}
                                    for x in u.sources],
                        "course": f["course"], "quiz": quiz, "state": state, "knowledge": bool(f["knowledge"]),
-                       "prep": {k: f["prep"].get(k) for k in ("stage", "progress", "stuck", "job_error")},
+                       "prep": {k: f["prep"].get(k) for k in ("stage", "progress", "stuck", "stopped", "job_error")},
                        "queued_after": curriculum.queued_after(order, u.id) if state["key"] == "queued" else None,
                        "serves": cdef.serves(u.id)}
                 units.append(row)

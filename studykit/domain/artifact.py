@@ -77,3 +77,18 @@ def unexpected_changes(before: dict[str, object], after: dict[str, object], allo
     """
     changed = sorted(a for a in set(before) | set(after) if before.get(a) != after.get(a))
     return [c for c in changed if not any(within(c, a) or within(a, c) for a in allowed)]
+
+
+def keep_going(rounds: list[list[Finding]], spent: float, cap: float) -> str:
+    """产出循环用完一次预算以后，要不要自动再修一轮（D-063）。rounds = 每一轮的阻断发现，按时间顺序。
+
+    返回空串 = 接着修；"stuck" = 上一轮指出的问题（同一处、同一个检验器），修了一轮还在：再修也是花钱，
+    问题多半在检验器、prompt 或工具，交给开发者；"cap" = 这次备课花到上限了。
+    WHY: 不看阻断数有没有变少——每一轮修好旧的、又查出新的真问题（2026-09-28 test-02 1→2→1），也是在往前走。"""
+    if len(rounds) >= 2:
+        before = {(f.address, f.evaluator) for f in blocking(rounds[-2])}
+        if any((f.address, f.evaluator) in before for f in blocking(rounds[-1])):
+            return "stuck"
+    if spent >= cap:
+        return "cap"
+    return ""

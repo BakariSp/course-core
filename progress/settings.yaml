@@ -1,3 +1,4 @@
 # 系统设置（你可以直接改）。时间偏好在 progress/profile.yaml（D-047）。
 schema_version: 1
 prefetch_next: true          # 学一个单元时，自动在后台备课程清单里的下一个单元（D-040；每个单元约 $0.5–1）
+prep_budget_usd: 3            # 一次备课最多花多少美元：3 轮 / $1 修完还有问题，只要每轮修出的是新问题就自动接着修，到这个数才停（D-063）

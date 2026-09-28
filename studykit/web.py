@@ -257,6 +257,9 @@ def serve(port: int = 8770, app: App | None = None) -> None:
     token = secrets.token_urlsafe(24)
     server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(app, token, port))
     print(f"答题页面：http://127.0.0.1:{port}/   （Ctrl+C 停止）", flush=True)
+    resumed = app.panel.resume_interrupted()                  # 上次被中断的备课接着备（D-063）
+    if resumed:
+        print("接着备上次被中断的：" + "、".join(resumed), flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

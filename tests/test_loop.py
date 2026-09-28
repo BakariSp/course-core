@@ -114,3 +114,36 @@ def test_review_cost_counts_against_the_budget():
     k.review_cost = lambda a: 0.5
     r = run_loop(k, {}, Budget(rounds=5, usd=1.0))
     assert r.status == "escalated" and len(r.rounds) == 2                    # 只算生成的话会跑满 5 轮
+
+
+def moving_problem(fixed_after):
+    """第 n 轮报第 n 节有问题（每一轮都是新问题），第 fixed_after 轮之后没问题了。"""
+    def check(attempt):
+        n = int(attempt.run.split("-")[1])
+        return [] if n > fixed_after else [Finding(f"/sections/{n - 1}", "新问题", "static")]
+    return check
+
+
+def test_past_the_budget_extend_decides_whether_to_keep_going():
+    """D-063：轮数用完时问 extend；返回空串就接着修，返回原因就停下来，原因记在结果里。"""
+    same = Gen(plan(*[{"name": str(i)} for i in range(6)]), lambda a, f: a)
+    r = run_loop(kind(same, Evaluator("static", moving_problem(4))), {}, Budget(rounds=3), extend=lambda r: "")
+    assert (r.status, len(r.rounds), r.stopped) == ("accepted", 5, "")
+    same = Gen(plan(*[{"name": str(i)} for i in range(6)]), lambda a, f: a)
+    asked = []
+    r = run_loop(kind(same, Evaluator("static", moving_problem(4))), {}, Budget(rounds=3),
+                 extend=lambda r: asked.append(len(r.rounds)) or "stuck")
+    assert (r.status, len(r.rounds), r.stopped, asked) == ("escalated", 3, "stuck", [3])
+    r = run_loop(kind(Gen(plan({"bad": True}), lambda a, f: a)), {}, Budget(rounds=2))
+    assert r.stopped == "budget"                                             # 不给 extend：和原来一样，用完就停
+
+
+def test_keep_going_stops_when_a_repair_leaves_the_same_problem_or_the_cap_is_reached():
+    """D-063：同一处、同一个检验器的阻断修了一轮还在 = 修不动，交给开发者；花到上限也停；换了新问题就接着修。"""
+    from studykit.domain.artifact import keep_going
+    a, b = Finding("/sections/1", "x", "reviewer"), Finding("/sections/2", "y", "reviewer")
+    assert keep_going([[a], [b]], spent=1.0, cap=3.0) == ""
+    assert keep_going([[a], [Finding("/sections/1", "换了说法", "reviewer")]], spent=1.0, cap=3.0) == "stuck"
+    assert keep_going([[a], [Finding("/sections/1", "x", "lab_verify")]], spent=1.0, cap=3.0) == ""   # 不同检验器是不同问题
+    assert keep_going([[a], [b]], spent=3.0, cap=3.0) == "cap"
+    assert keep_going([[a]], spent=0.5, cap=3.0) == ""

@@ -22,9 +22,27 @@ export function shortOf(u) {
   if (k === "learning") return `${c.passed}/${c.sections} 节`;
   if (k === "ready") return `${c.sections} 节`;
   if (k === "quiz" || k === "done") return q ? `单元题 ${q.answered}/${q.questions}` : `${c.sections}/${c.sections} 节`;
-  if (k === "preparing") return u.prep.progress?.label || "";
+  if (k === "preparing") { const s = prepStep(u.prep.progress); return `${s.index + 1}/${PREP_STEPS.length} ${s.name}${s.detail ? " " + s.detail : ""}`; }
   return "";
 }
+
+// 备课的 5 步（D-063）：后端 Progress 的 step → 第几步。知识库已经有的单元从「写大纲」开始，「整理讲义」直接打勾。
+// 自动接着修的轮数不封顶（到上限才停），所以只写"第几轮"，不写"最多 3 轮"。
+export const PREP_STEPS = ["整理讲义", "写大纲", "写各节", "检查", "发布"];
+const STEP_AT = { research: 0, outline: 1, sections: 2, check: 3, repair: 3 };
+export function prepStep(p) {
+  const index = STEP_AT[p?.step] ?? 1;
+  const detail = index === 2 && p.sections ? `${p.sections.done}/${p.sections.total} 节`
+    : index === 3 ? `第 ${p.round || 1} 轮${p.step === "repair" ? " · 修改" : ""}` : "";
+  return { index, name: PREP_STEPS[index], detail };
+}
+export function prepSteps(p) {
+  const { index, detail } = prepStep(p);
+  return PREP_STEPS.map((label, i) => ({ label: i === index && detail ? `${label} · ${detail}` : label,
+                                         state: i < index ? "done" : i === index ? "now" : "todo" }));
+}
+// 备课卡住的原因（D-063）→ 学习者看得懂的一句话
+export const STOPPED = { stuck: "同一个问题修了一轮还在", cap: "花到了这次备课的上限，还有问题没修好", budget: "修了 3 轮还有问题（旧规则，那时不会自动接着修）" };
 
 // 待确认的提议（模拟：规划老师还没建）。范围没定的单元是真实的（course.yaml 的 scope: open）
 export const proposalFor = id => questions.find(q => q.unit === id) || null;

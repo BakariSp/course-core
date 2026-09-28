@@ -10,7 +10,7 @@ import { challengeButton } from "../components/challenge.js";
 import * as src from "../data/source.js";
 import { teachers } from "../data/teachers.js";
 import { influences } from "../data/mock.js";
-import { describeRun } from "../domain/course.js";
+import { describeRun, prepSteps, STOPPED } from "../domain/course.js";
 
 export async function teachersPage(unitId) {
   const units = src.flatUnits(await src.course());
@@ -37,7 +37,7 @@ async function unitView(u, runs) {
   const p = u.prep;
   const S = (label, state) => ({ label, state });
   const done = p.stage === "published" || p.stage === "ready";
-  const steps = p.stage === "preparing" && !u.course ? [S("准备中：" + (p.progress?.label || ""), "now"), S("检验", "todo"), S("发布", "todo")]
+  const steps = p.stage === "preparing" ? prepSteps(p.progress)
     : done || u.course ? [S("整理讲义", "done"), S("大纲与各节", "done"), S("检验", "done"), S("发布", "done")]
     : p.stage === "todo" ? [S("整理讲义", u.knowledge ? "done" : "todo"), S("大纲与各节", "todo"), S("检验", "todo"), S("发布", "todo")]
     : [S("整理讲义", u.knowledge ? "done" : "todo"), S("大纲与各节", "fail"), S("检验", "todo"), S("发布", "todo")];
@@ -59,9 +59,9 @@ async function unitView(u, runs) {
       h("h2", {}, "备课记录"),
       stepper(steps),
       runs.length ? h("div", { class: "small muted" }, `一共 ${runs.length} 次运行 · ${runs.reduce((a, r) => a + r.minutes, 0).toFixed(0)} 分钟 · $${runs.reduce((a, r) => a + r.cost_usd, 0).toFixed(2)}`) : null,
-      ["interrupted", "escalated"].includes(p.stage) ? h("div", { class: "row small" },
-        p.stage === "interrupted" ? "上次准备中途停了。" : `检验没通过：${p.stuck?.[0] || ""}`,
-        mock("自动续跑、换策略重试、上报开发者是第二期")) : null));
+      ["interrupted", "escalated"].includes(p.stage) ? h("div", { class: "small" },
+        p.stage === "interrupted" ? "上次准备中途停了，服务下次启动时会自动接着备。"
+          : `卡住了：${STOPPED[p.stopped] || STOPPED.budget}。卡在：${p.stuck?.[0] || ""}`) : null));
 }
 
 // ---------- 我的反馈（模拟：只在这个浏览器里） ----------
