@@ -1,7 +1,7 @@
 # 运行时数据（D-021）：study.db、题目沙箱、练习场快照、agent 工作目录。
 # 不进 git；可读的备份是 python study.py export 导出的 progress/evidence.jsonl 和 agents/*/evals/runs.jsonl。
 # 注意 data/labs/ 里的练习场快照不可重建。
-data/
+/data/
 # 旧版本的目录（已导入 data/，确认无误后可以删）
 .sandbox/
 runs/
