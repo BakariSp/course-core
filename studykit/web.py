@@ -171,7 +171,14 @@ def make_handler(app: App, token: str, port: int):
             if not self._host_ok():
                 return self._json({"error": "bad host"}, 403)
             url = urlparse(self.path)
-            if url.path == "/":
+            # 只有一个首页（F-096）：`/` 去新界面；老首页在 /old。学习页、答题页、开发者视图还是老页面，
+            # 靠查询参数（?unit= / ?lesson= / ?panel=）区分，所以带参数的 `/` 照旧给老页面，已有的链接不断。
+            if url.path == "/" and not url.query:
+                self.send_response(302)
+                self.send_header("Location", "/app/")
+                self.send_header("Content-Length", "0")
+                return self.end_headers()
+            if url.path in ("/", "/old"):
                 html = (WEB / "index.html").read_text(encoding="utf-8").replace("__TOKEN__", token)
                 return self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
             if url.path in ("/app", "/app/"):

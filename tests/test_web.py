@@ -42,8 +42,18 @@ def test_routes(req):
     assert "因为 B" not in json.dumps(req("GET", "/api/lesson?ref=t/01-x")[1], ensure_ascii=False)
     assert req("GET", "/api/kg?topic=tools")[1]["nodes"] == []
     assert req("GET", "/api/nope")[0] == 404
-    status, page = req("GET", "/")
+    status, page = req("GET", "/old")
     assert status == 200 and b"__TOKEN__" not in page
+
+
+def test_one_home_page_new_app_at_root_old_one_under_old(req):
+    """F-096：只有一个首页。`/` 去新界面；老首页挪到 /old；学习页、答题页、开发者视图（/?unit= 等）地址不变。"""
+    assert req("GET", "/")[0] == 302
+    old = req("GET", "/old")[1]
+    for path in ("/?unit=tools-01-shell", "/?lesson=t/01-x", "/?panel=1", "/old?unit=tools-01-shell"):
+        status, page = req("GET", path)
+        assert status == 200 and page == old, path                # 同一个老页面，按查询参数显示学习页 / 答题页 / 面板
+    assert req("GET", "/app")[0] == 200
 
 
 def test_bad_input_is_400(req):

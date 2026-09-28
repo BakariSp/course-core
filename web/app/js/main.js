@@ -90,4 +90,4 @@ render();
 
 fill(document.getElementById("foot"),
   h("span", {}, "没标 "), mock("示意"), h("span", {}, " 的都是真实数据。新界面在试用（D-046）；"),
-  h("a", { href: "/" }, "旧首页"), h("span", {}, " · "), h("a", { href: "/?panel=1" }, "开发者视图"));
+  h("a", { href: "/old" }, "旧版"), h("span", {}, " · "), h("a", { href: "/?panel=1" }, "开发者视图"));
