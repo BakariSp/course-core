@@ -1,0 +1,27 @@
+/* 基础：排版、页面骨架。 */
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--bg); color: var(--text); font: var(--fs-md)/1.65 var(--font); }
+a { color: var(--accent); text-underline-offset: 2px; }
+h1, h2, h3, h4 { text-wrap: balance; margin: 0; line-height: 1.3; }
+h1 { font-size: var(--fs-2xl); }
+h2 { font-size: var(--fs-xl); }
+h3 { font-size: var(--fs-lg); }
+h4 { font-size: var(--fs-md); }
+p { margin: 0; }
+ul, ol { margin: 0; padding-left: 1.3em; }
+code { font-family: var(--mono); font-size: .92em; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+:focus-visible { outline: none; box-shadow: var(--focus); border-radius: var(--r-sm); }
+.muted { color: var(--muted); }
+.small { font-size: var(--fs-sm); }
+.xs { font-size: var(--fs-xs); }
+.num { font-variant-numeric: tabular-nums; }
+
+.shell { max-width: var(--page-w); margin: 0 auto; padding-inline: var(--sp-4); padding-block: var(--sp-5) var(--sp-7); }
+.stack { display: flex; flex-direction: column; gap: var(--sp-4); }
+.stack-sm { display: flex; flex-direction: column; gap: var(--sp-2); }
+.stack-lg { display: flex; flex-direction: column; gap: var(--sp-6); }
+.row { display: flex; gap: var(--sp-2); align-items: center; flex-wrap: wrap; }
+.spacer { flex: 1; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+.error { color: var(--bad); }

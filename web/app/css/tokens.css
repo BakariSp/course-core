@@ -1,0 +1,44 @@
+/* 设计变量：沿用 web/index.html 已有的色板，补上间距、字号、圆角、阴影。组件只用这里的变量，不写死颜色。 */
+:root {
+  color-scheme: light;
+  --bg: #f6f5f1; --surface: #ffffff; --surface-2: #faf9f6; --text: #1d1d1b; --muted: #6b6a65; --faint: #9a988f;
+  --border: #e2e0d8; --border-strong: #cfccc1;
+  --accent: #3b5bdb; --accent-soft: #e8ecfd; --on-accent: #ffffff;
+  --ok: #2b8a3e; --ok-soft: #e6f4ea;
+  --warn: #b35c00; --warn-soft: #fdf1e2;
+  --bad: #c92a2a; --bad-soft: #fdeaea;
+  --wait: #6b6a65; --wait-soft: #efeee9;
+  --mock: #8a5cf6; --mock-soft: #f1ecfe;
+  --code-bg: #f0efe9;
+
+  --font: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --mono: ui-monospace, "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+  --fs-xs: 12px; --fs-sm: 13px; --fs-md: 15px; --fs-lg: 17px; --fs-xl: 21px; --fs-2xl: 26px;
+
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 24px; --sp-6: 32px; --sp-7: 48px;
+  --r-sm: 6px; --r-md: 10px; --r-lg: 14px; --r-pill: 999px;
+  --shadow-1: 0 1px 2px rgba(29, 29, 27, .06);
+  --shadow-2: 0 8px 28px rgba(29, 29, 27, .16);
+  --focus: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent);
+  --page-w: 880px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #141414; --surface: #1d1d1d; --surface-2: #191919; --text: #e9e7e1; --muted: #9a988f; --faint: #6f6d66;
+    --border: #2f2e2b; --border-strong: #45433e;
+    --accent: #8ea4ff; --accent-soft: #232a45; --on-accent: #111111;
+    --ok: #69c47c; --ok-soft: #1c2e21; --warn: #f0a44b; --warn-soft: #33261a; --bad: #ff7b7b; --bad-soft: #3a1f1f;
+    --wait: #9a988f; --wait-soft: #262624; --mock: #b79cff; --mock-soft: #2a2340; --code-bg: #262624;
+    --shadow-2: 0 8px 28px rgba(0, 0, 0, .5);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #141414; --surface: #1d1d1d; --surface-2: #191919; --text: #e9e7e1; --muted: #9a988f; --faint: #6f6d66;
+  --border: #2f2e2b; --border-strong: #45433e;
+  --accent: #8ea4ff; --accent-soft: #232a45; --on-accent: #111111;
+  --ok: #69c47c; --ok-soft: #1c2e21; --warn: #f0a44b; --warn-soft: #33261a; --bad: #ff7b7b; --bad-soft: #3a1f1f;
+  --wait: #9a988f; --wait-soft: #262624; --mock: #b79cff; --mock-soft: #2a2340; --code-bg: #262624;
+  --shadow-2: 0 8px 28px rgba(0, 0, 0, .5);
+}
