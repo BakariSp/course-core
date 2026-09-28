@@ -1,5 +1,6 @@
 # 知识图（D-020、D-047）：节点 + 先修关系。状态不写在这里，由证据算出（study.py kg）。
 # requires 每条：id、kind（required 必须先会 / helpful 先会更好）、by（谁说的：运行 id 或 learner）。
+# misconceptions：常见误解 id → desc（说明）、by（谁提的）；题目的得分点用它说明错在哪（D-056）。
 topic: test
 nodes:
   test.tools.pwd:
@@ -116,3 +117,95 @@ nodes:
     - id: test.pytest.assert
       kind: required
       by: 20260927-122048-test-01-batchelder-r1
+  test.testing.automated:
+    title: automated testing（自动化测试）
+    desc: 用一段能反复运行的程序代替人手检查代码行为，是测试这件事的基础。
+    kind: concept
+    requires:
+    - id: test.pytest.tool
+      kind: helpful
+      by: 20260928-200757-test-02-pytest-r7
+  test.testing.ad_hoc:
+    title: 在交互解释器里手动试
+    desc: 打开 Python 交互解释器手动建对象、调方法、看结果——能验证代码，但不可重复。
+    kind: skill
+    requires:
+    - id: test.testing.automated
+      kind: required
+      by: 20260928-200757-test-02-pytest-r7
+    - id: test.tools.python
+      kind: helpful
+      by: 20260928-200757-test-02-pytest-r7
+  test.testing.print_check:
+    title: 打印期望值和实际值
+    desc: 把检查写成脚本、把期望值和实际值都打印出来，换来可重复，但仍不告诉你对错。
+    kind: skill
+    requires:
+    - id: test.testing.ad_hoc
+      kind: required
+      by: 20260928-200757-test-02-pytest-r7
+  test.testing.anatomy:
+    title: 一个测试的四个步骤（Arrange / Act / Assert / Cleanup）
+    desc: 一个测试由准备、动作、断言、收尾四步组成，核心是 act 与 assert。
+    kind: concept
+    requires:
+    - id: test.testing.automated
+      kind: required
+      by: 20260928-200757-test-02-pytest-r7
+    - id: test.pytest.assert
+      kind: helpful
+      by: 20260928-200757-test-02-pytest-r7
+  test.testing.error_vs_failure:
+    title: 通过的 .、失败的 F、出错的 E
+    desc: 断言失败（F）和测试自己冒出别的异常（E）是两种不同结果，要修的东西也不同。
+    kind: concept
+    requires:
+    - id: test.pytest.failure_report
+      kind: required
+      by: 20260928-200757-test-02-pytest-r7
+    - id: test.pytest.assert
+      kind: helpful
+      by: 20260928-200757-test-02-pytest-r7
+  test.pytest.cli_options:
+    title: pytest 的命令行短选项（-q / -v）
+    desc: 跟在 pytest 后面改变运行器行为的短选项，-q 简短、-v 给细节。
+    kind: term
+    requires:
+    - id: test.pytest.tool
+      kind: required
+      by: 20260928-200757-test-02-pytest-r7
+  test.pytest.selection:
+    title: 选择要运行哪些测试（node id / -k）
+    desc: 用路径、`文件::函数名` 的 node id 或 -k 关键字表达式只跑指定的测试。
+    kind: skill
+    requires:
+    - id: test.pytest.discovery
+      kind: required
+      by: 20260928-200757-test-02-pytest-r7
+  test.pytest.raises:
+    title: pytest.raises
+    desc: 用 `with pytest.raises(异常类型):` 包住代码，断言它应该抛出异常。
+    kind: term
+    requires:
+    - id: test.pytest.assert
+      kind: required
+      by: 20260928-200757-test-02-pytest-r7
+    - id: test.testing.convenient_input
+      kind: helpful
+      by: 20260928-200757-test-02-pytest-r7
+  test.pytest.fixture:
+    title: fixture
+    desc: pytest 按需提供给测试的资源：名字写进测试函数的参数，pytest 在跑测试前把它造好传进来。
+    kind: term
+    requires:
+    - id: test.pytest.tool
+      kind: required
+      by: 20260928-200757-test-02-pytest-r7
+  test.pytest.tmp_path:
+    title: tmp_path fixture
+    desc: pytest 的内置 fixture，给每条测试一个这次调用独有的临时目录（pathlib.Path）。
+    kind: term
+    requires:
+    - id: test.pytest.fixture
+      kind: required
+      by: 20260928-200757-test-02-pytest-r7

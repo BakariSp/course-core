@@ -409,3 +409,258 @@ nodes:
     - id: net.app.socket
       kind: required
       by: 20260928-184838-net-02-http-a
+  net.transport.logical_communication:
+    title: transport-layer services / logical communication（传输层服务 / 逻辑通信）
+    desc: 传输层为运行在不同主机上的两个应用进程提供逻辑通信，数据真正由下面的网络层送过去
+    kind: concept
+    requires:
+    - id: net.overview.layer
+      kind: required
+      by: 20260929-001754-net-03-tcp-r2
+    - id: net.overview.pdu_names
+      kind: helpful
+      by: 20260929-001754-net-03-tcp-r2
+    - id: net.overview.protocol
+      kind: helpful
+      by: 20260929-001754-net-03-tcp-r2
+  net.transport.end_host_only:
+    title: where transport-layer functionality is implemented（传输层在哪里实现）
+    desc: 传输层功能只实现在网络边缘的主机上，路由器与交换机不实现传输层
+    kind: concept
+    requires:
+    - id: net.transport.logical_communication
+      kind: required
+      by: 20260929-001754-net-03-tcp-r2
+    - id: net.overview.end_system
+      kind: helpful
+      by: 20260929-001754-net-03-tcp-r2
+    - id: net.overview.network_core
+      kind: helpful
+      by: 20260929-001754-net-03-tcp-r2
+  net.transport.best_effort_below:
+    title: network layer's best-effort delivery service（网络层的尽力而为服务）
+    desc: 网络层不保证送达、不保证按序、不保证数据未被改动，可靠性只能由端主机自己补
+    kind: concept
+    requires:
+    - id: net.transport.logical_communication
+      kind: required
+      by: 20260929-001754-net-03-tcp-r2
+    - id: net.overview.layer
+      kind: required
+      by: 20260929-001754-net-03-tcp-r2
+  net.transport.mux_demux:
+    title: multiplexing and demultiplexing（复用与解复用）
+    desc: 复用在发送端把多个 socket 的数据加端口号合成 segment，解复用在接收端按首部信息把数据交给正确的 socket
+    kind: concept
+    requires:
+    - id: net.app.socket
+      kind: required
+      by: 20260929-001754-net-03-tcp-r2
+  net.transport.port_number:
+    title: port number（端口号）
+    desc: 端口号是传输层首部里的数字字段，用来在同一台主机内区分不同的 socket
+    kind: term
+    requires:
+    - id: net.transport.mux_demux
+      kind: required
+      by: 20260929-001754-net-03-tcp-r2
+  net.transport.udp_demux:
+    title: UDP demultiplexing（UDP 的解复用）
+    desc: UDP 用（目的 IP，目的端口）决定 socket：不同来源、同一目的端口的 segment 都进同一个 socket
+    kind: concept
+    requires:
+    - id: net.transport.mux_demux
+      kind: required
+      by: 20260929-001754-net-03-tcp-r2
+    - id: net.transport.port_number
+      kind: required
+      by: 20260929-001754-net-03-tcp-r2
+  net.transport.tcp_demux:
+    title: TCP demultiplexing（TCP 的解复用）
+    desc: TCP 用四元组（源 IP、源端口、目的 IP、目的端口）标识 socket：来源不同就进不同的 socket
+    kind: concept
+    requires:
+    - id: net.transport.mux_demux
+      kind: required
+      by: 20260929-001754-net-03-tcp-r2
+    - id: net.transport.port_number
+      kind: required
+      by: 20260929-001754-net-03-tcp-r2
+    - id: net.app.socket_accept
+      kind: helpful
+      by: 20260929-001754-net-03-tcp-r2
+    - id: net.app.connect
+      kind: helpful
+      by: 20260929-001754-net-03-tcp-r2
+  net.transport.udp:
+    title: UDP (User Datagram Protocol)
+    desc: UDP 是无连接的传输层协议，只提供复用/解复用和可选的差错检测
+    kind: concept
+    requires:
+    - id: net.transport.mux_demux
+      kind: required
+      by: 20260929-001754-net-03-tcp-r2
+    - id: net.app.transport_service
+      kind: helpful
+      by: 20260929-001754-net-03-tcp-r2
+  net.transport.udp_segment:
+    title: UDP segment structure（UDP segment 的首部）
+    desc: UDP segment 的首部只有四个字段：源端口号、目的端口号、长度、Internet 校验和
+    kind: term
+    requires:
+    - id: net.transport.udp
+      kind: required
+      by: 20260929-001754-net-03-tcp-r2
+    - id: net.transport.port_number
+      kind: required
+      by: 20260929-001754-net-03-tcp-r2
+  net.transport.tcp:
+    title: TCP (Transmission Control Protocol)
+    desc: TCP 是面向连接的传输层协议：两个进程先握手建立连接，再在这条连接上双向传输字节流
+    kind: concept
+    requires:
+    - id: net.app.transport_service
+      kind: required
+      by: 20260929-001754-net-03-tcp-r2
+    - id: net.app.socket
+      kind: helpful
+      by: 20260929-001754-net-03-tcp-r2
+    - id: net.app.connect
+      kind: helpful
+      by: 20260929-001754-net-03-tcp-r2
+    - id: net.app.socket_accept
+      kind: helpful
+      by: 20260929-001754-net-03-tcp-r2
+  net.transport.tcp_byte_stream:
+    title: TCP byte stream / message boundaries（TCP 字节流与消息边界）
+    desc: TCP 把应用写入的数据看成连续字节流，不保留应用定义的消息边界
+    kind: concept
+    requires:
+    - id: net.transport.tcp
+      kind: required
+      by: 20260929-001754-net-03-tcp-r2
+    - id: net.transport.udp
+      kind: helpful
+      by: 20260929-001754-net-03-tcp-r2
+  net.transport.tcp_segment:
+    title: TCP segment structure（TCP segment 的首部）
+    desc: TCP segment 首部含端口号、序号、ACK 号、ACK 标志位、首部长度、接收方通告窗口、校验和等字段
+    kind: term
+    requires:
+    - id: net.transport.tcp
+      kind: required
+      by: 20260929-001754-net-03-tcp-r2
+    - id: net.transport.port_number
+      kind: required
+      by: 20260929-001754-net-03-tcp-r2
+  net.transport.connection_mgmt:
+    title: TCP connection management messages（SYN / SYNACK / FIN / FINACK / RESET）
+    desc: TCP 用几种专门的 segment 建立连接、拆除连接或报告出错
+    kind: term
+    requires:
+    - id: net.transport.tcp
+      kind: required
+      by: 20260929-001754-net-03-tcp-r2
+  net.transport.tcp_seq_ack:
+    title: TCP sequence number and ACK number（TCP 序号与 ACK 号）
+    desc: TCP 的序号是字节流里的字节索引，ACK 号是接收方期望收到的下一个按序字节的索引
+    kind: concept
+    requires:
+    - id: net.transport.tcp_segment
+      kind: required
+      by: 20260929-001754-net-03-tcp-r2
+  net.transport.cumulative_ack:
+    title: cumulative ACK（累积确认）
+    desc: 累积确认 ACK(n) 的含义是：ACK 号 n 是接收方期望收到的下一个按序字节的索引，它隐含确认了该索引之前的字节都已按序收到，所以一条 ACK 就顶掉了它前面所有的确认
+    kind: concept
+    requires:
+    - id: net.transport.tcp_seq_ack
+      kind: required
+      by: 20260929-001754-net-03-tcp-r2
+  net.transport.pipelining:
+    title: pipelining（流水线）
+    desc: 发送方不等确认就连续发出多个报文，让它们同时在信道里（在途）
+    kind: concept
+    requires:
+    - id: net.transport.cumulative_ack
+      kind: required
+      by: 20260929-001754-net-03-tcp-r2
+  net.transport.tcp_timer:
+    title: TCP retransmission timer management（TCP 的重传定时器）
+    desc: TCP 为已发出但未被确认的数据维护一个重传定时器，超时后重传最早那个未被确认的 segment
+    kind: concept
+    requires:
+    - id: net.transport.tcp_seq_ack
+      kind: required
+      by: 20260929-001754-net-03-tcp-r2
+  net.transport.fast_retransmit:
+    title: fast retransmit / triple duplicate ACK（快速重传）
+    desc: 连续收到三个重复 ACK 时，不等超时就重传被怀疑丢失的 segment
+    kind: concept
+    requires:
+    - id: net.transport.tcp_seq_ack
+      kind: required
+      by: 20260929-001754-net-03-tcp-r2
+    - id: net.transport.cumulative_ack
+      kind: required
+      by: 20260929-001754-net-03-tcp-r2
+  net.transport.flow_control:
+    title: flow control / receiver advertised window（流量控制 / 接收方通告窗口）
+    desc: 接收方用首部里的通告窗口告诉发送方自己还有多少空闲缓冲，发送方据此限制在途数据
+    kind: concept
+    requires:
+    - id: net.transport.tcp_segment
+      kind: required
+      by: 20260929-001754-net-03-tcp-r2
+  net.transport.congestion:
+    title: congestion / cost of congestion（拥塞与其代价）
+    desc: 拥塞是网络内部负载超过链路与路由器缓冲，表现为排队时延变长和丢包
+    kind: concept
+    requires:
+    - id: net.overview.queueing_delay
+      kind: required
+      by: 20260929-001754-net-03-tcp-r2
+    - id: net.transport.flow_control
+      kind: helpful
+      by: 20260929-001754-net-03-tcp-r2
+  net.transport.cwnd:
+    title: congestion window (cwnd)（拥塞窗口）
+    desc: cwnd 限制未被确认的在途数据量，间接决定发送速率
+    kind: concept
+    requires:
+    - id: net.transport.tcp
+      kind: required
+      by: 20260929-001754-net-03-tcp-r2
+    - id: net.transport.pipelining
+      kind: required
+      by: 20260929-001754-net-03-tcp-r2
+  net.transport.mss:
+    title: MSS (maximum segment size)
+    desc: MSS 是一条 TCP segment 能携带的最大数据字节数，拥塞控制里用「加 1 个 MSS」表示窗口增加一条满 segment 的数据量
+    kind: term
+    requires:
+    - id: net.transport.tcp_segment
+      kind: required
+      by: 20260929-001754-net-03-tcp-r2
+  net.transport.aimd:
+    title: AIMD (additive-increase, multiplicative-decrease)
+    desc: 没丢包时每个 RTT 把 cwnd 加 1 个 MSS，检测到丢包时大幅降低窗口
+    kind: concept
+    requires:
+    - id: net.transport.cwnd
+      kind: required
+      by: 20260929-001754-net-03-tcp-r2
+    - id: net.transport.mss
+      kind: required
+      by: 20260929-001754-net-03-tcp-r2
+    - id: net.transport.fast_retransmit
+      kind: required
+      by: 20260929-001754-net-03-tcp-r2
+  net.transport.slow_start:
+    title: TCP slow start（慢启动）
+    desc: 慢启动里 cwnd 从 1 个 MSS 开始，每收到一个确认加 1，每个 RTT 翻一倍，涨到 ssthresh 后转入拥塞避免
+    kind: concept
+    requires:
+    - id: net.transport.aimd
+      kind: required
+      by: 20260929-001754-net-03-tcp-r2
