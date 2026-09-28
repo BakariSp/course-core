@@ -1,0 +1,411 @@
+# 知识图（D-020、D-047）：节点 + 先修关系。状态不写在这里，由证据算出（study.py kg）。
+# requires 每条：id、kind（required 必须先会 / helpful 先会更好）、by（谁说的：运行 id 或 learner）。
+# misconceptions：常见误解 id → desc（说明）、by（谁提的）；题目的得分点用它说明错在哪（D-056）。
+topic: net
+nodes:
+  net.cmd.pwd:
+    title: pwd
+    desc: 打印当前工作目录的绝对路径的 shell 命令，用来回答「我现在站在哪个文件夹里」。
+    kind: skill
+  net.cmd.ls:
+    title: ls
+    desc: 把当前工作目录里的名字（文件和文件夹）列出来的 shell 命令。
+    kind: skill
+  net.cmd.cat:
+    title: cat
+    desc: 把一个文件的内容原样打印到屏幕上的 shell 命令，不修改文件。
+    kind: skill
+  net.overview.internet:
+    title: the Internet（因特网）
+    desc: 由数以十亿计的计算设备互相连接而成、并靠协议规定怎么交换消息的全球性系统，既是设备与连线的集合，也是让各种应用互相通信的平台。
+    kind: concept
+  net.overview.protocol:
+    title: protocol（协议）
+    desc: 通信双方共同遵守的一组规则：规定消息的格式、消息收发的先后顺序，以及发送或收到消息时采取的动作。
+    kind: concept
+    requires:
+    - id: net.overview.internet
+      kind: required
+      by: 20260927-181341-net-01-overview-r2
+  net.overview.link:
+    title: link（链路）
+    desc: 把两台网络设备直接连起来的一段通信通路（网线、光纤、无线信道都算），有固定的传输速率。
+    kind: concept
+  net.overview.end_system:
+    title: end system / host（端系统/主机）
+    desc: 连在因特网边缘、运行网络应用的计算设备，例如台式机、笔记本、手机、服务器。
+    kind: term
+    requires:
+    - id: net.overview.link
+      kind: required
+      by: 20260927-181341-net-01-overview-r2
+  net.overview.access_network:
+    title: access network（接入网）
+    desc: 把端系统接进因特网的那一段网络，按物理链路和技术区分（以太网、有线电视接入、DSL、WiFi、4G LTE），速率量级各不相同。
+    kind: concept
+    requires:
+    - id: net.overview.end_system
+      kind: required
+      by: 20260927-181341-net-01-overview-r2
+    - id: net.overview.link
+      kind: required
+      by: 20260927-181341-net-01-overview-r2
+  net.overview.physical_media:
+    title: physical media（物理媒体）
+    desc: 比特实际经过的传输介质：双绞线、同轴电缆、光纤、无线信道、卫星信道。
+    kind: term
+    requires:
+    - id: net.overview.link
+      kind: required
+      by: 20260927-181341-net-01-overview-r2
+  net.overview.network_core:
+    title: network core（网络核心）
+    desc: 把端系统互相连起来的、由许多交换机和链路构成的那部分网络，负责把数据从源端系统送到目的端系统。
+    kind: concept
+    requires:
+    - id: net.overview.link
+      kind: required
+      by: 20260927-181341-net-01-overview-r2
+  net.overview.packet_switching:
+    title: packet switching（分组交换）
+    desc: 把数据切成一个个分组各自转发、链路能力按需使用而不预先分配的传送方式。
+    kind: concept
+    requires:
+    - id: net.overview.network_core
+      kind: required
+      by: 20260927-181341-net-01-overview-r2
+  net.overview.circuit_switching:
+    title: circuit switching（电路交换）
+    desc: 先为一次通信建立连接、沿途预留固定资源的传送方式；连接存在期间那段电路归它专用。
+    kind: concept
+    requires:
+    - id: net.overview.network_core
+      kind: required
+      by: 20260927-181341-net-01-overview-r2
+  net.overview.forwarding:
+    title: forwarding（转发）
+    desc: 路由器的本地动作：把一个从输入链路到达的分组移动到合适的输出链路上。
+    kind: concept
+    requires:
+    - id: net.overview.packet_switching
+      kind: required
+      by: 20260927-181341-net-01-overview-r2
+  net.overview.routing:
+    title: routing（选路）
+    desc: 确定分组从源到目的所走路径的全局动作，要考虑整条路径而不只是某台交换机本地的情况。
+    kind: concept
+    requires:
+    - id: net.overview.forwarding
+      kind: required
+      by: 20260927-181341-net-01-overview-r2
+  net.overview.network_of_networks:
+    title: network of networks（网络的网络）
+    desc: 因特网不是单一网络，而是许多各自独立运营的网络互相连接而成：边缘是接入网，核心是 tier-1 网络，中间还有区域网络和内容提供商网络。
+    kind: concept
+    requires:
+    - id: net.overview.network_core
+      kind: required
+      by: 20260927-181341-net-01-overview-r2
+  net.overview.delay:
+    title: packet delay（分组时延）
+    desc: 分组在每一跳上花掉的时间，由处理时延、排队时延、传输时延、传播时延四种成分组成。
+    kind: concept
+    requires:
+    - id: net.overview.packet_switching
+      kind: required
+      by: 20260927-181341-net-01-overview-r2
+  net.overview.transmission_delay:
+    title: transmission delay = L/R（传输时延）
+    desc: 把长度为 L 比特的分组推上传输速率为 R bps 的链路所花的时间，等于 L/R。
+    kind: skill
+    requires:
+    - id: net.overview.delay
+      kind: required
+      by: 20260927-181341-net-01-overview-r2
+  net.overview.propagation_delay:
+    title: propagation delay = d/s（传播时延）
+    desc: 比特在物理媒体里走过长度为 d 的链路所需的时间，等于 d/s，s 取光速 3×10^8 m/s。
+    kind: skill
+    requires:
+    - id: net.overview.delay
+      kind: required
+      by: 20260927-181341-net-01-overview-r2
+  net.overview.queueing_delay:
+    title: queuing delay / traffic intensity（排队时延 / 流量强度）
+    desc: 分组在路由器缓冲区里等链路发送所花的时间，主要由流量强度 I = L·a/R 决定；I 越接近 1 越大，缓冲区满时到达的分组被丢弃。
+    kind: skill
+    requires:
+    - id: net.overview.delay
+      kind: required
+      by: 20260927-181341-net-01-overview-r2
+  net.overview.throughput:
+    title: end-to-end throughput / bottleneck link（端到端吞吐量 / 瓶颈链路）
+    desc: 单位时间实际能传过去的数据量，等于路径上容量最小的那条链路（瓶颈链路）的速率；多条流共用一条链路时这条链路把速率平均分给各条流。
+    kind: skill
+    requires:
+    - id: net.overview.transmission_delay
+      kind: required
+      by: 20260927-181341-net-01-overview-r2
+  net.overview.layer:
+    title: protocol layering / protocol stack（协议分层 / 协议栈）
+    desc: 把网络功能按职责分成几层来组织，每层利用下一层提供的服务完成自己的一份工作；因特网协议栈有五层：应用层、运输层、网络层、链路层、物理层。
+    kind: concept
+    requires:
+    - id: net.overview.protocol
+      kind: required
+      by: 20260927-181341-net-01-overview-r2
+  net.overview.encapsulation:
+    title: encapsulation（封装）
+    desc: 发送方从上层拿到数据，加上本层需要的首部字段，再把这整块放进本层分组的载荷字段里。
+    kind: concept
+    requires:
+    - id: net.overview.layer
+      kind: required
+      by: 20260927-181341-net-01-overview-r2
+  net.overview.pdu_names:
+    title: message / segment / datagram / frame / bit
+    desc: 各层交换的数据单元各有专门的名字：应用层 message、运输层 segment、网络层 datagram、链路层 frame、物理层 bit。
+    kind: term
+    requires:
+    - id: net.overview.layer
+      kind: required
+      by: 20260927-181341-net-01-overview-r2
+  net.app.application:
+    title: network application / applications（网络应用）
+    desc: 运行在端系统上、彼此交换报文的程序；按结构分 client-server 与 P2P 两类，通过 socket 这类接口使用运输层服务。
+    kind: concept
+    requires:
+    - id: net.overview.end_system
+      kind: required
+      by: 20260928-184838-net-02-http-a
+    - id: net.overview.protocol
+      kind: required
+      by: 20260928-184838-net-02-http-a
+  net.app.client_server:
+    title: client-server paradigm
+    desc: 有一台一直在运行、IP 地址众所周知的服务器，由客户端主动向它请求服务。
+    kind: concept
+    requires:
+    - id: net.app.application
+      kind: required
+      by: 20260928-184838-net-02-http-a
+  net.app.p2p:
+    title: P2P paradigm（peer-to-peer）
+    desc: 没有一直在线的服务器，应用进程既向它联系的对等方请求服务，也为联系它的对等方提供服务。
+    kind: concept
+    requires:
+    - id: net.app.application
+      kind: required
+      by: 20260928-184838-net-02-http-a
+  net.app.socket:
+    title: socket（套接字 / socket API）
+    desc: 应用进程使用运输层收发数据的接口：应用把要发的数据写进去、从里面读收到的数据。
+    kind: concept
+    requires:
+    - id: net.app.application
+      kind: required
+      by: 20260928-184838-net-02-http-a
+    - id: net.app.transport_service
+      kind: required
+      by: 20260928-184838-net-02-http-a
+  net.app.transport_service:
+    title: transport services provided by UDP and TCP
+    desc: UDP 只提供 best effort 传输，TCP 提供可靠、按序的字节流传输，并附带流量控制和拥塞控制。
+    kind: concept
+    requires:
+    - id: net.app.application
+      kind: required
+      by: 20260928-184838-net-02-http-a
+    - id: net.overview.throughput
+      kind: helpful
+      by: 20260928-184838-net-02-http-a
+    - id: net.overview.protocol
+      kind: helpful
+      by: 20260928-184838-net-02-http-a
+  net.http.http:
+    title: HTTP (HyperText Transfer Protocol)
+    desc: 定义 Web 客户与 Web 服务器之间如何交换报文的应用层协议：客户请求、服务器把对象发回，用服务器端口 80。
+    kind: concept
+    requires:
+    - id: net.app.client_server
+      kind: required
+      by: 20260928-184838-net-02-http-a
+    - id: net.app.transport_service
+      kind: required
+      by: 20260928-184838-net-02-http-a
+    - id: net.overview.protocol
+      kind: helpful
+      by: 20260928-184838-net-02-http-a
+  net.http.message:
+    title: HTTP request/response message（HTTP 报文）
+    desc: 纯文本行组成的消息：请求报文有请求行、首部行、空行和（可选的）实体体，响应报文有状态行、首部行、空行和实体体。
+    kind: concept
+    requires:
+    - id: net.http.http
+      kind: required
+      by: 20260928-184838-net-02-http-a
+  net.http.get:
+    title: HTTP GET
+    desc: HTTP 的请求方法之一，Web 客户用它请求服务器把所请求的对象发送给客户。
+    kind: term
+    requires:
+    - id: net.http.message
+      kind: required
+      by: 20260928-184838-net-02-http-a
+  net.http.headers:
+    title: HTTP header fields（首部字段）
+    desc: 'HTTP 报文里一行行「字段名: 值」，用来给本次请求或响应传参数，例如 Host、Accept、Content-Length、Connection。'
+    kind: term
+    requires:
+    - id: net.http.message
+      kind: required
+      by: 20260928-184838-net-02-http-a
+  net.http.status_code:
+    title: HTTP status code（响应码）与响应短语
+    desc: 服务器在响应报文里给出的一个数字，配套的响应短语说明这次请求的结果，例如 200 OK。
+    kind: term
+    requires:
+    - id: net.http.message
+      kind: required
+      by: 20260928-184838-net-02-http-a
+  net.overview.rtt:
+    title: RTT（round-trip time，往返时间）
+    desc: 从发出一个小请求到收到它响应所经过的这一轮时间，讲义用它当计时单位数一次访问等了几轮。
+    kind: term
+    requires:
+    - id: net.overview.delay
+      kind: helpful
+      by: 20260928-184838-net-02-http-a
+    - id: net.overview.propagation_delay
+      kind: helpful
+      by: 20260928-184838-net-02-http-a
+  net.http.object:
+    title: Web object（对象）
+    desc: 一次 HTTP 请求/响应所传输的一个文件；一个页面是一个基本 HTML 对象加若干被它引用的对象，每个对象各要一次请求/响应。
+    kind: concept
+    requires:
+    - id: net.http.http
+      kind: required
+      by: 20260928-184838-net-02-http-a
+  net.http.persistent:
+    title: persistent / nonpersistent connection（持久连接/非持久连接）
+    desc: 持久连接是一条 TCP 连接上依次传多个对象、用完不马上关；非持久连接每个对象都新建一条 TCP 连接，响应发完就关。
+    kind: concept
+    requires:
+    - id: net.http.message
+      kind: required
+      by: 20260928-184838-net-02-http-a
+  net.http.rtt:
+    title: HTTP 请求-响应时延（数 RTT）
+    desc: 用 RTT 数 HTTP 时延：建 TCP 连接 1 个 RTT，再 1 个 RTT 发请求收响应；持久连接上后续对象不再需要建连接的那一轮。
+    kind: skill
+    requires:
+    - id: net.http.persistent
+      kind: required
+      by: 20260928-184838-net-02-http-a
+    - id: net.overview.rtt
+      kind: required
+      by: 20260928-184838-net-02-http-a
+    - id: net.overview.delay
+      kind: helpful
+      by: 20260928-184838-net-02-http-a
+  net.http.stateless:
+    title: HTTP is stateless
+    desc: 不使用 cookie 时，HTTP 服务器不记得此前与这个客户的交互，客户也不记得此前与服务器的交互。
+    kind: concept
+    requires:
+    - id: net.http.http
+      kind: required
+      by: 20260928-184838-net-02-http-a
+  net.http.cookie:
+    title: HTTP cookie
+    desc: 服务器产生、随响应发给浏览器的一个小标识值，浏览器之后对同一服务器的请求里带上它，服务器靠它找回自己此前存下的信息。
+    kind: concept
+    requires:
+    - id: net.http.stateless
+      kind: required
+      by: 20260928-184838-net-02-http-a
+    - id: net.http.headers
+      kind: required
+      by: 20260928-184838-net-02-http-a
+  net.http.caching:
+    title: Web caching（Web 缓存 / 代理缓存）
+    desc: 网络中一台保存最近请求过的对象副本的服务器，收到对已有副本的请求时直接用自己的副本回复。
+    kind: concept
+    requires:
+    - id: net.http.http
+      kind: required
+      by: 20260928-184838-net-02-http-a
+    - id: net.http.headers
+      kind: required
+      by: 20260928-184838-net-02-http-a
+  net.http.conditional_get:
+    title: conditional GET / If-Modified-Since
+    desc: 一种 GET：客户用 If-Modified-Since 带上缓存副本的时间，服务器只在对象自那个时间之后被改过时才把对象发回来。
+    kind: concept
+    requires:
+    - id: net.http.caching
+      kind: required
+      by: 20260928-184838-net-02-http-a
+    - id: net.http.headers
+      kind: required
+      by: 20260928-184838-net-02-http-a
+  net.http.etag:
+    title: ETag
+    desc: 响应里的一个字符串，唯一标识该资源的一个版本；资源内容改变时 ETag 随之改变。
+    kind: term
+    requires:
+    - id: net.http.headers
+      kind: required
+      by: 20260928-184838-net-02-http-a
+  net.dns.dns:
+    title: DNS (Domain Name System)
+    desc: 分布式、层次化的数据库，也是应用层协议：把主机名翻译成 IP 地址，主机先把查询交给本地 DNS 服务器。
+    kind: concept
+    requires:
+    - id: net.app.application
+      kind: required
+      by: 20260928-184838-net-02-http-a
+    - id: net.overview.protocol
+      kind: helpful
+      by: 20260928-184838-net-02-http-a
+  net.dns.hierarchy:
+    title: DNS server hierarchy（根 / TLD / 权威 / 本地）
+    desc: 根服务器知道怎么到达负责某个域的服务器，TLD 服务器负责一个域并知道该域权威服务器怎么联系，权威服务器给出最终答案，本地 DNS 服务器代表主机去联系它们。
+    kind: concept
+    requires:
+    - id: net.dns.dns
+      kind: required
+      by: 20260928-184838-net-02-http-a
+  net.dns.rr:
+    title: DNS resource record（A / NS / CNAME / MX）
+    desc: DNS 数据库里的条目，每条给一个名字和它的值；类型决定它表示什么（A / NS / CNAME / MX）。
+    kind: term
+    requires:
+    - id: net.dns.hierarchy
+      kind: required
+      by: 20260928-184838-net-02-http-a
+  net.dns.caching:
+    title: DNS caching
+    desc: 把查到的记录在本地 DNS 服务器里保存一段时间，在有效期内的相同查询直接用缓存回答。
+    kind: concept
+    requires:
+    - id: net.dns.hierarchy
+      kind: required
+      by: 20260928-184838-net-02-http-a
+  net.app.connect:
+    title: socket connect()
+    desc: 客户端调用的一次操作：向指定的服务器发起，建立客户端与服务器之间的 TCP 连接。
+    kind: term
+    requires:
+    - id: net.app.socket
+      kind: required
+      by: 20260928-184838-net-02-http-a
+  net.app.socket_accept:
+    title: socket accept()
+    desc: TCP 服务器端调用的一次操作：为刚到的这个客户新建一个服务器端 socket，之后往这个新 socket 写数据就发给那个客户。
+    kind: term
+    requires:
+    - id: net.app.socket
+      kind: required
+      by: 20260928-184838-net-02-http-a

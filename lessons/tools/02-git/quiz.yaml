@@ -1,0 +1,184 @@
+schema_version: 1
+unit: tools-02-git
+title: Git 与版本控制：从快照到 bisect（单元题）
+source: tools-02-git 课程页（出题 agent，D-041）
+questions:
+- id: q1
+  checker: choice
+  concept: tools.cmd.git.init
+  level: 1
+  prompt: 你在一个装着 `app/`、`notes/`、`README.md` 的新目录里跑了 `git init -b main`，紧接着跑了 `git status`。下面哪一句最准确？
+  options:
+  - 这个目录现在是一个 Git 仓库，主线的名字叫 main；`git status` 会提示还没有任何提交，并把这三个路径都列在 `Untracked files:` 下
+  - 这个目录现在是一个 Git 仓库，`git status` 会显示暂存区里已经有这三个文件，等你去提交
+  - '`git init -b main` 顺便把这三个文件提交成了第一次提交，消息叫 main'
+  - 因为目录里的文件还没被 Git 记录，`git init -b main` 会拒绝执行
+- id: q2
+  checker: choice
+  concept: tools.git.staging
+  level: 2
+  prompt: '假设 `app/grader.py` 上次提交时里面有 `MAX_SCORE = 100`。接下来你按顺序做了四件事：
+
+
+    1. 在文件里把满分改成 80；
+
+    2. 跑 `git add app/grader.py`；
+
+    3. 又在同一个文件末尾加了一个 `hint_for` 函数，之后没有再跑任何 `git add`；
+
+    4. 跑 `git commit -m "r4: 满分改成 80"`。
+
+
+    这次提交里的 `app/grader.py` 是什么内容？'
+  options:
+  - 有「满分改成 80」，没有 `hint_for`——提交的就是第 2 步 `git add` 那一刻的版本
+  - 「满分改成 80」和 `hint_for` 两处改动都在里面
+  - 两处改动都不在里面，因为第 3 步之后没有再 `git add`
+  - Git 会拒绝提交，并提示「工作目录里还有未暂存的改动」
+- id: q3
+  checker: fill
+  concept: tools.cmd.git.diff
+  level: 2
+  prompt: '你已经 `git add app/grader.py`，改动进了暂存区。现在你想看到**包括已暂存部分在内**的当前全部改动，于是写：
+
+
+    ```
+
+    git diff ____ -- app/grader.py
+
+    ```
+
+
+    空里填一个词。'
+- id: q4
+  checker: choice
+  concept: tools.git.head
+  level: 2
+  prompt: '你在 nanoteacher 的练习仓库里敲 `git log --oneline`，看到：
+
+
+    ```
+
+    3f9c1a2 (HEAD -> feature/hint) r5: 加提示函数
+
+    b7d2e10 (main) r4: 满分改成 80
+
+    9a1f0c3 r1: 判分模块初版
+
+    ```
+
+
+    下面哪一句对？'
+  options:
+  - 你现在站在 feature/hint 分支上，HEAD 指的是 3f9c1a2 这次提交；main 分支的最新提交是 b7d2e10，9a1f0c3 是更早的历史
+  - 你现在站在 main 上，3f9c1a2 是 main 的最新提交
+  - HEAD 是仓库里最旧那次提交 9a1f0c3 的别名，`git show HEAD` 会读出第一次提交
+  - 这三行说明仓库里有三个分支，每个分支各有一个提交
+- id: q5
+  checker: choice
+  concept: tools.cmd.git.bisect-run
+  level: 4
+  kind: bug
+  prompt: '你的 nanoteacher 仓库里，某次提交让自检开始失败，你想用 `git bisect run python check.py` 找出第一次弄坏它的提交。AI 给了你两版 check.py：
+
+
+    - 版本 A：自检失败时先 `print("FAIL")`，然后 `sys.exit(1)`；
+
+    - 版本 B：同样会 `print("FAIL")`，但脚本最后正常结束（没有 `sys.exit(1)`，也没有别的非零退出）。
+
+
+    你拿**版本 B** 去跑 `git bisect run python check.py`。会发生什么？'
+  options:
+  - Git 只看退出码：每个版本都被判成 good，bisect 缩小不到真正弄坏的那次，最后给出的 first bad commit 就是你一开始用 `git bisect bad` 标的那个提交
+  - Git 会扫描 print 出来的内容，看到 `FAIL` 就判这个版本 bad，照样能找出真正弄坏的那次提交
+  - bisect 会报错，说 `python` 不是可执行文件，所以根本不跑
+  - 每个版本都被判成 bad，结论会指向仓库里最早的那次提交
+- id: q6
+  checker: terminal
+  concept: tools.git.conflict
+  level: 3
+  prompt: '练习仓库里已经有一条 main 历史，还有一个分支 `feature/hint`。请你：
+
+
+    1. 在 main 上执行 `git merge feature/hint`；
+
+    2. 它会在 `app/grader.py` 里留下冲突（`<<<<<<<` / `=======` / `>>>>>>>` 三行标记）；
+
+    3. 解决冲突：删掉三行标记，`MAX_SCORE` 用 80 或 120 都行，但**不能把分支加上的 `hint_for` 函数弄丢**；
+
+    4. 用 `git add` + `git commit -m "merge: 合入 feature/hint 的提示改动"` 把合并做完。
+
+
+    这个练习终端里没有编辑器，可以用 `cat app/grader.py` 看内容、用 `echo 文本 > 文件`（`>>` 追加）把文件重写出来。做完 `git status` 应该是干净的。'
+  setup:
+  - git init -q -b main
+  - mkdir -p app
+  - echo 'MAX_SCORE = 100' > app/grader.py
+  - echo 'def grade(answers):' >> app/grader.py
+  - echo '    return 0' >> app/grader.py
+  - git add app/grader.py
+  - 'git commit -q -m ''r1: 判分模块初版'''
+  - git switch -q -c feature/hint
+  - echo 'MAX_SCORE = 120' > app/grader.py
+  - echo 'def hint_for(question):' >> app/grader.py
+  - echo '    return 0' >> app/grader.py
+  - echo 'def grade(answers):' >> app/grader.py
+  - echo '    return 0' >> app/grader.py
+  - git add app/grader.py
+  - 'git commit -q -m ''r5: 加提示函数，满分提到 120'''
+  - git switch -q main
+  - echo 'MAX_SCORE = 80' > app/grader.py
+  - echo 'def grade(answers):' >> app/grader.py
+  - echo '    return 0' >> app/grader.py
+  - git add app/grader.py
+  - 'git commit -q -m ''r4: 满分改成 80，去掉加分'''
+- id: q7
+  checker: terminal
+  concept: tools.cmd.git.reset
+  level: 3
+  prompt: '练习仓库现在的状态：`app/grader.py` 你已经改好（文件里是 `MAX_SCORE = 90`）并且已经 `git add` 过；目录里还有 `.env`（里面是真实的 API key）和 `notes/draft.md`（草稿），两者都还没被
+    Git 记录。
+
+
+    把下面三件事做完：
+
+
+    1. 写一个 `.gitignore`，让 `.env` 和 `notes/` 以后都不出现在 `git status` 里（文件本身要留在磁盘上）；
+
+    2. 把 `app/grader.py` 从暂存区拿出来：这次**先不提交**它的改动，但也**不要丢掉**改好的代码；
+
+    3. 只把 `.gitignore` 提交进仓库，提交消息写 `加 .gitignore：本机密钥和草稿不进仓库`。
+
+
+    做完用 `git status` 确认。这个终端没有编辑器，用 `echo 文本 > 文件`（`>>` 追加）写文件。'
+  setup:
+  - git init -q -b main
+  - mkdir -p app notes
+  - echo 'MAX_SCORE = 80' > app/grader.py
+  - echo 'API_KEY=sk-live-123' > .env
+  - 'echo ''draft: 先记着'' > notes/draft.md'
+  - git add app/grader.py
+  - 'git commit -q -m ''r1: 判分模块初版'''
+  - echo 'MAX_SCORE = 90' > app/grader.py
+  - git add app/grader.py
+- id: q8
+  checker: short
+  concept: tools.cmd.git.blame
+  level: 4
+  kind: project
+  prompt: '在 nanoteacher 里，你想查清 `app/grader.py` 里 `def hint_for(question):` 这一行的来历，拿到两条看起来矛盾的线索：
+
+
+    - `git log -S "hint_for" -- app/grader.py` 的输出（从新到旧排）**最下面**那一行是 `r3: 加提示函数`；
+
+    - `git blame app/grader.py` 里 `def hint_for(question):` 这一行行首那个提交哈希，对应的提交消息是 `r6: hint_for 改名并支持多答案`。
+
+
+    请回答三个问题：
+
+
+    1. 为什么两条命令报的是不同的提交？它们各自在回答什么问题？
+
+    2. 要确认「这一行现在的内容是谁写的（哪次提交最后改了它）」，该看哪条命令的结果？
+
+    3. 要确认「`hint_for` 这个名字最早是哪次提交引入这个文件的」，该用哪条命令、取输出的哪一行？'

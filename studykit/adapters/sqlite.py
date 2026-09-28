@@ -274,6 +274,25 @@ class SqliteStore:
             c.execute("INSERT INTO publication (ts, unit, plan_id, actor_type, actor_id) VALUES (?,?,?,?,?)",
                       (ts, unit, pid, actor.type, actor.id))
 
+    def add_version(self, unit: str, plan: dict, ts: str) -> None:
+        """只存一版、不发布（通过检验、等学习者选的新版本，D-044）。"""
+        pid = (plan.get("provenance") or {}).get("run")
+        if not pid:
+            raise ValueError("课程计划缺少 provenance.run（版本 id）")
+        with self._tx() as c:
+            c.execute("INSERT OR IGNORE INTO plan_version (unit, plan_id, body, created_at) VALUES (?,?,?,?)",
+                      (unit, pid, json.dumps(plan, ensure_ascii=False), ts))
+
+    def versions(self, unit: str) -> list[dict]:
+        with self._conn() as c:
+            rows = c.execute("SELECT v.plan_id, v.created_at, v.body, MAX(p.seq) AS last_pub FROM plan_version v"
+                             " LEFT JOIN publication p USING (unit, plan_id) WHERE v.unit = ?"
+                             " GROUP BY v.plan_id ORDER BY v.created_at, v.plan_id", (unit,)).fetchall()
+        current = max((r["last_pub"] for r in rows if r["last_pub"] is not None), default=None)
+        return [{"plan_id": r["plan_id"], "created_at": r["created_at"], "title": json.loads(r["body"]).get("title", ""),
+                 "published": r["last_pub"] is not None, "current": current is not None and r["last_pub"] == current}
+                for r in rows]
+
     def current(self, unit: str) -> dict | None:
         with self._conn() as c:
             r = c.execute("SELECT v.body FROM publication p JOIN plan_version v USING (unit, plan_id)"

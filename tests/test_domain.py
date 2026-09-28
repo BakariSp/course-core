@@ -3,8 +3,9 @@ import datetime as dt
 
 import pytest
 
-from studykit.domain import artifact, course_eval, knowledge, mastery, plan, plan_check, progress, timeline
-from studykit.domain.assessment import CORE_CHECKERS, grade_choice_checkpoint, grade_fill_checkpoint
+from studykit.domain import artifact, course_eval, curriculum, knowledge, mastery, plan, plan_check, profile, progress, timeline
+from studykit.domain.assessment import (CORE_CHECKERS, grade_choice_checkpoint, grade_fill_checkpoint, rubric_units,
+                                        score_parts)
 from studykit.domain.errors import CourseError, InvalidEvidence, InvalidId
 from studykit.domain.evidence import Actor, Evidence, Verb, VerbRegistry, learner_actor
 from studykit.domain.harness import (Run, Variant, assemble_prompt, parse_judge, part_diffs, prep_stage,
@@ -103,7 +104,7 @@ def test_practice_summary_counts_runs_until_first_full_pass():
 # ---------- 节点状态 ----------
 
 def test_node_state_from_evidence():
-    nodes = {"t.a": knowledge.Node("t.a", "A"), "t.b": knowledge.Node("t.b", "B", requires=["t.a"])}
+    nodes = {"t.a": knowledge.Node("t.a", "A"), "t.b": knowledge.Node("t.b", "B", [knowledge.Edge("t.a")])}
     evs = [ev("observed", "node", "t.a", actor=TUTOR, nodes=("t.a",), payload={"polarity": "weak", "note": "跟不上"}),
            ev("voted_term", "node", "t.b", nodes=("t.b",), payload={"vote": "known"}),
            ev("answered", "checkpoint", "u#0.0", ts="2026-09-02T10:00:00", score=1.0, ok=True, nodes=("t.a",),
@@ -128,10 +129,14 @@ def test_answers_override_with_mastery_rules_and_orphans_are_reported():
 
 
 def test_graph_validation():
-    nodes = {"t.a": knowledge.Node("t.a", "A", requires=["t.b"]), "t.b": knowledge.Node("t.b", "B", requires=["t.a"]),
-             "Bad": knowledge.Node("Bad", "x", kind="nope", requires=["t.zz"])}
+    E = knowledge.Edge
+    nodes = {"t.a": knowledge.Node("t.a", "A", edges=[E("t.b")]), "t.b": knowledge.Node("t.b", "B", edges=[E("t.a", "helpful")]),
+             "Bad": knowledge.Node("Bad", "x", kind="nope", edges=[E("t.zz"), E("t.a", "maybe")])}
     errors = "\n".join(knowledge.validate(nodes))
-    assert "格式不对：Bad" in errors and "kind" in errors and "t.zz 不存在" in errors and "有环" in errors
+    assert "格式不对：Bad" in errors and "kind" in errors and "t.zz 不存在" in errors
+    assert "有环" in errors                                  # 更好的先修也算进环（D-047）
+    assert "t.a 的 kind 只能是 required/helpful" in errors
+    assert nodes["t.a"].requires == ["t.b"] and nodes["t.b"].requires == [] and nodes["t.b"].prerequisites == ["t.a"]
 
 
 # ---------- 课程计划、进度 ----------
@@ -231,6 +236,59 @@ def test_fill_blanks_and_regex():
     assert fill.view({"prompt": "记忆、____、应用、____"}, None) == {"blanks": 2}
     assert fill.check({}, {"blanks": [["理解"], ["分析"]]}, None, [" 理解 ", "综合"]).score == 0.5
     assert fill.check({}, {"accept": [r"o\(n\^?2\)"], "regex": True}, None, ["O(n^2)"]).score == 1.0
+
+
+# ---------- 得分点（D-056 第 1 步）：每个选项 / 空 / 评分点 / 检查项挂知识点和误解 ----------
+
+NET_Q = {"id": "q1", "checker": "choice", "concept": "net.internet", "level": 1, "multi": True, "options": list("abcd")}
+NET_KEY = {"answer": ["A", "D"], "parts": [
+    {"concept": "net.internet"}, {"concept": "net.internet", "misconception": "composition_vs_usage"},
+    {"concept": "net.internet", "misconception": "composition_vs_usage"}, {"concept": "net.api", "level": 2}]}
+
+
+def test_choice_scores_each_option_and_tags_the_misconception_of_the_wrong_ones():
+    v = CORE_CHECKERS[0].check(NET_Q, NET_KEY, None, ["A", "C"])
+    assert v.score == 0.0 and v.units == [1.0, 1.0, 0.0, 0.0]        # A 选对、B 没选对、C 选错、D 漏选
+    assert score_parts(NET_Q, NET_KEY, v.units) == [
+        {"concept": "net.internet", "level": 1, "score": 1.0},
+        {"concept": "net.internet", "level": 1, "score": 1.0},
+        {"concept": "net.internet", "level": 1, "score": 0.0, "misconception": "composition_vs_usage"},
+        {"concept": "net.api", "level": 2, "score": 0.0}]
+
+
+def test_fill_rubric_and_untagged_questions():
+    q = {"concept": "net.delay", "level": 2}
+    key = {"blanks": [["0.4"], ["15"]], "parts": [{"concept": "net.tx"}, {"concept": "net.prop", "misconception": "unit"}]}
+    v = CORE_CHECKERS[1].check(q, key, None, ["0.4", "0.0067"])
+    assert v.units == [1.0, 0.0]
+    assert score_parts(q, key, v.units)[1] == {"concept": "net.prop", "level": 2, "score": 0.0, "misconception": "unit"}
+    # 简答题：每条评分点按"得分 / 满分"；加分项没拿到就不算这一个得分点
+    rkey = {"rubric": ["a（0.5）", "b（0.5）", "加分"], "parts": [{"concept": "net.a"}, {"concept": "net.b"}, {"concept": "net.c"}]}
+    units = rubric_units(rkey, [{"id": 1, "score": 0.5}, {"id": 2, "score": 0.1}])
+    assert units == [1.0, 0.2, None]
+    assert [p["concept"] for p in score_parts(q, rkey, units)] == ["net.a", "net.b"]
+    assert score_parts(q, {"blanks": [["x"]]}, [1.0]) == []                    # 没标得分点：照旧按整题
+    assert score_parts(q, key, [1.0]) == []                                   # 个数对不上：不猜
+
+
+def test_mastery_reads_each_scoring_point_when_the_answer_has_them():
+    parts = [{"concept": "net.internet", "level": 1, "score": 1.0}, {"concept": "net.internet", "level": 1, "score": 0.0,
+             "misconception": "composition_vs_usage"}, {"concept": "net.api", "level": 2, "score": 1.0}]
+    a = ev("answered", score=0.0, nodes=("net.internet", "net.api"), payload={"level": 1, "response": "x", "parts": parts})
+    stats = mastery.concept_stats([a], dt.date(2026, 9, 1))
+    assert stats["net.api"]["mastery"] == 2 and stats["net.internet"]["failing_levels"] == [1]
+    assert stats["net.internet"]["recent_mistakes"][0]["misconceptions"] == ["composition_vs_usage"]
+    # 简答题：得分点在批改里
+    p = answer(None, concept="net.x", level=4)
+    g = ev("graded", actor=TUTOR, score=0.5, caused_by=p.id, nodes=("net.x", "net.y"), payload={"note": "", "parts": [
+        {"concept": "net.x", "level": 4, "score": 1.0}, {"concept": "net.y", "level": 4, "score": 0.0}]})
+    stats = mastery.concept_stats([p, g], dt.date(2026, 9, 1))
+    assert stats["net.x"]["mastery"] == 4 and stats["net.y"]["failing_levels"] == [4]
+
+
+def test_misconceptions_are_facts_on_the_node():
+    nodes = {"t.a": knowledge.Node("t.a", "A", misconceptions={"mixes_up": "把 x 当成 y", "Bad Id": "x"})}
+    assert "误解 id 格式不对：t.a/Bad Id" in "\n".join(knowledge.validate(nodes))
 
 
 # ---------- 学习时长 ----------
@@ -407,3 +465,153 @@ def test_finding_addresses_point_into_the_artifact():
     assert artifact.Finding.from_dict(f.as_dict()) == f and f.severity == "block"
     with pytest.raises(ValueError):
         artifact.Finding("/x", "y", "z", severity="maybe")
+
+
+# ---------- 课程定义、学习者资料（D-047） ----------
+
+COURSE = {
+    "schema_version": 2, "goal": "能验证 AI 代码",
+    "stages": [{"id": "verify", "title": "能验证", "weeks": [1, 8], "pass": "修一个 bug"}],
+    "subjects": [{"id": "tools", "title": "开发工具", "priority": "P0", "stage": "verify", "goal": "会 bisect",
+                  "sources": [{"id": "ms", "title": "Missing Semester", "url": "https://www.missing.csail.mit.edu/2026/", "kind": "course"}],
+                  "project_links": [{"where": "atomic_write_text", "concept": "原子写"}],
+                  "units": [{"id": "tools-01-shell", "title": "Shell", "requests": ["零基础"],
+                             "sources": [{"ref": "ms", "url": "https://missing.csail.mit.edu/2026/course-shell/", "note": "第 1 讲"}]},
+                            {"id": "tools-02-git", "title": "Git"}]},
+                 {"id": "dist", "title": "分布式", "units": [{"id": "dist-01", "title": "Kleppmann", "scope": "open"}]}],
+}
+
+
+def test_course_definition_is_structured_and_ordered():
+    c = curriculum.parse_course(COURSE)
+    assert c.unit_ids() == ["tools-01-shell", "tools-02-git", "dist-01"]
+    s, u = c.find("tools-01-shell")
+    assert (s.id, u.requests, u.scope_open) == ("tools", ("零基础",), False) and c.find("dist-01")[1].scope_open
+    assert c.hosts() == {"missing.csail.mit.edu"}                          # 白名单跟着材料走，www. 去掉
+    brief = curriculum.render_for_brief(c, "tools-01-shell")
+    assert "会 bisect" in brief and "能验证" in brief and "course-shell" in brief and "第 1 讲" in brief and "atomic_write_text" in brief
+    with pytest.raises(curriculum.CourseDefError):
+        c.find("tools-99-x")
+
+
+def test_path_sets_learning_order_across_subjects_and_destination_names_capabilities():
+    """D-048：终点能力 + 学习路径。路径里的单元按路径顺序在前，没进路径的按学科顺序排在后面。"""
+    c = curriculum.parse_course({**COURSE, "path": ["dist-01", "tools-01-shell"],
+                                 "destination": [{"id": "C1", "can": "读路径", "accept": "走一遍提交答案", "units": ["tools-02-git"]}]})
+    assert c.unit_ids() == ["dist-01", "tools-01-shell", "tools-02-git"]
+    assert c.path == ("dist-01", "tools-01-shell")
+    assert c.destination == (curriculum.Capability("C1", "读路径", "走一遍提交答案", ("tools-02-git",)),)
+    assert c.serves("tools-02-git") == ["C1"] and c.serves("dist-01") == []
+    assert curriculum.parse_course(COURSE).path == ()                       # 没写路径 = 学科顺序
+
+
+@pytest.mark.parametrize("patch, msg", [
+    ({"path": ["tools-99-x"]}, "路径"),
+    ({"path": ["tools-01-shell", "tools-01-shell"]}, "路径"),
+    ({"destination": [{"id": "C1", "can": "x", "accept": "y", "units": ["nope-01-x"]}]}, "C1"),
+    ({"destination": [{"id": "C1", "can": "x", "accept": "y"}, {"id": "C1", "can": "z", "accept": "w"}]}, "重复"),
+    ({"destination": [{"id": "C1", "can": "x"}]}, "accept"),
+])
+def test_path_and_destination_reject_mistakes(patch, msg):
+    with pytest.raises(curriculum.CourseDefError, match=msg):
+        curriculum.parse_course({**COURSE, **patch})
+
+
+@pytest.mark.parametrize("patch, msg", [
+    ({"schema_version": 1}, "schema_version"),
+    ({"subjects": [{"id": "a", "units": [{"id": "a-01-x"}, {"id": "a-01-x"}]}]}, "单元 id 重复"),
+    ({"subjects": [{"id": "a", "units": [{"id": "a-01-x", "sources": [{"ref": "nope"}]}]}]}, "ref"),
+    ({"subjects": [{"id": "a", "stage": "later", "units": []}]}, "stage"),
+    ({"subjects": [{"id": "a", "units": [{"id": "a-01-x", "scope": "maybe"}]}]}, "scope"),
+])
+def test_course_definition_rejects_mistakes(patch, msg):
+    with pytest.raises(curriculum.CourseDefError, match=msg):
+        curriculum.parse_course({**COURSE, **patch})
+
+
+@pytest.mark.parametrize("kw, key, tags", [
+    (dict(scope_open=True, prep_stage="todo", passed=None, sections=None), "ask", []),
+    (dict(scope_open=False, prep_stage="todo", passed=None, sections=None), "queued", []),
+    (dict(scope_open=False, prep_stage="preparing", passed=None, sections=None), "preparing", []),
+    (dict(scope_open=False, prep_stage="escalated", passed=None, sections=None), "blocked", []),
+    (dict(scope_open=False, prep_stage="interrupted", passed=None, sections=None), "blocked", []),
+    (dict(scope_open=False, prep_stage="published", passed=0, sections=7), "ready", []),
+    (dict(scope_open=False, prep_stage="ready", passed=6, sections=7), "learning", ["new_version"]),
+    (dict(scope_open=False, prep_stage="published", passed=7, sections=7, quiz_answered=0, quiz_questions=8), "quiz", []),
+    (dict(scope_open=False, prep_stage="published", passed=7, sections=7, quiz_answered=8, quiz_questions=8), "done", []),
+    (dict(scope_open=False, prep_stage="preparing", passed=2, sections=7), "learning", []),   # 能学的单元在备新版本：还是能学
+])
+def test_unit_state_merges_prep_and_learning(kw, key, tags):
+    assert curriculum.unit_state(**kw) == {"key": key, "tags": tags}
+
+
+def test_next_steps_finish_what_you_started_then_quiz_then_start():
+    st = lambda k: {"key": k, "tags": []}  # noqa: E731
+    units = [{"id": "a", "state": st("done")}, {"id": "b", "state": st("quiz")}, {"id": "c", "state": st("learning")},
+             {"id": "d", "state": st("ready")}]
+    assert [(n["unit"], n["kind"]) for n in curriculum.next_steps(units)] == [("c", "continue"), ("b", "quiz")]
+    assert all(n["reason"] for n in curriculum.next_steps(units))
+    assert [n["unit"] for n in curriculum.next_steps([{"id": "d", "state": st("ready")}])] == ["d"]
+    assert curriculum.queued_after(["a", "b"], "b") == "a" and curriculum.queued_after(["a"], "a") is None
+
+
+def test_profile_only_has_what_the_learner_wrote():
+    p = profile.parse_profile({"schema_version": 1, "about": {"identity": "产品经理", "goal": "验证 AI 代码"}, "time": {"session_minutes": 30}})
+    assert p.time == {"session_minutes": 30, "unit_budget_minutes": 180, "max_new_terms": 5}
+    assert p.render() == "- 身份：产品经理\n- 学习目标：验证 AI 代码"
+    with pytest.raises(profile.ProfileError, match="不认识"):
+        profile.parse_profile({"schema_version": 1, "about": {"observations": "他会……"}})
+
+
+def test_taught_nodes_come_from_plan_nodes_and_section_terms():
+    p = plan_v2()
+    p["nodes"] = [{"id": "tools.cmd.grep"}, {"id": "tools.shell.x"}]
+    assert plan.taught_nodes(p) == ["tools.cmd.grep", "tools.shell.x", "tools.cmd.pwd", "tools.cmd.cd"]
+
+
+
+# ---------- 路线上学过的、回顾（D-051） ----------
+
+def _state(nid, st):
+    return knowledge.NodeState(knowledge.Node(nid, nid.split(".")[-1], "", "term"), st, [])
+
+
+def test_studied_is_what_earlier_units_taught_minus_mastered_and_weak():
+    states = {"tools.cmd.ls": _state("tools.cmd.ls", "learning"), "tools.cmd.cd": _state("tools.cmd.cd", "mastered"),
+              "tools.cmd.rm": _state("tools.cmd.rm", "weak")}
+    taught_by = {"tools.cmd.ls": ["tools-01-shell"], "tools.cmd.cd": ["tools-01-shell"], "tools.cmd.rm": ["tools-01-shell"],
+                 "tools.cmd.cat": ["tools-01-shell"], "git.commit": ["tools-02-git"]}
+    assert knowledge.studied(states, taught_by, ["tools-01-shell"]) == ["tools.cmd.ls", "tools.cmd.cat"]  # 按教的顺序；没证据的也算学过
+
+
+def test_recall_rules_and_studied_terms_are_not_new():
+    from tests.conftest import plan_v2
+    limits = plan_check.PlanLimits("tools-02-git", max_new_terms=1, studied={"tools.cmd.cd", "tools.cmd.ls"},
+                                   existing_nodes={"tools.cmd.cd": "cd", "tools.cmd.ls": "ls"})
+    p = plan_v2()
+    s0 = p["parts"][0]["sections"][0]                      # 两个词：pwd（新）、cd（学过）→ 新词只算 1 个
+    at0 = lambda: [f.what for f in plan_check.plan_findings(p, limits) if f.address == "/sections/0"]  # noqa: E731
+    assert not any("新词" in w and "超过" in w for w in at0())
+    s0["recall"] = [{"id": "tools.cmd.ls", "term": "ls", "explain": "列出目录里的文件名"}]
+    assert not any("回顾" in w for w in at0())
+    s0["recall"] = [{"id": "tools.cmd.pwd", "term": "pwd", "explain": "x"}]
+    assert any("回顾" in w and "学过" in w for w in at0())
+    s0["recall"] = [{"id": "tools.cmd.ls", "term": "ls", "explain": "x"}] * 3
+    assert any("回顾" in w and "2" in w for w in at0())
+    s0["recall"] = [{"id": "tools.cmd.ls", "term": "ls"}]
+    assert any("回顾" in w and "explain" in w for w in at0())
+
+
+def test_recall_belongs_to_the_outline_and_is_recorded_as_evidence():
+    from studykit.domain.plan import client_event, fill_stub
+    stub = {"title": "t", "minutes": 10, "goal": "g", "mission": "m", "terms": [],
+            "recall": [{"id": "tools.cmd.ls", "term": "ls", "explain": "列文件"}]}
+    assert fill_stub(stub, {"explain": "e", "recall": []})["recall"] == stub["recall"]       # 写节的人改不了
+    assert "recall" not in plan_check.section_schema({"choice": ""}, {}, {})["properties"]
+    plan = {"parts": [{"title": "P", "sections": [{**stub, "explain": "e"}]}]}
+    ev = client_event(plan, "tools-02-git", 0, "recall", node="tools.cmd.ls", remembered=False)
+    assert (ev.verb, ev.object_id, ev.nodes, ev.payload) == ("recalled", "tools.cmd.ls", ("tools.cmd.ls",), {"remembered": False})
+    with pytest.raises(CourseError):
+        client_event(plan, "tools-02-git", 0, "recall", node="tools.cmd.pwd", remembered=True)
+    with pytest.raises(CourseError):
+        client_event(plan, "tools-02-git", 0, "recall", node="tools.cmd.ls", remembered="yes")

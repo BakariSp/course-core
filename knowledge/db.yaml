@@ -1,0 +1,269 @@
+# 知识图（D-020、D-047）：节点 + 先修关系。状态不写在这里，由证据算出（study.py kg）。
+# requires 每条：id、kind（required 必须先会 / helpful 先会更好）、by（谁说的：运行 id 或 learner）。
+# misconceptions：常见误解 id → desc（说明）、by（谁提的）；题目的得分点用它说明错在哪（D-056）。
+topic: db
+nodes:
+  db.relational.database:
+    title: database（数据库）
+    desc: 数据库是彼此相关、用来建模现实世界某个方面的数据的组织化集合。
+    kind: concept
+  db.relational.table:
+    title: table / relation（表 / 关系）
+    desc: 表是二维结构：固定数量的命名列（属性）和任意数量的行（元组），每行是一个实体实例。
+    kind: concept
+    requires:
+    - id: db.relational.database
+      kind: required
+      by: 20260928-190111-db-01-sqlbolt-r2
+  db.sql.sql:
+    title: SQL
+    desc: 在关系型数据库上声明要什么数据的查询语言，由数据库系统决定怎么执行。
+    kind: concept
+    requires:
+    - id: db.relational.database
+      kind: required
+      by: 20260928-190111-db-01-sqlbolt-r2
+  db.sql.query:
+    title: query（查询）
+    desc: 一条 SQL 语句：声明要找什么数据、在哪张表找、可选地怎么变换。
+    kind: concept
+    requires:
+    - id: db.sql.sql
+      kind: required
+      by: 20260928-190111-db-01-sqlbolt-r2
+    - id: db.relational.table
+      kind: required
+      by: 20260928-190111-db-01-sqlbolt-r2
+  db.sql.select:
+    title: SELECT ... FROM
+    desc: SELECT 列出结果要哪些列，FROM 指定从哪张表取；* 表示所有列。
+    kind: concept
+    requires:
+    - id: db.sql.query
+      kind: required
+      by: 20260928-190111-db-01-sqlbolt-r2
+  db.sql.where:
+    title: WHERE 子句
+    desc: 对每一行检查一个条件，只把条件为真的行放进结果。
+    kind: concept
+    requires:
+    - id: db.sql.select
+      kind: required
+      by: 20260928-190111-db-01-sqlbolt-r2
+  db.sql.operator.numeric:
+    title: 数值比较运算符
+    desc: =、!=、<、<=、>、>= 在条件里比较两个值，结果为真或假。
+    kind: term
+    requires:
+    - id: db.sql.where
+      kind: required
+      by: 20260928-190111-db-01-sqlbolt-r2
+  db.sql.between:
+    title: BETWEEN ... AND ...
+    desc: 判断数值是否落在两个端点之间（含端点）；NOT BETWEEN 取反。
+    kind: term
+    requires:
+    - id: db.sql.operator.numeric
+      kind: required
+      by: 20260928-190111-db-01-sqlbolt-r2
+  db.sql.in:
+    title: IN (...) / NOT IN (...)
+    desc: 判断一个值是否等于给定列表里的某个值 / 不等于任何一个。
+    kind: term
+    requires:
+    - id: db.sql.operator.numeric
+      kind: required
+      by: 20260928-190111-db-01-sqlbolt-r2
+  db.sql.and_or:
+    title: AND / OR
+    desc: 把多个条件拼成一个条件的逻辑连接词。
+    kind: term
+    requires:
+    - id: db.sql.where
+      kind: required
+      by: 20260928-190111-db-01-sqlbolt-r2
+  db.sql.string_literal:
+    title: 字符串字面量与引号
+    desc: 文本值必须用引号括起来，解析器才能把它和 SQL 关键字分开。
+    kind: term
+    requires:
+    - id: db.sql.where
+      kind: required
+      by: 20260928-190111-db-01-sqlbolt-r2
+  db.sql.like:
+    title: LIKE / NOT LIKE 与通配符 %、_
+    desc: 对文本列做不区分大小写的模式匹配；% 匹配任意长的一段字符，_ 匹配恰好一个字符。
+    kind: term
+    requires:
+    - id: db.sql.where
+      kind: required
+      by: 20260928-190111-db-01-sqlbolt-r2
+  db.sql.distinct:
+    title: DISTINCT
+    desc: 去掉结果里重复的行，只保留各列取值组合不同的行。
+    kind: term
+    requires:
+    - id: db.sql.select
+      kind: required
+      by: 20260928-190111-db-01-sqlbolt-r2
+  db.sql.order_by:
+    title: ORDER BY ... ASC/DESC
+    desc: 按指定列的值对结果排序，ASC 升序、DESC 降序。
+    kind: concept
+    requires:
+    - id: db.sql.select
+      kind: required
+      by: 20260928-190111-db-01-sqlbolt-r2
+  db.sql.limit_offset:
+    title: LIMIT / OFFSET
+    desc: LIMIT 限制结果最多返回几行，OFFSET 指定从第几行开始取。
+    kind: term
+    requires:
+    - id: db.sql.order_by
+      kind: required
+      by: 20260928-190111-db-01-sqlbolt-r2
+  db.relational.normalization:
+    title: normalization（规范化）
+    desc: 把一个实体的数据拆到多张互不重叠的表里，避免在同一张表里重复存同一份数据。
+    kind: concept
+    requires:
+    - id: db.relational.table
+      kind: required
+      by: 20260928-190111-db-01-sqlbolt-r2
+  db.relational.primary_key:
+    title: primary key（主键）
+    desc: 唯一标识表里一行的属性（或属性组合），同时是一条不重复的约束。
+    kind: concept
+    requires:
+    - id: db.relational.table
+      kind: required
+      by: 20260928-190111-db-01-sqlbolt-r2
+  db.relational.foreign_key:
+    title: foreign key（外键）
+    desc: 取值必须对应另一张表里某个（通常是主键的）取值，用值表示两张表的关联。
+    kind: concept
+    requires:
+    - id: db.relational.primary_key
+      kind: required
+      by: 20260928-190111-db-01-sqlbolt-r2
+  db.sql.join:
+    title: INNER JOIN ... ON
+    desc: 按 ON 的键相等条件把两张表匹配上的行拼成一行，匹配不上的行不出现。
+    kind: concept
+    requires:
+    - id: db.relational.primary_key
+      kind: required
+      by: 20260928-190111-db-01-sqlbolt-r2
+    - id: db.sql.where
+      kind: required
+      by: 20260928-190111-db-01-sqlbolt-r2
+  db.sql.outer_join:
+    title: LEFT / RIGHT / FULL JOIN
+    desc: 保留一侧（或两侧）全部行的连接，另一侧没有匹配的列填 NULL。
+    kind: concept
+    requires:
+    - id: db.sql.join
+      kind: required
+      by: 20260928-190111-db-01-sqlbolt-r2
+  db.sql.null:
+    title: NULL 与 IS NULL / IS NOT NULL
+    desc: NULL 表示值未知，不能用 = 比较，判断要用 IS NULL / IS NOT NULL。
+    kind: concept
+    requires:
+    - id: db.sql.outer_join
+      kind: required
+      by: 20260928-190111-db-01-sqlbolt-r2
+  db.sql.expression:
+    title: expression（表达式）
+    desc: 在查询里对列值做运算写出的式子，能在结果里算出新值。
+    kind: concept
+    requires:
+    - id: db.sql.select
+      kind: required
+      by: 20260928-190111-db-01-sqlbolt-r2
+  db.sql.alias:
+    title: AS（别名）
+    desc: 给表达式、列或表起一个输出名或短名，方便辨认和引用。
+    kind: term
+    requires:
+    - id: db.sql.expression
+      kind: required
+      by: 20260928-190111-db-01-sqlbolt-r2
+  db.sql.aggregate:
+    title: aggregate function（聚合函数）
+    desc: 把一组行的值汇总成一个值的函数：COUNT、MIN、MAX、AVG、SUM。
+    kind: term
+    requires:
+    - id: db.sql.alias
+      kind: required
+      by: 20260928-190111-db-01-sqlbolt-r2
+  db.sql.group_by:
+    title: GROUP BY
+    desc: 按某列的值把行分组，聚合函数在每组内单独算，每个不同取值出一行。
+    kind: concept
+    requires:
+    - id: db.sql.aggregate
+      kind: required
+      by: 20260928-190111-db-01-sqlbolt-r2
+  db.sql.having:
+    title: HAVING
+    desc: 作用在分组之后的组上的过滤条件，写法跟 WHERE 一样。
+    kind: concept
+    requires:
+    - id: db.sql.group_by
+      kind: required
+      by: 20260928-190111-db-01-sqlbolt-r2
+  db.sql.order_of_execution:
+    title: order of execution（查询执行顺序）
+    desc: 完整 SELECT 各子句的执行顺序：FROM/JOIN → WHERE → GROUP BY → HAVING → SELECT → DISTINCT → ORDER BY → LIMIT/OFFSET。
+    kind: concept
+    requires:
+    - id: db.sql.having
+      kind: required
+      by: 20260928-190111-db-01-sqlbolt-r2
+    - id: db.sql.distinct
+      kind: required
+      by: 20260928-190111-db-01-sqlbolt-r2
+    - id: db.sql.limit_offset
+      kind: required
+      by: 20260928-190111-db-01-sqlbolt-r2
+  db.sql.schema:
+    title: schema（模式）
+    desc: 描述每张表的结构：有哪些列、每列允许什么数据类型（以及可选的约束和默认值）。
+    kind: concept
+    requires:
+    - id: db.relational.table
+      kind: required
+      by: 20260928-190111-db-01-sqlbolt-r2
+  db.sql.datatype:
+    title: data type（数据类型）
+    desc: 规定一列里能存哪一类值，是列定义的一部分。
+    kind: term
+    requires:
+    - id: db.sql.schema
+      kind: required
+      by: 20260928-190111-db-01-sqlbolt-r2
+  db.ddl.insert:
+    title: INSERT INTO ... VALUES
+    desc: 往表里加行的语句：声明写进哪张表、填哪些列、每行是什么值。
+    kind: term
+    requires:
+    - id: db.sql.schema
+      kind: required
+      by: 20260928-190111-db-01-sqlbolt-r2
+  db.dml.update:
+    title: UPDATE ... SET ... WHERE
+    desc: 把满足 WHERE 条件的每一行的指定列设成新值。
+    kind: term
+    requires:
+    - id: db.ddl.insert
+      kind: required
+      by: 20260928-190111-db-01-sqlbolt-r2
+  db.dml.delete:
+    title: DELETE FROM ... WHERE
+    desc: 删除满足 WHERE 条件的行，只删数据、表结构留下。
+    kind: term
+    requires:
+    - id: db.dml.update
+      kind: required
+      by: 20260928-190111-db-01-sqlbolt-r2

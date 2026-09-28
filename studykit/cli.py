@@ -11,7 +11,9 @@
     python study.py time add --start 2026-09-25T15:30 --minutes 48 --note "看第 1 讲视频"   补录一段学习
     python study.py kg summary|related <单元>|show <节点>|check   学习者模型的分级查询（D-020）
     python study.py kg observe <节点> weak|ok "原话"   导师观察：把"哪里没跟上"记到具体节点上
+    python study.py note "<观察>" [--source "Shell 第 4 节"]   老师对学习者的观察（讲法、容易过载的地方；D-047，学习者能推翻）
     python study.py course-eval <单元> [--plan <版本>] [--write]   课程评测：预测 vs 实际（D-019）
+    python study.py quiz <单元>                  出单元题（学完最后一节时也会在后台自动开始，D-041）
     python study.py kb [<单元> ...]               单元知识库（和学习者无关，已有的不重做；不写单元就是全部，并行，D-040）
     python study.py prepare <单元> [--from <运行>]   备课：生成 → 检验 → 定点修复 → 通过就发布（D-035，PRD_V2 阶段 A）
     python study.py agent run|eval|review|report|publish ...   助教 agent（D-022）
@@ -96,6 +98,11 @@ def cmd_time(app, args) -> None:
     print(app.learner.time_report(args.days))
 
 
+def cmd_note(app, args) -> None:
+    e = app.learner.note_strategy(args.text, args.source or "")
+    print(f"记下了（{e.id}）。学习者在「我的 · 资料」里能看到，觉得不对可以推翻。")
+
+
 def cmd_kg(app, args) -> None:
     if args.action == "summary":
         print(app.learner.summary())
@@ -156,6 +163,10 @@ def cmd_agent(app, args) -> None:
         print("已发布。" + (f"知识图新增 {len(added)} 个节点：{', '.join(added)}" if added else ""))
 
 
+def _costs(rd: dict) -> str:
+    return " + ".join(f"{k} ${round(v, 4)}" for k, v in (rd.get("costs") or {}).items())
+
+
 def cmd_prepare(app, args) -> None:
     last = [""]
 
@@ -167,7 +178,7 @@ def cmd_prepare(app, args) -> None:
     r = app.prep.prepare(args.unit, start_from=args.start_from, model=args.model, report=show)
     for i, rd in enumerate(r["rounds"], 1):
         blocks = [f for f in rd["findings"] if f["severity"] == "block"]
-        print(f"第 {i} 轮  {rd['run']}  ${rd['cost_usd']}  " + (f"{len(blocks)} 个阻断" if blocks else "通过"))
+        print(f"第 {i} 轮  {rd['run']}  ${rd['cost_usd']}（{_costs(rd)}）  " + (f"{len(blocks)} 个阻断" if blocks else "通过"))
         for f in blocks:
             print(f"    [{f['evaluator']}] {f['address'] or '整份'}：{f['what'][:160]}")
     state = {"accepted": "通过", "escalated": "需要你决定"}[r["status"]]
@@ -175,10 +186,28 @@ def cmd_prepare(app, args) -> None:
                                                else "没有发布（已经开始学的单元要你确认）" if r["status"] == "accepted" else ""))
 
 
+def cmd_quiz(app, args) -> None:
+    last = [""]
+
+    def show(p):
+        if p.get("label") != last[0]:
+            last[0] = p.get("label")
+            print(f"  … {last[0]}", flush=True)
+
+    r = app.quizzes.prepare(args.unit, model=args.model, report=show)
+    for i, rd in enumerate(r["rounds"], 1):
+        blocks = [f for f in rd["findings"] if f["severity"] == "block"]
+        print(f"第 {i} 轮  {rd['run']}  ${rd['cost_usd']}（{_costs(rd)}）  " + (f"{len(blocks)} 个阻断" if blocks else "通过"))
+        for f in blocks:
+            print(f"    [{f['evaluator']}] {f['address'] or '整套'}：{f['what'][:160]}")
+    print(("通过，已发布：/?lesson=" + r["lesson"]) if r["status"] == "accepted" else "需要你决定", f"共 ${r['spent_usd']}")
+
+
 def cmd_kb(app, args) -> None:
-    units = args.units or [u.get("id") for t in (app.content.syllabus().get("topics") or {}).values()
-                            for u in t.get("units") or []]
-    done = app.prep.build_knowledge(units, model=args.model)
+    units = args.units or [u.id for _, u in app.content.course().units() if not u.scope_open]
+    if args.redo and not args.units:
+        raise SystemExit("--redo 要写明重做哪几个单元（知识库每个都要花钱调研）")
+    done = app.prep.build_knowledge(units, model=args.model, redo=args.redo)
     for u in units:
         state = "已有" if u not in done else ("好了" if done[u] else "没交出来")
         print(f"{u}：{state}")
@@ -239,6 +268,11 @@ def parser() -> argparse.ArgumentParser:
     t.add_argument("--minutes", type=float, help="add：多少分钟")
     t.add_argument("--note", help="add：学了什么")
     t.set_defaults(func=cmd_time)
+    n = sub.add_parser("note", help="记一条老师对学习者的观察（D-047）")
+    n.add_argument("text", help="观察：讲法、容易过载的地方……写成一句话，不用人称")
+    n.add_argument("--source", help="出处：哪一节、哪次对话")
+    n.set_defaults(func=cmd_note)
+
     k = sub.add_parser("kg", help="学习者模型：知识图、薄弱点（分级查询）")
     k.add_argument("action", choices=["summary", "related", "show", "observe", "check"])
     k.add_argument("target", nargs="?", help="related：单元 id；show / observe：节点 id")
@@ -255,9 +289,14 @@ def parser() -> argparse.ArgumentParser:
     pr.add_argument("--from", dest="start_from", help="从已有的一次 tutor-prep 运行接着检验和修复（不重新生成）")
     pr.add_argument("--model", help="临时换生成模型")
     pr.set_defaults(func=cmd_prepare)
+    qz = sub.add_parser("quiz", help="出单元题：出题 agent → 检验 → 只修被指出的题 → 通过就发布（D-041）")
+    qz.add_argument("unit")
+    qz.add_argument("--model", help="临时换出题模型")
+    qz.set_defaults(func=cmd_quiz)
     kb = sub.add_parser("kb", help="单元知识库：读讲义整理知识点，和学习者无关，已有的不重做（D-040）")
     kb.add_argument("units", nargs="*", help="单元 id；不写就是课程清单里所有单元（并行）")
     kb.add_argument("--model", help="临时换模型")
+    kb.add_argument("--redo", action="store_true", help="已有知识库也重做（调研方法变了时用，要写明单元）")
     kb.set_defaults(func=cmd_kb)
     lb = sub.add_parser("lab", help="练习场")
     lb.add_argument("action", choices=["verify"])

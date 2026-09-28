@@ -11,7 +11,7 @@ import pytest
 
 from studykit import web
 from studykit.app.observe import LINKS, NODES
-from studykit.domain import course_eval, knowledge, mastery, progress
+from studykit.domain import course_eval, knowledge, mastery, profile, progress
 from studykit.domain.evidence import CORE_VERBS
 from studykit.specs.cs_practice import VERBS as CS_VERBS
 
@@ -21,6 +21,7 @@ READERS = {
     "node_state": [knowledge.signals],
     "progress": [progress.project, progress.hints_used, progress.last_hint],
     "course_eval": [course_eval.evaluate],
+    "profile": [profile.observations],
 }
 
 

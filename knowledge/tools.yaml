@@ -1,523 +1,619 @@
-# 知识图（D-020）：节点 + 先修关系。状态不写在这里，由证据算出（study.py kg）。
-schema_version: 1
+# 知识图（D-020、D-047）：节点 + 先修关系。状态不写在这里，由证据算出（study.py kg）。
+# requires 每条：id、kind（required 必须先会 / helpful 先会更好）、by（谁说的：运行 id 或 learner）。
 topic: tools
 nodes:
   tools.shell.roles:
     title: 终端、shell、命令的分工
     desc: 终端负责显示和接收按键；shell 读你敲的一行字、改写后启动程序；命令是被启动的那个程序。
     kind: concept
-    units:
-    - tools-01-shell
   tools.shell.expansion:
     title: shell 先改写命令行再启动程序
     desc: 变量、通配符、引号都由 shell 在启动程序之前处理，程序收到的是改写后的参数。
     kind: concept
     requires:
-    - tools.shell.roles
-    units:
-    - tools-01-shell
+    - id: tools.shell.roles
+      kind: required
+      by: tutor
   tools.shell.glob:
     title: 通配符（glob）
     desc: '*.txt 这类写法由 shell 展开成匹配的文件名列表，再交给命令。'
     kind: concept
     requires:
-    - tools.shell.expansion
-    units:
-    - tools-01-shell
+    - id: tools.shell.expansion
+      kind: required
+      by: tutor
   tools.shell.quoting:
     title: 引号改变谁来解释
     desc: 单引号里的内容 shell 原样交给程序；双引号里 shell 仍会展开变量。
     kind: concept
     requires:
-    - tools.shell.expansion
-    units:
-    - tools-01-shell
+    - id: tools.shell.expansion
+      kind: required
+      by: tutor
   tools.cmd.sed:
     title: sed
     desc: 按规则逐行改写文本的命令，最常用 s/旧/新/g 替换。
     kind: term
     requires:
-    - tools.shell.quoting
-    units:
-    - tools-01-shell
+    - id: tools.shell.quoting
+      kind: required
+      by: tutor
   tools.shell.options:
     title: 选项常常切换输出模式
     desc: -l、-c 这类选项不只是修饰，常常让命令改成输出另一种东西（如 grep -l 只打印文件名）。
     kind: concept
     requires:
-    - tools.shell.roles
-    units:
-    - tools-01-shell
+    - id: tools.shell.roles
+      kind: required
+      by: tutor
   tools.shell.metachars:
     title: 语法字符和展开字符
     desc: ; | > 是 shell 用来切分、连接命令的语法字符；* $ ~ 是 shell 要展开的字符。两类都要加引号或反斜杠才能原样交给程序。
     kind: concept
     requires:
-    - tools.shell.expansion
-    units:
-    - tools-01-shell
+    - id: tools.shell.expansion
+      kind: required
+      by: tutor
   tools.cmd.find:
     title: find
     desc: 按名字、类型等条件在目录树里找文件；-exec 对每个结果执行一条命令。
     kind: term
     requires:
-    - tools.shell.glob
-    - tools.shell.metachars
-    units:
-    - tools-01-shell
+    - id: tools.shell.glob
+      kind: required
+      by: tutor
+    - id: tools.shell.metachars
+      kind: required
+      by: tutor
   tools.cmd.grep:
     title: grep
     desc: 在文本里找包含某个模式的行。
     kind: term
     requires:
-    - tools.shell.options
-    units:
-    - tools-01-shell
+    - id: tools.shell.options
+      kind: required
+      by: tutor
   tools.shell.cwd:
     title: 当前工作目录（pwd / cd）
     desc: shell 记着“我现在站在哪个目录”：pwd 打印它，cd 改变它，提示符里显示它，相对路径从它开始算
     kind: concept
     requires:
-    - tools.shell.roles
-    units:
-    - tools-01-shell
+    - id: tools.shell.roles
+      kind: required
+      by: 20260926-135626-tools-01-shell
   tools.shell.paths:
     title: 路径：绝对、相对、~ 与 . ..
     desc: 以 / 开头是绝对路径、否则是相对路径；~ 是家目录，. 是当前目录，.. 是上一级目录
     kind: concept
     requires:
-    - tools.shell.cwd
-    units:
-    - tools-01-shell
+    - id: tools.shell.cwd
+      kind: required
+      by: 20260926-135626-tools-01-shell
   tools.cmd.ls:
     title: ls
     desc: 列出目录里的名字（末尾带 / 的是目录）
     kind: term
     requires:
-    - tools.shell.cwd
-    units:
-    - tools-01-shell
+    - id: tools.shell.cwd
+      kind: required
+      by: 20260926-135626-tools-01-shell
   tools.shell.stdstreams:
     title: 标准输入与标准输出
     desc: 程序默认的打印通道和读入通道，默认连着终端；重定向和管道都是在改这两条通道接到了哪里
     kind: concept
     requires:
-    - tools.shell.roles
-    units:
-    - tools-01-shell
+    - id: tools.shell.roles
+      kind: required
+      by: 20260926-135626-tools-01-shell
   tools.shell.redirection:
     title: 重定向（> / >> / <）
     desc: shell 在启动程序之前打开文件，把程序的标准输出或标准输入接到它上面；> 清空重写，>> 追加
     kind: concept
     requires:
-    - tools.shell.stdstreams
-    units:
-    - tools-01-shell
+    - id: tools.shell.stdstreams
+      kind: required
+      by: 20260926-135626-tools-01-shell
   tools.cmd.cat:
     title: cat
     desc: 把文件内容原样打到标准输出；也常用来把标准输入的内容原样转出去
     kind: term
     requires:
-    - tools.shell.stdstreams
-    units:
-    - tools-01-shell
+    - id: tools.shell.stdstreams
+      kind: required
+      by: 20260926-135626-tools-01-shell
   tools.shell.pipe:
     title: 管道（|）
     desc: 把左边程序的标准输出接到右边程序的标准输入；没给文件参数的程序就从标准输入读
     kind: concept
     requires:
-    - tools.shell.stdstreams
-    units:
-    - tools-01-shell
+    - id: tools.shell.stdstreams
+      kind: required
+      by: 20260926-135626-tools-01-shell
   tools.cmd.head:
     title: head
     desc: 打印文件的头几行（head -n 5 文件）
     kind: term
     requires:
-    - tools.shell.stdstreams
-    units:
-    - tools-01-shell
+    - id: tools.shell.stdstreams
+      kind: required
+      by: 20260926-135626-tools-01-shell
   tools.cmd.tail:
     title: tail
     desc: 打印文件的末尾几行（tail -n 5 文件），看最新的事故最常用
     kind: term
     requires:
-    - tools.shell.stdstreams
-    units:
-    - tools-01-shell
+    - id: tools.shell.stdstreams
+      kind: required
+      by: 20260926-135626-tools-01-shell
   tools.shell.trace:
     title: set：用 -x 看到 shell 改写后的命令
     desc: 打开 shell 的“直播”，在每条命令执行前打印它实际要执行的内容（展开之后的样子）；set +x 关掉
     kind: skill
     requires:
-    - tools.shell.expansion
-    units:
-    - tools-01-shell
+    - id: tools.shell.expansion
+      kind: required
+      by: 20260926-135626-tools-01-shell
   tools.cmd.echo:
     title: echo
     desc: 把参数打到标准输出；观察“shell 到底交给了程序什么”最好用的工具
     kind: term
     requires:
-    - tools.shell.expansion
-    units:
-    - tools-01-shell
+    - id: tools.shell.expansion
+      kind: required
+      by: 20260926-135626-tools-01-shell
   tools.shell.exitcode:
     title: 退出码与 $?
     desc: 程序用 0–255 的数字报告成败，0 是成功；$? 是上一条命令的退出码，会被下一条命令覆盖
     kind: concept
     requires:
-    - tools.shell.roles
-    units:
-    - tools-01-shell
+    - id: tools.shell.roles
+      kind: required
+      by: 20260926-135626-tools-01-shell
   tools.cmd.test:
     title: test 与 [ ]
     desc: 检查一个条件的裁判：只把答案放进退出码、不打印任何东西；[ … ] 是它的另一种写法
     kind: term
     requires:
-    - tools.shell.exitcode
-    units:
-    - tools-01-shell
+    - id: tools.shell.exitcode
+      kind: required
+      by: 20260926-135626-tools-01-shell
   tools.shell.conditional:
     title: if 判断语句
     desc: bash 的判断语句：如果条件成立（退出码 0）就走 then，否则走 else
     kind: concept
     requires:
-    - tools.cmd.test
-    units:
-    - tools-01-shell
+    - id: tools.cmd.test
+      kind: required
+      by: 20260926-135626-tools-01-shell
   tools.shell.help:
     title: 查命令文档：--help 与 help
     desc: 一般程序用 命令 --help 看用法；bash 内建命令用 help 名字（Git Bash 没有 man）
     kind: skill
     requires:
-    - tools.shell.roles
-    units:
-    - tools-01-shell
+    - id: tools.shell.roles
+      kind: required
+      by: 20260926-135626-tools-01-shell
   tools.cmd.git:
     title: git
     desc: 版本控制的程序，用法是 git <子命令> <参数>。
     kind: term
-    units:
-    - tools-02-git
   tools.git.repo:
     title: 仓库（repository）
     desc: 一个普通目录 + 旁边的 .git 目录；这个目录的全部历史都存在 .git 里。
     kind: concept
     requires:
-    - tools.cmd.git
-    units:
-    - tools-02-git
+    - id: tools.cmd.git
+      kind: required
+      by: 20260926-220228-tools-02-git-r2
   tools.cmd.git.init:
     title: git init
     desc: 把当前目录变成仓库：只多出一个 .git（-b main 顺便把主线名字定成 main），已有文件不动。
     kind: term
     requires:
-    - tools.git.repo
-    - tools.shell.cwd
-    units:
-    - tools-02-git
+    - id: tools.git.repo
+      kind: required
+      by: 20260926-220228-tools-02-git-r2
+    - id: tools.shell.cwd
+      kind: required
+      by: 20260926-220228-tools-02-git-r2
   tools.cmd.git.status:
     title: git status
     desc: 不修改任何东西，只报告：哪些改动在暂存区、哪些没暂存、哪些文件还没被记录（untracked）。
     kind: term
     requires:
-    - tools.git.repo
-    units:
-    - tools-02-git
+    - id: tools.git.repo
+      kind: required
+      by: 20260926-220228-tools-02-git-r2
   tools.cmd.python:
     title: python
     desc: 启动 Python 程序：python check.py 让 Python 执行这个文件；脚本用退出码报告成败。
     kind: term
     requires:
-    - tools.shell.roles
-    - tools.shell.exitcode
-    units:
-    - tools-02-git
+    - id: tools.shell.roles
+      kind: required
+      by: 20260926-220228-tools-02-git-r2
+    - id: tools.shell.exitcode
+      kind: required
+      by: 20260926-220228-tools-02-git-r2
   tools.git.snapshot:
     title: 快照与提交（commit）
     desc: Git 记录历史的方式：一次记下当时所有被跟踪文件的完整内容，一份快照就是一次提交。
     kind: concept
     requires:
-    - tools.git.repo
-    units:
-    - tools-02-git
+    - id: tools.git.repo
+      kind: required
+      by: 20260926-220228-tools-02-git-r2
   tools.git.staging:
     title: 暂存区（staging area）
     desc: 工作区和下一次提交之间的一块中间地带，一份“下次要装什么”的清单。
     kind: concept
     requires:
-    - tools.git.snapshot
-    units:
-    - tools-02-git
+    - id: tools.git.snapshot
+      kind: required
+      by: 20260926-220228-tools-02-git-r2
   tools.cmd.git.add:
     title: git add
     desc: 把指定路径的当前内容放进暂存区（可以一次给多个路径）。
     kind: term
     requires:
-    - tools.git.staging
-    units:
-    - tools-02-git
+    - id: tools.git.staging
+      kind: required
+      by: 20260926-220228-tools-02-git-r2
   tools.cmd.git.commit:
     title: git commit
     desc: 把暂存区里的内容做成一次提交（快照）；-m 后面跟这次提交的消息。
     kind: term
     requires:
-    - tools.git.staging
-    units:
-    - tools-02-git
+    - id: tools.git.staging
+      kind: required
+      by: 20260926-220228-tools-02-git-r2
   tools.cmd.git.reset:
     title: git reset <路径>
     desc: 把路径从暂存区拿回工作区：不进这次提交了，但改动还在。
     kind: term
     requires:
-    - tools.git.staging
-    units:
-    - tools-02-git
+    - id: tools.git.staging
+      kind: required
+      by: 20260926-220228-tools-02-git-r2
   tools.cmd.git.log:
     title: git log
     desc: 打印历史（谁、什么时候、为什么）；--oneline 一行一条，--graph --all 画出分叉。
     kind: term
     requires:
-    - tools.git.snapshot
-    units:
-    - tools-02-git
+    - id: tools.git.snapshot
+      kind: required
+      by: 20260926-220228-tools-02-git-r2
   tools.git.revision:
     title: 提交哈希（指名一个提交）
     desc: 按内容算出来的十六进制指纹，可以只用前几位来指名某一个提交。
     kind: concept
     requires:
-    - tools.git.snapshot
-    units:
-    - tools-02-git
+    - id: tools.git.snapshot
+      kind: required
+      by: 20260926-220228-tools-02-git-r2
   tools.git.head:
     title: HEAD
     desc: Git 里表示“我现在站在哪个提交上”的特殊名字；HEAD~1 是往前一次提交。
     kind: concept
     requires:
-    - tools.git.revision
-    units:
-    - tools-02-git
+    - id: tools.git.revision
+      kind: required
+      by: 20260926-220228-tools-02-git-r2
   tools.cmd.git.show:
     title: git show
     desc: 打印某一次提交的消息和它改了什么（补丁）。
     kind: term
     requires:
-    - tools.cmd.git.log
-    - tools.git.revision
-    units:
-    - tools-02-git
+    - id: tools.cmd.git.log
+      kind: required
+      by: 20260926-220228-tools-02-git-r2
+    - id: tools.git.revision
+      kind: required
+      by: 20260926-220228-tools-02-git-r2
   tools.cmd.git.diff:
     title: git diff
     desc: 比较文件内容；不带参数时只显示还没进暂存区的改动（全都要看用 git diff HEAD）。
     kind: term
     requires:
-    - tools.git.staging
-    units:
-    - tools-02-git
+    - id: tools.git.staging
+      kind: required
+      by: 20260926-220228-tools-02-git-r2
   tools.git.branch:
     title: 分支（branch）
     desc: 指向某个提交的一个可移动的名字；历史的分叉靠它，主线通常叫 main。
     kind: concept
     requires:
-    - tools.git.head
-    units:
-    - tools-02-git
+    - id: tools.git.head
+      kind: required
+      by: 20260926-220228-tools-02-git-r2
   tools.cmd.git.branch:
     title: git branch
     desc: 列出所有分支（带 * 的是当前所在）；git branch <名字> 创建新分支但不切过去。
     kind: term
     requires:
-    - tools.git.branch
-    units:
-    - tools-02-git
+    - id: tools.git.branch
+      kind: required
+      by: 20260926-220228-tools-02-git-r2
   tools.cmd.git.switch:
     title: git switch
     desc: 切到另一个分支：目录里的文件会变成那个分支的样子。
     kind: term
     requires:
-    - tools.git.branch
-    units:
-    - tools-02-git
+    - id: tools.git.branch
+      kind: required
+      by: 20260926-220228-tools-02-git-r2
   tools.cmd.git.merge:
     title: git merge
     desc: 把指定分支的改动合进当前所在的分支；两边改了同一行时会停下来说有冲突。
     kind: term
     requires:
-    - tools.git.branch
-    units:
-    - tools-02-git
+    - id: tools.git.branch
+      kind: required
+      by: 20260926-220228-tools-02-git-r2
   tools.git.conflict:
     title: 合并冲突与冲突标记
     desc: <<<<<<<、=======、>>>>>>> 三行把两边的版本围起来，等你自己决定留哪个；删掉标记并 git add 才算解决。
     kind: concept
     requires:
-    - tools.cmd.git.merge
-    units:
-    - tools-02-git
+    - id: tools.cmd.git.merge
+      kind: required
+      by: 20260926-220228-tools-02-git-r2
   tools.cmd.git.blame:
     title: git blame
     desc: 逐行打印文件：每一行最后一次是被哪个提交改的（哈希）、谁改的、什么时候。
     kind: term
     requires:
-    - tools.cmd.git.log
-    - tools.git.revision
-    units:
-    - tools-02-git
+    - id: tools.cmd.git.log
+      kind: required
+      by: 20260926-220228-tools-02-git-r2
+    - id: tools.git.revision
+      kind: required
+      by: 20260926-220228-tools-02-git-r2
   tools.cmd.git.log-s:
     title: git log -S
     desc: 按内容找历史：找出让某段文字出现或消失的那些提交（用 -- 限定路径）。
     kind: term
     requires:
-    - tools.cmd.git.log
-    units:
-    - tools-02-git
+    - id: tools.cmd.git.log
+      kind: required
+      by: 20260926-220228-tools-02-git-r2
   tools.cmd.git.bisect:
     title: git bisect
     desc: 在已知的好提交和坏提交之间二分查找：start 开始，bad / good 报告每次结果，reset 回到原处。
     kind: term
     requires:
-    - tools.git.revision
-    - tools.shell.exitcode
-    units:
-    - tools-02-git
+    - id: tools.git.revision
+      kind: required
+      by: 20260926-220228-tools-02-git-r2
+    - id: tools.shell.exitcode
+      kind: required
+      by: 20260926-220228-tools-02-git-r2
   tools.cmd.git.bisect-run:
     title: git bisect run
     desc: 让 Git 每换一个版本就自动跑一条命令，按退出码（0 好、非 0 坏）判断，直到找出第一个坏提交。
     kind: term
     requires:
-    - tools.cmd.git.bisect
-    - tools.shell.exitcode
-    units:
-    - tools-02-git
+    - id: tools.cmd.git.bisect
+      kind: required
+      by: 20260926-220228-tools-02-git-r2
+    - id: tools.shell.exitcode
+      kind: required
+      by: 20260926-220228-tools-02-git-r2
   tools.cmd.git.restore:
     title: git restore
     desc: 把文件恢复成上次提交的样子，未提交的改动会丢掉。
     kind: term
     requires:
-    - tools.git.snapshot
-    - tools.cmd.git.status
-    units:
-    - tools-02-git
+    - id: tools.git.snapshot
+      kind: required
+      by: 20260926-220228-tools-02-git-r2
+    - id: tools.cmd.git.status
+      kind: required
+      by: 20260926-220228-tools-02-git-r2
   tools.git.gitignore:
     title: .gitignore
     desc: 仓库根目录里的忽略清单，一行一个模式；只管还没被跟踪的文件，也不会删掉你的文件。
     kind: concept
     requires:
-    - tools.cmd.git.status
-    units:
-    - tools-02-git
+    - id: tools.cmd.git.status
+      kind: required
+      by: 20260926-220228-tools-02-git-r2
   tools.debug.reproduce:
     title: 复现（reproduce）
     desc: 用固定的输入和步骤让故障稳定重现出来：能重现，才能反复试、才能确认自己真的修好了。
     kind: concept
     requires:
-    - tools.shell.roles
-    units:
-    - tools-03-debug
+    - id: tools.shell.roles
+      kind: required
+      by: 20260926-231525-tools-03-debug-r2
   tools.debug.logging:
     title: 日志（logging）
     desc: 程序在运行时把自己做了什么事写下来的记录（写到文件或终端）：不用改代码、不用盯着看，事后就能回看当时发生了什么。
     kind: concept
     requires:
-    - tools.shell.roles
-    units:
-    - tools-03-debug
+    - id: tools.shell.roles
+      kind: required
+      by: 20260926-231525-tools-03-debug-r2
   tools.debug.traceback:
     title: 报错信息（traceback）
     desc: 程序崩掉时打印的那几行：最下面一行是错误类型和消息，往上每两行是调用它的那一层——文件名、行号、那行代码。
     kind: concept
     requires:
-    - tools.cmd.python
-    units:
-    - tools-03-debug
+    - id: tools.cmd.python
+      kind: required
+      by: 20260926-231525-tools-03-debug-r2
   tools.debug.callstack:
     title: 调用栈（call stack）
     desc: 程序此刻走到了哪个位置、它是被谁调进来的：A 调用 B、B 调用 C，串起来就是调用栈；报错信息就是把它打印出来的样子。
     kind: concept
     requires:
-    - tools.debug.traceback
-    units:
-    - tools-03-debug
+    - id: tools.debug.traceback
+      kind: required
+      by: 20260926-231525-tools-03-debug-r2
   tools.debug.print:
     title: 打印调试（print debugging）
     desc: 在可疑的位置插一条打印语句，把中间值打到屏幕上，用实际输出代替猜测；知道要打印什么、改一次代码很便宜的时候最顺手。
     kind: skill
     requires:
-    - tools.cmd.python
-    - tools.debug.traceback
-    units:
-    - tools-03-debug
+    - id: tools.cmd.python
+      kind: required
+      by: 20260926-231525-tools-03-debug-r2
+    - id: tools.debug.traceback
+      kind: required
+      by: 20260926-231525-tools-03-debug-r2
   tools.debug.debugger:
     title: 调试器（debugger）
     desc: 能让你在程序运行中间停下来、一步步走、随时查看变量的程序；当你不确定该打印什么，或改一次代码要重启很久时用它。
     kind: concept
     requires:
-    - tools.debug.print
-    units:
-    - tools-03-debug
+    - id: tools.debug.print
+      kind: required
+      by: 20260926-231525-tools-03-debug-r2
   tools.debug.breakpoint:
     title: 断点（breakpoint）
     desc: 告诉调试器在哪个文件的哪一行停下来；也可以加条件，只在满足条件时停。
     kind: concept
     requires:
-    - tools.debug.debugger
-    units:
-    - tools-03-debug
+    - id: tools.debug.debugger
+      kind: required
+      by: 20260926-231525-tools-03-debug-r2
   tools.cmd.pdb:
     title: python -m pdb（Python 调试器）
     desc: Python 自带的调试器；python -m pdb 脚本.py 用它启动脚本，然后用 b / p / n / c / q 这些单字母命令控制程序。
     kind: term
     requires:
-    - tools.debug.breakpoint
-    - tools.cmd.python
-    units:
-    - tools-03-debug
+    - id: tools.debug.breakpoint
+      kind: required
+      by: 20260926-231525-tools-03-debug-r2
+    - id: tools.cmd.python
+      kind: required
+      by: 20260926-231525-tools-03-debug-r2
   tools.debug.loglevel:
     title: 日志级别（log level）
     desc: 每条日志带的严重程度标签（DEBUG / INFO / WARN / ERROR），用来决定哪些日志值得写下来、哪些应该被过滤掉。
     kind: concept
     requires:
-    - tools.debug.logging
-    units:
-    - tools-03-debug
+    - id: tools.debug.logging
+      kind: required
+      by: 20260926-231525-tools-03-debug-r2
   tools.debug.timing:
     title: 计时（timing：real / user / sys）
     desc: 量一个程序花了多久：real 是从头到尾经过的时间（包含等待），user 和 sys 才是 CPU 真正替它干活的时间。
     kind: concept
     requires:
-    - tools.shell.roles
-    units:
-    - tools-03-debug
+    - id: tools.shell.roles
+      kind: required
+      by: 20260926-231525-tools-03-debug-r2
   tools.cmd.time:
     title: time（量一条命令花了多久）
     desc: bash 里可以直接写在命令前面的 time：time python app.py 会打印 real / user / sys 三个数。
     kind: term
     requires:
-    - tools.debug.timing
-    units:
-    - tools-03-debug
+    - id: tools.debug.timing
+      kind: required
+      by: 20260926-231525-tools-03-debug-r2
   tools.debug.profiler:
     title: 性能分析器（profiler）
     desc: 记录程序里每个函数被调用多少次、各花了多少时间的工具，用来找热点；分采样式（定期取样，开销小）和追踪式（每次调用都记）。
     kind: concept
     requires:
-    - tools.debug.timing
-    units:
-    - tools-03-debug
+    - id: tools.debug.timing
+      kind: required
+      by: 20260926-231525-tools-03-debug-r2
   tools.debug.hotspot:
     title: 热点（hot spot）
     desc: 程序里最花时间的那一小部分代码；要优化之前先用 profiler 把它找出来，别凭感觉猜。
     kind: concept
     requires:
-    - tools.debug.profiler
-    units:
-    - tools-03-debug
+    - id: tools.debug.profiler
+      kind: required
+      by: 20260926-231525-tools-03-debug-r2
   tools.cmd.python.cprofile:
     title: python -m cProfile（Python 的追踪式 profiler）
     desc: Python 自带；python -m cProfile -s tottime 脚本.py 会按「函数自己花的时间」排序打印统计。
     kind: term
     requires:
-    - tools.debug.profiler
-    - tools.cmd.python
-    units:
-    - tools-03-debug
+    - id: tools.debug.profiler
+      kind: required
+      by: 20260926-231525-tools-03-debug-r2
+    - id: tools.cmd.python
+      kind: required
+      by: 20260926-231525-tools-03-debug-r2
+  tools.cmd.nl:
+    title: nl
+    desc: 打印文件内容并在每行前面加上行号（nl -ba 连空行也编号），用来把内容和行号对起来。
+    kind: term
+    requires:
+    - id: tools.cmd.cat
+      kind: required
+      by: tutor
+  tools.python.argv:
+    title: sys.argv
+    desc: Python 程序里装着命令行参数的列表：第 0 个是脚本名，第 1 个是跟在命令行上的第一个参数。
+    kind: term
+    requires:
+    - id: tools.cmd.python
+      kind: required
+      by: tutor
+  tools.debug.breakpoint-call:
+    title: breakpoint()（在代码里设断点）
+    desc: Python 的内建函数：在源码里调用它，程序跑到这一行自动停下并进入 pdb。
+    kind: term
+    requires:
+    - id: tools.cmd.pdb
+      kind: required
+      by: tutor
+    - id: tools.debug.breakpoint
+      kind: required
+      by: tutor
+  tools.debug.post-mortem:
+    title: 在崩溃现场检查（post-mortem）
+    desc: 程序崩溃后不重跑，就停在它出事的那一刻查看当时的变量和调用栈。
+    kind: concept
+    requires:
+    - id: tools.debug.debugger
+      kind: required
+      by: tutor
+    - id: tools.debug.traceback
+      kind: required
+      by: tutor
+  tools.debug.structured-logging:
+    title: 结构化日志
+    desc: 日志除了一段文本还带一组有名字的字段（指标、JSON 对象），事后可以用程序按字段过滤和统计。
+    kind: concept
+    requires:
+    - id: tools.debug.logging
+      kind: required
+      by: tutor
+  tools.debug.profiler-types:
+    title: 追踪式 / 采样式 profiler
+    desc: 追踪式 profiler 记录每一次函数调用，采样式 profiler 每隔一小段时间探测程序当时在哪个栈上。
+    kind: concept
+    requires:
+    - id: tools.debug.profiler
+      kind: required
+      by: tutor
+  tools.debug.profile-stats:
+    title: ncalls / tottime / cumtime
+    desc: profiler 输出里的三列：调用次数、函数自己花的时间、连同子函数在内花的时间。
+    kind: concept
+    requires:
+    - id: tools.debug.profiler
+      kind: required
+      by: tutor
+  tools.debug.benchmarking:
+    title: 基准测试
+    desc: 把同一件事的几种做法各跑很多次、比较耗时，用均值、标准差这类统计量说明差距，而不是只看一次运行。
+    kind: concept
+    requires:
+    - id: tools.debug.timing
+      kind: required
+      by: tutor
+  tools.debug.ai-debug:
+    title: 用 LLM 辅助调试
+    desc: 把报错信息、stack trace、工具输出交给大语言模型，让它解释发生了什么并建议下一步，再用真实工具验证。
+    kind: skill
+    requires:
+    - id: tools.debug.traceback
+      kind: required
+      by: tutor

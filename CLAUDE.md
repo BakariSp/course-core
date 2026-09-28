@@ -21,8 +21,9 @@
 
 | 文件 | 是什么 | 谁来写 |
 |---|---|---|
-| `progress/syllabus.yaml` | 学了哪些课（单元状态） | 学习者和导师都可以直接改 |
-| `knowledge/<学科>.yaml` | 知识图：知识点（概念 id）+ 先修关系；状态不写在这里 | 学习者和导师都可以改；新概念 id 加在这里 |
+| `progress/course.yaml` | 课程定义：阶段 → 学科 → 单元（学什么、看哪些材料、学习者的要求）。学没学完不写在这里，由证据算（D-047） | 学习者和导师都可以直接改 |
+| `progress/profile.yaml` | 学习者自己写的资料和时间偏好 | 学习者 |
+| `knowledge/<学科>.yaml` | 知识图：知识点（概念 id）+ 先修关系（required / helpful，记着谁说的）；状态、哪个单元教它都不写在这里 | 学习者和导师都可以改；新概念 id 加在这里 |
 | `data/study.db` | **证据**（每一次答题、检查点、观察……）和 agent 的运行、评分。掌握度的唯一依据 | 只能通过网页、`study.py` 写；数据库触发器拒绝修改和删除。不进 git |
 | `progress/evidence.jsonl`、`agents/*/evals/runs.jsonl` | 数据库的可读导出（进 git，看 diff 用） | 只能由 `study.py export` 生成 |
 | `progress.md` | 进度视图 | 只能由 `study.py status` 生成 |
@@ -45,7 +46,7 @@
    **改评测标准**（rubric、用例、评分器、评审模型的 prompt）要先在 `design/DECISIONS.md` 提议、学习者拍板——优化者不能自己改卷（D-022）。
 4. 学习者用过之后跑 `python study.py course-eval <单元> --write`（学习结果，最终裁判），看预测和实际差在哪。
 
-架构和迭代纪律见 [agents/README.md](agents/README.md)，代码分层见 [docs/backend-core-design.md](docs/backend-core-design.md)。学习者画像在 `progress/learner.md`，学习者可以直接改。
+架构和迭代纪律见 [agents/README.md](agents/README.md)，代码分层见 [docs/backend-core-design.md](docs/backend-core-design.md)。学习者资料在 `progress/profile.yaml`（学习者写）；老师对学习者的观察（讲法、容易过载的地方）是证据，用 `python study.py note "…" --source "…"` 记，学习者在页面上能推翻（D-047）。
 
 ## 学习者谈学习体验、提意见时
 
@@ -55,17 +56,26 @@
 2. 能对上已有的决定就关联过去；需要改动就在 `design/DECISIONS.md` 追加一条**提议**（问题、证据、考虑过的做法、理由、怎么验证）。
 3. 学习者拍板后再实现；提交信息写 D-xxx 和原因；改完请学习者再用一次，结果回写到「验证」。
 
-## 学习者说"我看完了 X"
+## 单元题：出题 agent 出，你不在流程里（D-041）
 
-1. 在 `syllabus.yaml` 里把对应单元的 status 改成 `done`（看了一部分就改成 `watching`），填上 `done_on`。找不到对应单元就问学习者，是新增一个还是拆分已有的单元。
+有课程页的单元，单元题由 `agents/quiz-maker` 出（`studykit/app/quiz.py`，和备课同一台产出循环）：学习者打开最后一节时在后台开始，
+按课程 outcomes 和学习者在这个单元的表现出题 → 静态检查 → 评审模型（安全 + 质量）→ 代码题"红→绿"、终端题"不做不过、做完就过"的实跑 → 只修被指出的题 →
+发布到 `lessons/<学科>/<NN-slug>/`。课程页"学完了"那里显示出题进度，好了就是"开始单元题"。手动：`python study.py quiz <单元>`。
+停在"需要你决定"时，你是开发者的编码助手：判断问题在哪一层（prompt / 上下文 / 检验器），一次只改一处；不要替 agent 手写题目。
+
+下面「学习者说我看完了 X」「出题」两节只用于**没有课程页**的课外材料（学习者自己看的视频、书）。出题 agent 的 prompt 部件（`agents/quiz-maker/prompt/`）沿用这里的出题原则，改原则时两处一起改。
+
+## 学习者说"我看完了 X"（没有课程页的材料）
+
+1. 学没学完由证据算，不用手改。在 `progress/course.yaml` 里找到对应单元；找不到就问学习者，是新增一个还是拆分已有的单元（范围没定的写 `scope: open`，系统不会去备它）。
 2. 问学习者这节课讲了哪些要点。不确定课程内容时不要自己编。
 3. 出题，然后打开答题网页。
 
-## 出题
+## 出题（没有课程页的材料）
 
 1. 先跑 `python study.py weak`，看学过哪些单元、每个概念的掌握度、错过哪些题、还有哪些没批改。
    学习者模型按需分级看，不要一次读全部：`kg summary` → `kg related <单元>` → `kg show <节点>`（D-020）。
-   学习者说"哪里没懂"时，用 `kg observe <节点> weak "原话"` 记到知识点上，不要写进 learner.md。
+   学习者说"哪里没懂"时，用 `kg observe <节点> weak "原话"` 记到知识点上；什么讲法有效、在哪会过载，用 `study.py note` 记成老师的观察。
 2. **选检验器**：先想清楚"这道题要验证学习者能做到什么"，再选能验证这件事的检验器。
 
    | 想验证的能力 | 检验器 |
@@ -82,7 +92,7 @@
    - 快到 4 级的概念：出找 bug 题或 nanoteacher 映射题。
    - 每套大约 30-45 分钟：通常 6-8 道题，至少用 3 种检验器，第 4 级的题至少 1 道。
 4. 从 `templates/lesson/` 复制模板，建 `lessons/<topic>/<NN-slug>/`，`quiz.yaml` 里写 `unit: <单元 id>`。新概念 id 加进 `knowledge/<学科>.yaml`（写 `units: [<单元 id>]`），`python study.py kg check` 会报出拼错、没登记的概念。
-5. 答案、检查项、rubric 只放在 `key.yaml`。`quiz.yaml`、`code/exN.py` 和对话里都不能出现答案。
+5. 答案、检查项、rubric 只放在 `key.yaml`。除代码题外，每道题写 `key.parts`：每个选项 / 空 / rubric 条 / check 考哪个知识点，错项对应的误解（写法见 question-format.md「得分点」，D-056）。`quiz.yaml`、`code/exN.py` 和对话里都不能出现答案。
 6. 出完后自检：
    - `python -m pytest lessons/<topic>/<课时>/ -q`：代码题在未实现时必须是红的。
    - 终端题：自己按参考做法走一遍，确认 checks 能全部通过，并且什么都不做时不会通过。
@@ -104,8 +114,19 @@
 - 不能为了让测试通过去改 `code/test_*.py`。
 - 学习者做 LeetCode、PortSwigger 靶场这类课外练习时，用 `python study.py log` 记录。
 - 引用 nanoteacher 时只读不写，那边的仓库有自己的 CLAUDE.md 规则。
-- curriculum.md 的顺序和取舍由学习者决定，要改先提出来。
+- `progress/course.yaml` 的顺序和取舍由学习者决定，要改先提出来。
 - 改 `studykit/` 或 `study.py` 要同时改 `tests/`，并跑 `python -m pytest tests -q`。修 bug 先写一个会红的测试。
   依赖方向由 `tests/test_architecture.py` 强制：domain 不做 IO，接口层只调 app（见 docs/backend-core-design.md §4.2）。
 - 在答题网页上自己测试之前，先把学习者正在写的 `code/exN.py` 和 `data/study.db` 备份到 scratchpad，测完原样恢复并核对。
   更好的做法是用临时数据目录启动：测试用 `build(Config(data=<临时目录>))`，不碰学习者的数据库。
+
+## 提交与分支（D-059）
+
+- 主分支 `main`，保持**半线性历史**：功能分支先 `git rebase main`、`python -m pytest tests -q` 全绿，再 `git merge --no-ff`，合并提交写 `Merge D-xxx：<一句话>`。
+  `git log --first-parent main --date=short --pretty="%ad %h %s"` 就是按日期的功能清单。
+- 一个 D-xxx 一个分支，分支里按小步提交；每个提交能用一句话说清、信息带 D-xxx。只有一个提交的改动可以直接提交到 main。
+- 做完一件就提交，不要攒着；不相关的改动不进同一个提交。
+- 会写多个提交、或要和别的需求并行时，用 worktree 分开；worktree 里不碰 `data/study.db`（用临时数据目录），答题网页换一个端口，不占 8770。
+- 新的 D-xxx / F-xxx 编号先在 main 上提交占号，再开分支，避免撞号。
+- 学习数据导出（`progress/evidence.jsonl`、`agents/*/evals/runs.jsonl`、`progress.md`）单独提交 `chore(progress): …`，不和功能混。
+- 决定完成时，在 DECISIONS.md 那条的「实现」里写上合并提交号。

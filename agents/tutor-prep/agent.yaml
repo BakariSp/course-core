@@ -12,6 +12,7 @@ model:
 prompt:                       # system prompt 的部件，按顺序原样拼接（D-033）；每个部件的每一版内容都存进数据库
   - {part: role, file: prompt/role.md}             # 职责：你是谁、交什么
   - {part: principles, file: prompt/principles.md} # 最重要的几件事
+  - {part: teaching, file: prompt/teaching.md}     # 怎么讲：学习者 = 初学者 + 前面几节，不跳跃（D-043）
   - {part: learner, file: prompt/learner.md}       # 怎么读简报里的学习者信息
   - {part: tools, file: prompt/tools.md}           # 能用哪些工具
   - {part: workflow, file: prompt/workflow.md}     # 工作步骤

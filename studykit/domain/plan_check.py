@@ -14,8 +14,10 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from studykit.domain.artifact import Finding, checkpoint_address, section_address
+from studykit.domain.assessment import CORE_CHECKPOINTS
 from studykit.domain.ids import NODE_ID_RE
 from studykit.domain.plan import plan_minutes, plan_parts, plan_sessions, sections_of, stubs_of
+from studykit.domain.transcript import parse_range
 
 # WHY: 中文里链接常被全角括号、引号、句号包着（如「（https://…）」），这些字符不能算进 URL，
 # 否则核对出处和检查能否打开都会误报。整个环境只用这一个提取函数。
@@ -36,6 +38,45 @@ def plan_urls(plan: dict) -> set[str]:
     return extract_urls(json.dumps({k: v for k, v in plan.items() if k != "lab"}, ensure_ascii=False))
 
 
+@dataclass(frozen=True)
+class PracticeModule:
+    """一种练习形式（D-052）：检查点的一个题型，连同它检验什么、要什么环境、怎么写、怎么判分。
+
+    WHY: 用什么练由备课 agent 按这一节要练的能力挑，不在 prompt 里写死"某某单元要有练习场"（F-078、F-080）。
+    agent 在大纲那一步看到整张目录（render_catalog），写一节时拿到它选中那种的写法（module_guide）。
+    core 提供 choice / fill；学科 spec 往目录里加自己的（cs-practice：lab）。
+    """
+    name: str                   # 检查点的 type
+    title: str                  # 学习者在页面上看到的名字
+    verifies: str               # 检验学习者能做到什么
+    fits: str                   # 什么内容适合用它（给 agent 判断的依据，不是规则）
+    needs: str = "无"           # 要什么环境
+    cost: str = "便宜"          # 检验要花什么
+    guide: str = ""             # 写这种题的规矩（写一节、修复时给）
+    fields: dict = field(default_factory=dict)             # 检查点 schema 里这种题型的字段
+    rule: Callable[[str, dict], list[str]] | None = None   # (位置描述, 检查点) → 问题
+    grade: Callable | None = None                           # (单元, 检查点, 作答) → CheckpointResult
+
+
+def render_catalog(modules, guides: bool = False) -> str:
+    """练习形式目录：大纲那一步给 agent 挑；guides=True 时连每种的写法一起给（一次写完整份、修复）。"""
+    out = []
+    for m in modules:
+        out += [f"### `{m.name}` · {m.title}", "", f"- 检验：{m.verifies}", f"- 适合：{m.fits}",
+                f"- 要什么环境：{m.needs}", f"- 代价：{m.cost}", ""]
+        if guides and m.guide:
+            out += ["写法：", "", m.guide.strip(), ""]
+    return "\n".join(out).rstrip() + "\n"
+
+
+def module_guide(modules, name: str) -> str:
+    """写一节时给的：大纲为这一节选的那种练习形式怎么写。"""
+    m = next((m for m in modules if m.name == name), None)
+    if m is None:
+        return "（大纲没有写这一节用什么形式练）\n"
+    return f"`{m.name}` · {m.title}：{m.verifies}\n\n{m.guide}".rstrip() + "\n"
+
+
 @dataclass
 class PlanLimits:
     """检查一份计划需要知道的外部事实（生成时的快照）。"""
@@ -47,6 +88,7 @@ class PlanLimits:
     existing_nodes: dict[str, str] = field(default_factory=dict)   # 知识图里已有的节点 id → 标题（D-020）
     grounded: set[str] = field(default_factory=set)            # 本次运行真正打开过的页面（url_key 形式）
     checkpoint_types: tuple[str, ...] = ("choice", "fill")
+    studied: set[str] = field(default_factory=set)             # 学过的节点 id（路线上前面的单元教过，D-051）：不算新词，可以回顾
 
     @property
     def topic(self) -> str:
@@ -58,6 +100,30 @@ EVALUATOR = "plan_check"
 # 学科规则：(计划, 限制) → 发现（自己给地址）；检查点规则：(位置描述, 检查点) → 文字（地址由调用方给）
 PlanRule = Callable[[dict, PlanLimits], list[Finding]]
 CheckpointRule = Callable[[str, dict], list[str]]
+
+
+def choice_rule(where: str, c: dict) -> list[str]:
+    errors = []
+    opts = c.get("options") or []
+    letters = {chr(65 + i) for i in range(len(opts))}
+    ans = c.get("answer")
+    ans = ans if isinstance(ans, list) else [ans]
+    if len(opts) < 2:
+        errors.append(f"{where}：选择题至少 2 个选项")
+    if not ans or not all(str(a).upper() in letters for a in ans):
+        errors.append(f"{where}：answer 要是选项字母（{'、'.join(sorted(letters)) or '无'}）")
+    return errors
+
+
+def fill_rule(where: str, c: dict) -> list[str]:
+    blanks = str(c.get("prompt") or "").count("____")
+    accept = c.get("accept") or []
+    if not blanks or blanks != len(accept) or not all(accept):
+        return [f"{where}：题干里 ____ 的个数（{blanks}）要和 accept 的组数（{len(accept)}）一样，每组至少一个答案"]
+    return []
+
+
+CORE_RULES: dict[str, CheckpointRule] = {"choice": choice_rule, "fill": fill_rule}
 
 
 def _check_checkpoint(where: str, c: dict, node_ids: set[str], limits: PlanLimits,
@@ -77,22 +143,9 @@ def _check_checkpoint(where: str, c: dict, node_ids: set[str], limits: PlanLimit
         errors.append(f"{where}：缺少 concept（这道题检验哪个知识节点）")
     elif c["concept"] not in node_ids:
         errors.append(f"{where}：concept {c['concept']} 不在知识图里，也没有在 nodes 里提议")
-    if kind == "choice":
-        opts = c.get("options") or []
-        letters = {chr(65 + i) for i in range(len(opts))}
-        ans = c.get("answer")
-        ans = ans if isinstance(ans, list) else [ans]
-        if len(opts) < 2:
-            errors.append(f"{where}：选择题至少 2 个选项")
-        if not ans or not all(str(a).upper() in letters for a in ans):
-            errors.append(f"{where}：answer 要是选项字母（{'、'.join(sorted(letters)) or '无'}）")
-    elif kind == "fill":
-        blanks = str(c.get("prompt") or "").count("____")
-        accept = c.get("accept") or []
-        if not blanks or blanks != len(accept) or not all(accept):
-            errors.append(f"{where}：题干里 ____ 的个数（{blanks}）要和 accept 的组数（{len(accept)}）一样，每组至少一个答案")
-    elif kind in rules:
-        errors += rules[kind](where, c)
+    rule = {**CORE_RULES, **rules}.get(kind)
+    if rule:
+        errors += rule(where, c)
     for t in c.get("traps") or []:
         if not all(str(t.get(k) or "").strip() for k in ("when", "symptom", "cause", "fix")):
             errors.append(f"{where}：每个 trap 都要写清 when / symptom / cause / fix")
@@ -122,15 +175,16 @@ def plan_findings(plan: dict, limits: PlanLimits, rules: list[PlanRule] = (),
                 add(at, f"{name}：缺少 {key}")
         if len(str(s.get("explain") or "")) < 120:
             add(at, f"{name}：explain 太短，要把这一节讲清楚，学习者只读这里就能学会")
-        if not s.get("try"):
-            add(at, f"{name}：至少要有一条动手（try）")
+        # D-052：动手（try）不是每节都要有——讲概念的节用不着；要不要动手、在哪动手由练习形式决定（学科规则管）
         for t in s.get("try") or []:
-            if not str(t.get("command") or "").strip() or not str(t.get("expect") or "").strip():
-                add(at, f"{name}：每条动手都要有 command 和 expect")
+            # 动手分两种（D-057）：command = 在终端里敲一条命令；edit = 新建或修改练习场里的一个文件。路径和内容的规则归学科 spec
+            if not (str(t.get("command") or "").strip() or str(t.get("edit") or "").strip()) or not str(t.get("expect") or "").strip():
+                add(at, f"{name}：每条动手都要有 expect，以及 command（敲命令）或 edit（改文件）之一")
         if s.get("pitfalls") or s.get("sources"):
             add(at, f"{name}：不要再写 pitfalls / sources。常见坑写进检查点的 traps（答错时才出现），出处写在单元的 sources 里")
         terms = s.get("terms") or []
-        new_terms = [t for t in terms if str(t.get("id")) not in known and str(t.get("term", "")).lower() not in known]
+        new_terms = [t for t in terms if str(t.get("id")) not in known and str(t.get("term", "")).lower() not in known
+                     and str(t.get("id")) not in limits.studied]
         if len(new_terms) > limits.max_new_terms:
             add(at, f"{name}：新词 {len(new_terms)} 个，超过每节上限 {limits.max_new_terms} 个。"
                     "新东西太多学习者记不住：把这一节拆成两节，或者把次要的词挪到后面的节")
@@ -140,6 +194,8 @@ def plan_findings(plan: dict, limits: PlanLimits, rules: list[PlanRule] = (),
             elif t["id"] not in node_ids:
                 add(at, f"{name}：新词 {t['term']} 的 id {t['id']} 不在知识图里，要在 nodes 里提议")
         known |= {str(t.get("id")) for t in terms} | {str(t.get("term", "")).lower() for t in terms}
+        for what in _recall_problems(name, s.get("recall") or [], limits):
+            add(at, what)
         items = s.get("checkpoint") or []
         if not 1 <= len(items) <= 3:
             add(at, f"{name}：检查点要 1–3 道题，现在 {len(items)} 道")
@@ -175,7 +231,7 @@ def _unit_findings(plan: dict, limits: PlanLimits) -> tuple[list[Finding], set[s
             add("/nodes", f"nodes：{nid} 缺少 desc")
     node_ids = set(limits.existing_nodes) | set(proposed)
     for nid, n in proposed.items():
-        for r in n.get("requires") or []:
+        for r in (n.get("requires") or []) + (n.get("helpful") or []):
             if r not in node_ids:
                 add("/nodes", f"nodes：{nid} 的先修 {r} 不存在（知识图里没有，也没有提议）")
 
@@ -204,7 +260,7 @@ def outline_findings(outline: dict, limits: PlanLimits, rules: list[PlanRule] = 
     if stubs and not 4 <= len(stubs) <= 8:
         add("", f"一共 4–8 节，现在 {len(stubs)} 节")
     known = set(limits.known_terms)
-    practice = [t for t in limits.checkpoint_types if t not in CORE_CHECKPOINT_TYPES]
+    practice = [t for t in limits.checkpoint_types if t not in CORE_RULES]    # 学科的题型（练习场任务）要写 state_after
     for i, s in enumerate(stubs):
         at, name = section_address(i), f"第 {i + 1} 节「{s.get('title', '')}」"
         m = s.get("minutes")
@@ -216,7 +272,8 @@ def outline_findings(outline: dict, limits: PlanLimits, rules: list[PlanRule] = 
             if not str(s.get(key) or "").strip():
                 add(at, f"{name}：缺少 {key}")
         terms = s.get("terms") or []
-        new = [t for t in terms if str(t.get("id")) not in known and str(t.get("term", "")).lower() not in known]
+        new = [t for t in terms if str(t.get("id")) not in known and str(t.get("term", "")).lower() not in known
+               and str(t.get("id")) not in limits.studied]
         if len(new) > limits.max_new_terms:
             add(at, f"{name}：新词 {len(new)} 个，超过每节上限 {limits.max_new_terms} 个：拆节，或者挪到后面的节")
         for t in terms:
@@ -225,25 +282,29 @@ def outline_findings(outline: dict, limits: PlanLimits, rules: list[PlanRule] = 
             elif t["id"] not in node_ids:
                 add(at, f"{name}：新词 {t['term']} 的 id {t['id']} 不在知识图里，要在 nodes 里提议")
         known |= {str(t.get("id")) for t in terms} | {str(t.get("term", "")).lower() for t in terms}
+        for what in _recall_problems(name, s.get("recall") or [], limits):
+            add(at, what)
         check = s.get("check") or {}
         if check.get("type") not in limits.checkpoint_types:
             add(at, f"{name}：check.type 只能是 {' / '.join(limits.checkpoint_types)}")
         if not str(check.get("what") or "").strip():
             add(at, f"{name}：check.what 要写清检查点让学习者做到 / 答出什么")
+        if not str(check.get("why") or "").strip():
+            add(at, f"{name}：check.why 用一句话写为什么这一节用 {check.get('type') or '这种形式'} 练"
+                    "（这一节要练的能力是什么，这种形式为什么最能检验它）")
         if not s.get("reading"):
             add(at, f"{name}：reading 至少列一个写这一节要依据的页面（打开过的）")
         teaches = [x for x in s.get("teaches") or [] if str(x).strip()]
         if not 1 <= len(teaches) <= 4:
             add(at, f"{name}：teaches 写 1–4 个这一节讲清的要点（后面的节会直接引用，不再重讲），现在 {len(teaches)} 个")
+        if s.get("video") and parse_range(str(s["video"])) is None:
+            add(at, f"{name}：video 写成「起-止」的时间段，如 01:07-04:24（按字幕里的 [mm:ss]），现在是 {s['video']!r}")
         if check.get("type") in practice and not s.get("state_after"):
             add(at, f"{name}：练习场任务的节要写 state_after——做完这一节后练习场满足的断言。后面的节只能依赖这些断言")
         for k in s.get("state_after") or []:
             if not str(k.get("desc") or "").strip():
                 add(at, f"{name}：state_after 的每条断言都要有 desc（给学习者和写后面几节的人看）")
-    if practice and stubs:
-        hands_on = [s for s in stubs if (s.get("check") or {}).get("type") in practice]
-        if 2 * len(hands_on) < len(stubs):
-            add("", f"至少一半的小节用动手型检查点（{' / '.join(practice)}），现在 {len(hands_on)}/{len(stubs)} 节")
+    # D-043：不再要求"至少一半小节动手"（F-064：逼着模型在只讲概念的节里编动手内容）
     for rule in rules:
         out += rule(outline, limits)
     return out
@@ -285,12 +346,17 @@ def render_plan_md(plan: dict, session_minutes: int = 45) -> str:
             lines += [f"### {n}. {s.get('title', '')}（{s.get('minutes')} 分钟）", "", f"**目标**：{s.get('goal', '')}", ""]
             if s.get("mission"):
                 lines += [f"**任务**：{s['mission']}", ""]
+            if s.get("check_why"):
+                lines += [f"**为什么这样练**：{s['check_why']}", ""]
             if s.get("terms"):
                 lines += ["**新词**：" + "；".join(f"{t['term']}（`{t['id']}`）：{t['explain']}" for t in s["terms"]), ""]
+            if s.get("recall"):
+                lines += ["**回顾（学过的）**：" + "；".join(f"{r['term']}（`{r['id']}`）：{r['explain']}" for r in s["recall"]), ""]
             lines += [s.get("explain", ""), ""]
             if s.get("try"):
                 lines.append("**动手**")
-                lines += [f"- `{t['command']}` → {t['expect']}" for t in s["try"]]
+                lines += [(f"- 改文件 `{t['edit']}` → {t['expect']}" if t.get("edit") else f"- `{t['command']}` → {t['expect']}")
+                          for t in s["try"]]
                 lines.append("")
             for j, c in enumerate(s.get("checkpoint") or [], 1):
                 lines.append(f"**检查点 {j}（{c.get('type')}，{c.get('concept') or '—'}）**：{c.get('prompt', '')}")
@@ -315,7 +381,8 @@ def render_plan_md(plan: dict, session_minutes: int = 45) -> str:
     if plan.get("nodes"):
         lines += ["## 提议的知识节点", ""] + [
             f"- `{x['id']}` {x['title']}（{x.get('kind')}）：{x.get('desc', '')}" +
-            (f" · 先修 {', '.join(x['requires'])}" if x.get("requires") else "") for x in plan["nodes"]] + [""]
+            (f" · 先修 {', '.join(x['requires'])}" if x.get("requires") else "") +
+            (f" · 先会更好 {', '.join(x['helpful'])}" if x.get("helpful") else "") for x in plan["nodes"]] + [""]
     if plan.get("sources"):
         lines += ["## 出处", ""] + [f"- [{x['title']}]({x['url']})" for x in plan["sources"]] + [""]
     if plan.get("later"):
@@ -325,15 +392,39 @@ def render_plan_md(plan: dict, session_minutes: int = 45) -> str:
     return "\n".join(lines) + "\n"
 
 
+MAX_RECALLS = 2
+
+
+def _recall_problems(name: str, recall: list, limits: PlanLimits) -> list[str]:
+    """回顾（D-051）：一节最多 2 个，只能是学过的知识点，每个带一句定义（页面上一直显示，问学习者记不记得）。"""
+    out = []
+    if len(recall) > MAX_RECALLS:
+        out.append(f"{name}：回顾最多 {MAX_RECALLS} 个，现在 {len(recall)} 个。挑这一节最要紧的")
+    for r in recall:
+        if not all(str(r.get(k) or "").strip() for k in ("id", "term", "explain")):
+            out.append(f"{name}：每个回顾都要有 id / term / explain")
+        elif r["id"] not in limits.studied:
+            out.append(f"{name}：回顾 {r['term']}（{r['id']}）不是学过的知识点。回顾只放简报里「学过」列出的；新东西写进 terms")
+    return out
+
+
 # ---------- 给 agent 看的 JSON Schema（core 部分；学科 spec 往里加字段） ----------
 
 _SOURCE = {"type": "object", "properties": {
     "title": {"type": "string"}, "url": {"type": "string", "description": "必须是你用 fetch_url 打开过的页面"}},
     "required": ["title", "url"]}
 _TRY = {"type": "object", "properties": {
-    "command": {"type": "string", "description": "学习者要动手做的一步（或一小段），要能直接做通"},
+    "command": {"type": "string", "description": "在终端里敲的一条命令（或用 && 连起来的一小段），要能直接跑通。只放命令，不放操作说明"},
+    "edit": {"type": "string", "description": "改文件的一步（和 command 二选一）：练习场里要新建或修改的文件（相对路径）。学习者在页面的「文件」里打开它、改成 content 的样子、保存"},
+    "content": {"type": "string", "description": "edit 这一步做完后文件的完整内容（环境验证时按它写文件）"},
     "expect": {"type": "string", "description": "做完应该看到什么；看到别的说明什么"}},
-    "required": ["command", "expect"]}
+    "required": ["expect"]}
+_RECALL = {"type": "object", "properties": {
+    "id": {"type": "string", "description": "学过的知识点 id（简报里「学过」列出的）"}, "term": {"type": "string"},
+    "explain": {"type": "string", "description": "一句话定义，页面上一直显示，学习者看完回答记不记得"}},
+    "required": ["id", "term", "explain"]}
+_RECALL_DESC = ("回顾（最多 2 个）：这一节第一次用到的「学过」的知识点。学过的直接用、不当新词，"
+                "在这里放一句定义，页面问学习者还记不记得")
 _TRAP = {"type": "object", "properties": {
     "when": {"type": "string", "description": "什么样的错误答案说明踩了这个坑：选择题写选项字母；填空题写匹配错误答案的正则"},
     "symptom": {"type": "string", "description": "学习者会看到的现象"},
@@ -348,8 +439,8 @@ _TERM = {"type": "object", "properties": {
 _NODE = {"type": "object", "properties": {
     "id": {"type": "string"}, "title": {"type": "string"}, "desc": {"type": "string", "description": "一句话描述"},
     "kind": {"type": "string", "enum": ["concept", "term", "skill"]},
-    "requires": {"type": "array", "items": {"type": "string"}, "description": "先修节点 id：学这个之前必须先会的"},
-    "units": {"type": "array", "items": {"type": "string"}, "description": "哪些单元教它（通常就是这个单元）"}},
+    "requires": {"type": "array", "items": {"type": "string"}, "description": "先修节点 id：不会它就学不懂这个的"},
+    "helpful": {"type": "array", "items": {"type": "string"}, "description": "先会更好、但不会也能学的节点 id"}},
     "required": ["id", "title", "desc", "kind"]}
 
 
@@ -373,13 +464,15 @@ def plan_schema(checkpoint_types: dict[str, str], checkpoint_fields: dict, plan_
         "title": {"type": "string"},
         "minutes": {"type": "integer", "description": "学完这一节要多少分钟（含动手和检查点）"},
         "goal": {"type": "string", "description": "学完这一节能做到什么，写成可检验的行为"},
-        "mission": {"type": "string", "description": "这一节在练习故事里的任务（一两句话），它的结果是下一节的材料"},
+        "mission": {"type": "string", "description": "这一节学习者要做的事（一两句话）"},
         "explain": {"type": "string", "description": "用你自己的话把这一节讲清楚（Markdown），学习者只读这里就能学会"},
         "terms": {"type": "array", "items": _TERM, "description": "这一节第一次出现、对这个学习者来说是新的术语"},
-        "try": {"type": "array", "items": _TRY, "description": "动手：按顺序做的步骤和预期结果"},
+        "try": {"type": "array", "items": _TRY, "description": "可选的动手：按顺序做的步骤和预期结果。要什么环境看练习形式（如练习场）"},
         "checkpoint": {"type": "array", "items": checkpoint, "description": "1–3 道检查点题，做对才算学完这一节"},
+        "check_why": {"type": "string", "description": "一句话：为什么这一节用这种练习形式（分步备课时由大纲的 check.why 补上）"},
+        "recall": {"type": "array", "items": _RECALL, "description": _RECALL_DESC},
         "watch": {"type": "string", "description": "可选：想看原讲解时，视频/讲义里对应的章节名"}},
-        "required": ["title", "minutes", "goal", "explain", "terms", "try", "checkpoint"]}
+        "required": ["title", "minutes", "goal", "explain", "terms", "checkpoint"]}
     return {"type": "object", "properties": {
         "title": {"type": "string"},
         "summary": {"type": "string", "description": "两三句话：这一课学什么，和学习者目标的关系"},
@@ -402,12 +495,13 @@ def outline_schema(checkpoint_types: dict[str, str], plan_fields: dict, state_ch
         "title": {"type": "string"},
         "minutes": {"type": "integer", "description": "学完这一节要多少分钟（含动手和检查点）"},
         "goal": {"type": "string", "description": "学完这一节能做到什么，写成可检验的行为"},
-        "mission": {"type": "string", "description": "这一节在练习故事里的任务（一两句话），它的结果是下一节的材料"},
+        "mission": {"type": "string", "description": "这一节学习者要做的事（一两句话）；前一节的结果能成为这一节的材料时写明"},
         "terms": {"type": "array", "items": {"type": "object", "properties": {
             "id": {"type": "string", "description": "知识节点 id；知识图里已有的就用已有的"}, "term": {"type": "string"},
             "explain": {"type": "string", "description": "一句话定义（先说它是什么、属于哪一类）。所有节都用这个定义"}},
             "required": ["id", "term", "explain"]},
             "description": "这一节第一次出现、对这个学习者来说是新的术语。写这一节的人只能用这些，定义以这里为准"},
+        "recall": {"type": "array", "items": _RECALL, "description": _RECALL_DESC + "。写这一节的人不能改"},
         "teaches": {"type": "array", "items": {"type": "string"},
                     "description": "这一节讲清的 1–4 个要点。写后面几节的人会看到，直接引用、不再重讲；写前面几节的人会看到，不会抢先讲"},
         **({"state_after": {"type": "array", "items": state_check,
@@ -415,9 +509,11 @@ def outline_schema(checkpoint_types: dict[str, str], plan_fields: dict, state_ch
                                            "这是后面几节唯一能依赖的练习场状态；环境会把它们并进这一节检查点的检查"}} if state_check else {}),
         "check": {"type": "object", "properties": {
             "type": {"type": "string", "enum": list(checkpoint_types)},
-            "what": {"type": "string", "description": "检查点让学习者做到 / 答出什么（练习场任务写清结果是什么状态）"}},
-            "required": ["type", "what"]},
-        "reading": {"type": "array", "items": {"type": "string"}, "description": "写这一节要依据的页面网址（必须打开过）"}},
+            "what": {"type": "string", "description": "检查点让学习者做到 / 答出什么（练习场任务写清结果是什么状态）"},
+            "why": {"type": "string", "description": "一句话：这一节要练的能力是什么，为什么这种练习形式最能检验它。学习者能在「为什么这样教」里看到"}},
+            "required": ["type", "what", "why"]},
+        "reading": {"type": "array", "items": {"type": "string"}, "description": "写这一节要依据的页面网址（必须打开过）"},
+        "video": {"type": "string", "description": "可选：这一节对应老师视频的时间段，如 01:07-04:24（按字幕里的 [mm:ss]）。写这一节的人只拿到这一段字幕"}},
         "required": ["title", "minutes", "goal", "mission", "terms", "teaches", "check", "reading"]}
     full = plan_schema(checkpoint_types, {}, plan_fields)
     props = {**full["properties"], "parts": {"type": "array", "items": {"type": "object", "properties": {
@@ -428,11 +524,25 @@ def outline_schema(checkpoint_types: dict[str, str], plan_fields: dict, state_ch
 def section_schema(checkpoint_types: dict[str, str], checkpoint_fields: dict, plan_fields: dict) -> dict:
     """写一节时提交的小节：没有 terms——新词和定义归大纲（fill_stub 按大纲补上）。"""
     s = plan_schema(checkpoint_types, checkpoint_fields, plan_fields)["properties"]["parts"]["items"]["properties"]["sections"]["items"]
-    return {**s, "properties": {k: v for k, v in s["properties"].items() if k != "terms"},
+    return {**s, "properties": {k: v for k, v in s["properties"].items() if k not in ("terms", "check_why", "recall")},
             "required": [k for k in s["required"] if k != "terms"]}
 
 
-CORE_CHECKPOINT_TYPES = {"choice": "选择", "fill": "填空（题干里每个 ____ 是一个空）"}
+CORE_MODULES = (
+    PracticeModule(
+        "choice", "选择题", verifies="认得出概念、分得清相近的说法、在几个做法里判断哪个对、为什么",
+        fits="讲概念、对比、取舍的节；判断\"这是不是 X\"\"哪种情况会这样\"",
+        guide="- `options` 只写选项文字，不带字母；`answer` 写正确选项的字母（多选写列表，`multi: true`）。\n"
+              "- 错误选项要是学习者真会犯的误解，不是一眼能排除的凑数项；`traps` 的 `when` 写对应的错误选项字母。",
+        rule=choice_rule, grade=CORE_CHECKPOINTS["choice"]),
+    PracticeModule(
+        "fill", "填空", verifies="记得关键术语、能算出或预测一个具体的值",
+        fits="套公式算一个数（如时延 = L/R）、读输出说出一个值、写出一个术语",
+        guide="- 题干里每个空写成 `____`；`accept` 每个空一组可接受的答案，个数和空一样多。\n"
+              "- 数值题把等价写法都列进去（`5`、`5ms`、`5 ms`），并在题干里说清单位和保留几位。\n"
+              "- `traps` 的 `when` 写能匹配典型错误答案的正则（如把 ms 和 s 搞混得到的值）。",
+        rule=fill_rule, grade=CORE_CHECKPOINTS["fill"]),
+)
 
 
 # ---------- 单元知识库（D-040 ③）：和学习者无关的通用层 ----------
@@ -465,7 +575,9 @@ def kb_findings(kb: dict, limits: PlanLimits) -> list[Finding]:
             add(at, f"{name}：teaches 写 1–4 个要点，现在 {len(teaches)} 个")
         if not p.get("reading"):
             add(at, f"{name}：reading 至少列一个讲它的页面")
-        for r in p.get("requires") or []:
+        if p.get("video") and parse_range(str(p["video"])) is None:
+            add(at, f"{name}：video 写成「起-止」的时间段，如 01:07-04:24（按字幕里的 [mm:ss]），现在是 {p['video']!r}")
+        for r in (p.get("requires") or []) + (p.get("helpful") or []):
             if r not in ids and r not in limits.existing_nodes:
                 add(at, f"{name}：先修 {r} 既不在这份知识库里，也不在知识图里")
     for url in sorted(extract_urls(json.dumps(kb, ensure_ascii=False))):
@@ -480,9 +592,11 @@ def kb_schema() -> dict:
         "term": {"type": "string", "description": "讲义里的原词"},
         "kind": {"type": "string", "enum": ["concept", "term", "skill"]},
         "explain": {"type": "string", "description": "一句话定义：先说它是什么、属于哪一类（不用比喻）"},
-        "requires": {"type": "array", "items": {"type": "string"}, "description": "先修：学它之前必须先会的知识点 id"},
+        "requires": {"type": "array", "items": {"type": "string"}, "description": "先修：不会它就学不懂这个的知识点 id"},
+        "helpful": {"type": "array", "items": {"type": "string"}, "description": "先会更好、但不会也能学的知识点 id"},
         "teaches": {"type": "array", "items": {"type": "string"}, "description": "讲清它要讲的 1–4 个要点（讲义里说的，不是你的发挥）"},
-        "reading": {"type": "array", "items": {"type": "string"}, "description": "讲它的页面网址（必须打开过）"}},
+        "reading": {"type": "array", "items": {"type": "string"}, "description": "讲它的页面网址（必须打开过，视频网址也可以）"},
+        "video": {"type": "string", "description": "可选：老师在视频里讲它的时间段，如 01:07-04:24（按字幕里的 [mm:ss]，不要编）"}},
         "required": ["id", "term", "kind", "explain", "teaches", "reading"]}
     return {"type": "object", "properties": {
         "summary": {"type": "string", "description": "这个单元的讲义讲了什么（两三句话）"},

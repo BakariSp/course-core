@@ -44,6 +44,7 @@ class LlmShortGrader:
         ws.mkdir(parents=True, exist_ok=True)
         (ws / "input.md").write_text(short_grading_prompt(q, key, response), encoding="utf-8")
         reply = self.runtime.complete(model, system, ws / "input.md", ws, self.timeout)
-        (ws / "reply.txt").write_text(reply or "", encoding="utf-8")
-        data = parse_short_grading(reply, key)
-        return {**data, "model": f"{model['provider']}/{model['id']}", "version": self.version(), "workspace": ws.name}
+        (ws / "reply.txt").write_text(reply.text or "", encoding="utf-8")
+        data = parse_short_grading(reply.text, key)
+        return {**data, "model": f"{model['provider']}/{model['id']}", "version": self.version(), "workspace": ws.name,
+                "cost_usd": reply.cost_usd, "tokens": reply.tokens}

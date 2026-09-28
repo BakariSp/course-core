@@ -9,8 +9,10 @@ from typing import Callable, Iterable, Protocol
 from studykit.domain.assessment import Checker, CheckpointResult, Lesson
 from studykit.domain.evidence import Actor, Evidence, Verb
 from studykit.domain.harness import Grade, Run, RunStep, Variant
+from studykit.domain.curriculum import CourseDef
 from studykit.domain.knowledge import Node
-from studykit.domain.plan_check import CheckpointRule, PlanRule
+from studykit.domain.profile import Profile
+from studykit.domain.plan_check import PlanRule, PracticeModule
 
 
 class Clock(Protocol):
@@ -38,20 +40,27 @@ class PlanStore(Protocol):
     """发布过的课程计划：每一版不可变；某个单元的当前版本 = 最近一次发布的那一版。"""
 
     def publish(self, unit: str, plan: dict, ts: str, actor: Actor) -> None: ...
+    def add_version(self, unit: str, plan: dict, ts: str) -> None: ...
+    def versions(self, unit: str) -> list[dict]: ...
     def current(self, unit: str) -> dict | None: ...
     def version(self, unit: str, plan_id: str) -> dict | None: ...
     def units(self) -> list[str]: ...
 
 
 class Content(Protocol):
-    """人写、在 git 里审的内容：题、知识图、课程清单、设置。"""
+    """人写、在 git 里审的内容：题、知识图、课程定义、学习者资料、设置。"""
 
     def lesson(self, ref: str) -> Lesson: ...
     def lessons(self) -> list[Lesson]: ...
     def lesson_dir(self, ref: str) -> Path: ...
+    def write_lesson(self, ref: str, quiz: dict, key: dict, files: dict[str, str]) -> None:
+        """发布一套题（D-041）：quiz.yaml、key.yaml、code/ 下的文件。已经有这套题时报错（学习者可能已经在做）。"""
     def graph(self) -> dict[str, Node]: ...
-    def add_nodes(self, nodes: list[dict]) -> list[str]: ...
-    def syllabus(self) -> dict: ...
+    def add_nodes(self, nodes: list[dict], by: str = "") -> list[str]: ...
+    def add_misconceptions(self, proposed: dict[str, dict[str, str]], by: str = "") -> list[str]:
+        """把出题 agent 提出的误解写进知识图（D-056）。已有的不覆盖；返回新增的「知识点/误解」。"""
+    def course(self) -> CourseDef: ...
+    def profile(self) -> Profile: ...
     def settings(self) -> dict: ...
 
 
@@ -69,11 +78,18 @@ class PracticeEnv(Protocol):
 
     def open(self, unit: str, files: list[dict]) -> dict: ...
     def home(self, unit: str) -> str: ...
+    def ensure(self, unit: str, files: list[dict]) -> Path:
+        """练习场目录不存在就按单元开始时的样子建出来。"""
     def run(self, unit: str, files: list[dict], cmd: str) -> dict: ...
     def snapshot_once(self, unit: str, plan: str, section: int, files: list[dict]) -> None: ...
     def restore(self, unit: str, plan: str, section: int) -> None: ...
     def reset(self, unit: str, files: list[dict]) -> None: ...
     def run_once(self, unit: str, cmd: str) -> tuple[int, str]: ...
+    def files(self, unit: str) -> list[str]:
+        """练习场里的文件（相对路径），给页面上的「文件」列出来（D-057）。"""
+    def read(self, unit: str, rel: str) -> str: ...
+    def write(self, unit: str, rel: str, content: str) -> None:
+        """只能写练习场里的文本文件；路径出了练习场、内容太长就报错。"""
     def check(self, unit: str, checks: list[dict]) -> list[tuple[bool, str, dict]]: ...
     def verify(self, plan: dict, workdir: Path) -> dict:
         """把一份计划的练习从头走一遍（发布前的闸门，D-014）。"""
@@ -89,13 +105,10 @@ class Spec:
     name: str
     verbs: tuple[Verb, ...] = ()
     checkers: tuple[Checker, ...] = ()
-    checkpoints: dict[str, CheckpointGrader] = field(default_factory=dict)       # 课程页检查点题型 → 判分
-    checkpoint_docs: dict[str, str] = field(default_factory=dict)                 # 题型 → 给 agent 的说明
+    modules: tuple[PracticeModule, ...] = ()                                      # 练习形式（D-052）：检查点题型 + 说明 + 写法 + 判分
     practice: PracticeEnv | None = None
     plan_rules: tuple[PlanRule, ...] = ()                                         # 课程计划的附加检查
-    checkpoint_rules: dict[str, CheckpointRule] = field(default_factory=dict)
     plan_fields: dict = field(default_factory=dict)                               # 课程计划 schema 的附加字段
-    checkpoint_fields: dict = field(default_factory=dict)
 
 
 # ---------- harness（D-022） ----------
@@ -119,6 +132,14 @@ class RawRun:
     seconds: float
 
 
+@dataclass
+class Completion:
+    """不带工具的一问一答的结果（评审、评分、批改）：回答文字 + 用量和费用（美元），费用要记账。"""
+    text: str
+    tokens: int = 0
+    cost_usd: float = 0.0
+
+
 class AgentRuntime(Protocol):
     """agent loop（现在借用 pi）。换 loop = 换一个实现，运行记录的格式不变。"""
     version: str
@@ -126,7 +147,7 @@ class AgentRuntime(Protocol):
     def run(self, agent: AgentDef, workspace: Path, model: dict, tools: list[str], timeout: int,
             system_prompt: Path) -> RawRun:
         """system_prompt：harness 按 prompt 部件拼好、存在运行目录里的那一份（D-033），agent 读的就是它。"""
-    def complete(self, model: dict, system: str, prompt_file: Path, workspace: Path, timeout: int) -> str: ...
+    def complete(self, model: dict, system: str, prompt_file: Path, workspace: Path, timeout: int) -> Completion: ...
 
 
 @dataclass

@@ -1,6 +1,6 @@
 """备课控制面板（D-032）：课程清单 × 学习进度 × 备课流水线 × agent 看到的上下文。
 
-INVARIANT: 这里只读已有的记录（syllabus、课程计划、证据、Run、Grade）并投影出来，不存任何东西；
+INVARIANT: 这里只读已有的记录（课程定义、课程计划、证据、Run、Grade）并投影出来，不存任何东西；
 写操作只有两个：prepare()——在后台跑一次备课（产出循环：生成 → 检验 → 定点修复 → 通过就发布，见 app/prep.py），
 和 publish()——学习者确认"已经学过的单元换成新版本"。
 """
@@ -12,7 +12,7 @@ from studykit.app.harness import Harness
 from studykit.app.learning import Course
 from studykit.app.prep import CoursePrep
 from studykit.app.ports import Content, EvidenceStore, JobRunner, PlanStore, RunStore
-from studykit.domain import harness as h
+from studykit.domain import harness as h, plan as plans
 from studykit.domain.errors import DomainError
 from studykit.domain.evidence import split_question
 
@@ -21,15 +21,16 @@ KB_JOB = "knowledge:all"
 
 # agent 输入里的每一块：（key，标题，从哪来，学习者能不能直接改，怎么改）
 BLOCKS = [
-    ("unit_notes", "单元备注", "progress/syllabus.yaml", True, "改这个单元的 notes 字段：写给 agent 的备课要求"),
-    ("learner", "学习者画像", "progress/learner.md", True, "直接改：电脑、背景、对你有效的讲法都写在这里"),
-    ("curriculum_row", "课程清单里这一学科的一行", "curriculum.md", True, "主课、看哪部分、学到什么程度；顺序和取舍由你决定"),
+    ("unit_requests", "学习者对这个单元的要求", "progress/course.yaml", True, "这个单元的 requests：写给备课老师的要求"),
+    ("learner", "学习者资料 + 老师的观察", "progress/profile.yaml + 证据", True,
+     "资料直接改 profile.yaml；观察是证据（proposed_strategy），学习者可以推翻（refuted_strategy）"),
+    ("course_info", "课程定义里这个学科和单元", "progress/course.yaml", True, "目标、主课、这个单元看哪部分、在项目里哪里用到"),
     ("known_titles", "已经掌握（讲解里可以直接用）", "知识图 + 证据（自动算）", False,
      "不能手改：做对题目，或在新词上点「我早就知道」，它就会变"),
     ("related", "和这个单元相关的薄弱点、先修", "知识图 + 证据（自动算）", False, "导师用 kg observe 记录你说没懂的地方"),
     ("existing_nodes", "知识图里已有的节点", "knowledge/<学科>.yaml", True, "新概念 id 加在这里"),
-    ("budget", "时间预算", "progress/settings.yaml", True, "unit_budget_minutes / session_minutes / max_new_terms"),
-    ("hosts", "能打开的网站（白名单）", "curriculum.md 里出现过的链接", True, "在课程清单里加链接，这个网站就能打开"),
+    ("budget", "时间预算", "progress/profile.yaml 的 time", True, "unit_budget_minutes / session_minutes / max_new_terms"),
+    ("hosts", "能打开的网站（白名单）", "progress/course.yaml 里所有材料的域名", True, "在课程定义里加材料，这个网站就能打开"),
 ]
 # 调用 LLM 的地方（D-033）：每个都有自己的版本历史
 CALL_SITES = [(AGENT, "备课 agent（生成 + 定点修复）"), (f"{AGENT}#reviewer", "备课的评审模型（安全闸门 + 质量，D-035）"),
@@ -54,20 +55,19 @@ class Panel:
                 lessons[l.unit].append(l)
         answered = self._answered()
         topics = []
-        for tid, topic in (self.content.syllabus().get("topics") or {}).items():
+        for s in self.content.course().subjects:
             units = []
-            for u in topic.get("units") or []:
-                uid = u.get("id")
+            for u in s.units:
+                uid = u.id
                 units.append({
-                    "id": uid, "title": u.get("title", uid), "status": u.get("status", "todo"),
-                    "done_on": str(u.get("done_on") or ""), "notes": u.get("notes") or "",
+                    "id": uid, "title": u.title, "requests": list(u.requests), "scope_open": u.scope_open,
                     "course": self._course(uid),
                     "quizzes": [{"ref": q.ref, "title": q.title, "questions": len(q.questions()),
                                  "answered": len(answered.get(q.ref, set()))} for q in lessons.get(uid, [])],
                     "prep": self._prep(uid, runs.get(uid, []), grades),
                     "knowledge": self._knowledge(runs.get(uid, [])),
                 })
-            topics.append({"id": tid, "title": topic.get("title", tid), "units": units})
+            topics.append({"id": s.id, "title": s.title, "units": units})
         return {"topics": topics, "knowledge_job": self.jobs.status(KB_JOB)}
 
     # ---------- 单元详情：每次运行的评测和审阅 ----------
@@ -116,6 +116,8 @@ class Panel:
 
     def prepare(self, unit: str) -> dict:
         self.harness.build_input(unit)                        # 单元不存在就在这里报错，不开线程
+        if self.content.course().find(unit)[1].scope_open:
+            raise DomainError(f"{unit} 的范围还没定（一整门讲座还没拆），不能备课")
         key = self._key(unit)
 
         if (self.prep.status.get(unit) or {}).get("alive"):
@@ -128,14 +130,18 @@ class Panel:
         """预备（D-040 ②）：学习者在学 unit 时，把课程清单里的下一个单元放到后台去备。返回开始备的单元，没有就是 None。
 
         只备从来没备过的单元：备过但没走完、卡住了的不自动重试（免得反复花钱）；已经在备的不重复开。
-        progress/settings.yaml 里 prefetch_next: false 可以关掉。
+        progress/settings.yaml 里 prefetch_next: false 可以关掉。范围没定（scope: open）的单元不备。
         """
         if self.content.settings().get("prefetch_next") is False:
             return None
-        order = [u.get("id") for t in (self.content.syllabus().get("topics") or {}).values() for u in t.get("units") or []]
-        if unit not in order or order.index(unit) + 1 >= len(order):
+        order = self.content.course().units()
+        ids = [u.id for _, u in order]
+        if unit not in ids or ids.index(unit) + 1 >= len(ids):
             return None
-        nxt = order[order.index(unit) + 1]
+        nxt_unit = order[ids.index(unit) + 1][1]
+        if nxt_unit.scope_open:                              # 范围没定的单元不备（D-047）
+            return None
+        nxt = nxt_unit.id
         if self.plans.current(nxt) is not None or self._runs_by_unit().get(nxt):
             return None
         if (self.prep.status.get(nxt) or {}).get("alive") or (self.jobs.status(self._key(nxt)) or {}).get("state") == "running":
@@ -144,8 +150,8 @@ class Panel:
         return nxt
 
     def build_knowledge(self) -> dict:
-        """为课程清单里所有还没有知识库的单元，在后台并行调研（D-040 ③：和学习者无关，curriculum 同意后就能做）。"""
-        units = [u.get("id") for t in (self.content.syllabus().get("topics") or {}).values() for u in t.get("units") or []]
+        """为课程里所有还没有知识库的单元，在后台并行调研（D-040 ③：和学习者无关，课程定了就能做）。范围没定的单元跳过。"""
+        units = [u.id for _, u in self.content.course().units() if not u.scope_open]
         todo = [u for u in units if self.harness.knowledge(AGENT, u) is None]
         if not todo:
             raise DomainError("所有单元都已经有知识库了")
@@ -202,8 +208,8 @@ class Panel:
     def _course(self, unit: str) -> dict | None:
         if self.plans.current(unit) is None:
             return None
-        p = self.course.page(unit)
-        return {"passed": len(p["progress"]["passed"]), "sections": p["section_count"]}
+        # WHY: 只要两个数，不调 page()——它还会算知识图、预测负担、列版本，课程首页每个单元都算一遍很慢。
+        return {"passed": len(self.course.progress(unit)["passed"]), "sections": len(plans.sections_of(self.course.plan(unit)))}
 
     def _answered(self) -> dict[str, set[str]]:
         out: dict[str, set[str]] = defaultdict(set)

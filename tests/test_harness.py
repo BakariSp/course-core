@@ -5,7 +5,7 @@ import pytest
 
 from studykit import agent_tools
 from studykit.adapters.pi import steps_from_events
-from studykit.app.harness import ToolError, allowed_hosts, is_allowed
+from studykit.app.harness import ToolError, is_allowed
 from studykit.domain.errors import DomainError
 from studykit.domain.harness import Grade
 
@@ -45,7 +45,8 @@ NODES = [{"id": "tools.cmd.pwd", "title": "pwd", "desc": "打印当前目录", "
 
 def plan_of(*sections, outcomes=3, **kw):
     p = {"title": "Shell", "summary": "学 shell 基础。", "parts": [{"title": "第一部分", "sections": list(sections)}],
-         "nodes": NODES, "sources": [{"title": "讲义", "url": SRC}], "outcomes": [f"能做 {i}" for i in range(outcomes)]}
+         "nodes": NODES, "sources": [{"title": "讲义", "url": SRC}], "outcomes": [f"能做 {i}" for i in range(outcomes)],
+         "lab": {"story": "一个空的练习场", "files": [{"path": "notes/"}]}}             # 动手要在练习场里做（D-052）
     p.update(kw)
     return p
 
@@ -56,9 +57,10 @@ def call(app, ws, name, **args):
 
 # ---------- fetch_url ----------
 
-def test_allowlist_comes_from_curriculum():
-    hosts = allowed_hosts("[a](https://www.youtube.com/x) 和 https://docs.pytest.org/en/")
-    assert hosts == {"youtube.com", "docs.pytest.org"}
+def test_allowlist_comes_from_the_course_sources(app):
+    """D-047：白名单 = 课程定义里所有材料的域名。"""
+    assert app.harness.build_input("tools-01-shell")["hosts"] == ["missing.csail.mit.edu"]
+    hosts = {"youtube.com", "docs.pytest.org"}
     assert is_allowed("https://youtube.com/watch", hosts) and not is_allowed("file:///etc/passwd", hosts)
     assert not is_allowed("https://evil.com/?https://youtube.com", hosts)
 
@@ -80,6 +82,12 @@ def test_fetch_logs_text_pages_long_ones_and_rejects_others(app, ws):
 
 # ---------- submit_plan ----------
 
+def test_a_section_without_hands_on_is_fine(app, ws):
+    """D-052：不是每节都要动手（讲概念的节用选择、填空就够）；没有动手也就不需要练习场。"""
+    call(app, ws, "fetch_url", url=SRC)
+    assert "通过" in call(app, ws, "submit_plan", plan=plan_of(section(**{"try": []}), section("管道", 30, **{"try": []}), lab=None))
+
+
 def test_valid_plan_is_accepted_and_rendered(app, ws):
     call(app, ws, "fetch_url", url=SRC)
     assert "通过" in call(app, ws, "submit_plan", plan=plan_of(section(), section("管道", 30)))
@@ -90,7 +98,6 @@ def test_valid_plan_is_accepted_and_rendered(app, ws):
 @pytest.mark.parametrize("bad,expected", [
     ({"minutes": 60}, "单次学习上限"),
     ({"explain": "去看讲义。"}, "explain 太短"),                                   # 指路不是讲课（F-013）
-    ({"try": []}, "至少要有一条动手"),
     ({"pitfalls": [{"symptom": "报错"}]}, "不要再写 pitfalls"),
     ({"checkpoint": []}, "检查点要 1–3 道题"),
     ({"checkpoint": [checkpoint(hints=["只有一级"])]}, "正好 3 级"),
@@ -140,7 +147,9 @@ def test_budget_links_terms_and_nodes(app, ws):
 
 
 def test_schema_includes_spec_fields(app):
-    fetch, submit, research, outline, section, repair = app.harness.tool_schemas()
+    t = {x["name"]: x for x in app.harness.tool_schemas()}
+    fetch, submit, research, outline, section, repair = (t[n] for n in ("fetch_url", "submit_plan", "submit_research", "submit_outline", "submit_section", "submit_repair"))
+    assert {"submit_quiz", "submit_quiz_repair"} <= set(t)                       # 出题 agent 登记的工具（D-041）
     assert "points" in research["parameters"]["properties"]["knowledge"]["required"]
     assert repair["name"] == "submit_repair" and repair["parameters"]["required"] == ["parts"]
     stub = outline["parameters"]["properties"]["outline"]["properties"]["parts"]["items"]["properties"]["sections"]["items"]
@@ -168,7 +177,8 @@ def test_agent_tools_entry(app, ws, monkeypatch, capsys):
 # ---------- 一次完整的运行 ----------
 
 JUDGE = json.dumps({"scores": {k: {"score": 4, "reason": "r"} for k in
-                               ("teaches", "grounded", "novice_readable", "personalized", "timeboxed", "checkable", "coherent")},
+                               ("teaches", "grounded", "novice_readable", "personalized", "timeboxed", "checkable", "coherent",
+                                "no_jump", "honest_format")},
                     "top_issue": "太长", "suggestion": "给字数上限",
                     "suspect_claims": [{"claim": "c", "quote": "shell 讲义正文"}]}, ensure_ascii=False)
 
@@ -202,6 +212,7 @@ def test_evaluate_publish_gate_and_outcome(app, runtime, fetcher, clock):
     check, judge, claims = grades
     assert check.grader == "check" and check.dims["plan_valid"]["score"] == 1.0
     assert judge.detail["avg"] == 4 and judge.score == 0.75 and judge.issues == [{"layer": "prompt", "what": "给字数上限"}]
+    assert judge.detail["cost_usd"] == 0.003                            # 评分模型的钱也记上（假 runtime：每次 $0.003）
     assert claims.detail["claims"][0]["found_in_pages"]
     assert "评分" in app.harness.format_eval(grades)
     assert "Git Bash" in check.dims["mention:Git Bash"]["reason"]        # 用例要求提到 Git Bash，这份计划没提
@@ -241,6 +252,14 @@ def test_variant_changes_when_a_component_changes(app, root):
         app.harness.agent("../x")
 
 
+def test_model_override_can_switch_provider(app):
+    agent = app.harness.agent("tutor-prep")
+    same = app.harness.model(agent, "other-model")
+    assert same["provider"] == agent.spec["model"]["provider"] and same["id"] == "other-model"
+    other = app.harness.model(agent, "dashscope/qwen3.8-flash")
+    assert (other["provider"], other["id"]) == ("dashscope", "qwen3.8-flash")
+
+
 # ---------- pi 适配器 ----------
 
 def test_pi_events_become_steps():
@@ -266,7 +285,8 @@ def test_every_prompt_part_is_versioned_with_its_content(app, runtime, fetcher, 
     agent_dir = root / "agents" / "tutor-prep"
     v1 = app.store.variant(r1.variant)
     names = [k for k in v1.parts if k.startswith("prompt:")]
-    assert names == ["prompt:role", "prompt:principles", "prompt:learner", "prompt:tools", "prompt:workflow", "prompt:rules"]
+    assert names == ["prompt:role", "prompt:principles", "prompt:teaching", "prompt:learner", "prompt:tools", "prompt:workflow",
+                     "prompt:rules"]
     ws = app.harness.dir("tutor-prep", r1.id)
     assert runtime.system_prompt == ws / "system.md"                  # agent 读的就是这份拼好的
     parts = "".join((agent_dir / "prompt" / f"{n.split(':')[1]}.md").read_text(encoding="utf-8") for n in names)
@@ -294,3 +314,35 @@ def test_known_terms_cross_topics(app, monkeypatch):
     """学过 Shell 的学习者备 test 学科的课时，echo、python 也算已经会的（命令不分学科）。"""
     monkeypatch.setattr(app.learner, "known", lambda topic=None: {"echo"} if topic is None else set())
     assert "echo" in app.harness.build_input("tools-01-shell")["known_terms"]
+
+
+def test_known_titles_cross_subjects(app, root, monkeypatch):
+    """Shell 单元掌握的 pwd，备网络学科的单元时也写进"已经掌握"——否则 agent 以为学习者什么都不会，从 pwd 讲起。"""
+    import yaml
+    from tests.conftest import add_unit
+    from studykit.domain import knowledge
+    p = root / "progress" / "course.yaml"
+    data = yaml.safe_load(p.read_text(encoding="utf-8"))
+    data["subjects"].append({"id": "net", "title": "网络", "priority": "P0", "stage": "verify", "goal": "懂 HTTP",
+                             "sources": [], "units": []})
+    p.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    add_unit(root, "net-01-overview", "概述", subject="net")
+    pwd = knowledge.Node(id="tools.cmd.pwd", title="pwd")
+    monkeypatch.setattr(app.learner, "states", lambda nodes=None: {pwd.id: knowledge.NodeState(pwd, "mastered", [])})
+    assert app.harness.build_input("net-01-overview")["known_titles"] == ["pwd"]
+
+
+# ---------- 路线上学过的（D-051） ----------
+
+def test_brief_has_what_the_learner_studied_earlier_on_the_path(app, unit, root):
+    """前面的单元开始学了，它教的知识点对后面的单元就是「学过」：简报、写节的人、检查都知道。"""
+    from tests.conftest import add_unit
+    add_unit(root, "tools-02-git", "Git")
+    assert app.harness.build_input("tools-02-git")["studied"] == []          # 还没开始学 Shell
+    app.course.record(unit, 0, "open")
+    inp = app.harness.build_input("tools-02-git")
+    assert [s["id"] for s in inp["studied"]] == ["tools.cmd.pwd", "tools.cmd.cd", "tools.cmd.grep"]
+    assert app.harness.build_input(unit)["studied"] == []                     # 自己这个单元不算
+    brief = app.harness.render_brief("{knowledge}", {**inp, "unit_budget_minutes": 1, "session_minutes": 1, "max_new_terms": 1})
+    assert "学过" in brief and "pwd" in brief and "回顾" in brief
+    assert "学过" in app.harness.learner_now({"parts": [{"title": "P", "sections": []}]}, 0, inp)

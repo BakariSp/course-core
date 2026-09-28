@@ -97,3 +97,20 @@ def test_unexpected_changes_respects_address_nesting():
     # 一个检查点的发现允许改它所在的小节；新增的小节不在允许范围内
     assert unexpected_changes(before, after, ["/sections/1/checkpoint/0"]) == ["/sections/0", "/sections/2"]
     assert unexpected_changes(before, after, [""]) == []                  # 整份的发现：哪里都可以改
+
+
+def test_round_cost_includes_the_reviewers_model_calls_and_is_itemized():
+    gen = Gen(plan({"name": "a", "bad": True}), fix_addressed)
+    k = kind(gen)
+    k.review_cost = lambda a: 0.05
+    r = run_loop(k, {})
+    assert [x.costs for x in r.rounds] == [{"生成": 0.2, "评审": 0.05}, {"生成": 0.2, "评审": 0.05}]
+    assert r.spent == 0.5
+
+
+def test_review_cost_counts_against_the_budget():
+    gen = Gen(plan({"name": "a", "bad": True}), lambda a, f: a, cost=0.1)   # 永远修不好
+    k = kind(gen)
+    k.review_cost = lambda a: 0.5
+    r = run_loop(k, {}, Budget(rounds=5, usd=1.0))
+    assert r.status == "escalated" and len(r.rounds) == 2                    # 只算生成的话会跑满 5 轮

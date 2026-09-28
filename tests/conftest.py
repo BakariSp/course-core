@@ -10,9 +10,12 @@ import threading
 import time
 from pathlib import Path
 
-import pytest
+import copy
 
-from studykit.app.ports import AgentDef, FetchError, Page, RawRun
+import pytest
+import yaml
+
+from studykit.app.ports import AgentDef, Completion, FetchError, Page, RawRun
 from studykit.bootstrap import Config, build
 from studykit.domain.harness import RunStep
 
@@ -84,8 +87,8 @@ class FakeRuntime:
     def complete(self, model, system, prompt_file, workspace, timeout):
         if "安全闸门" in system:                  # 评审模型（agents/tutor-prep/reviewer.md）
             self.reviews.append(prompt_file.read_text(encoding="utf-8"))
-            return self.review_reply
-        return self.judge_reply
+            return Completion(self.review_reply, 500, 0.002)
+        return Completion(self.judge_reply, 500, 0.003)
 
 
 class InlineJobs:
@@ -115,21 +118,31 @@ def write(path: Path, text: str) -> None:
 
 @pytest.fixture
 def root(tmp_path):
-    """一个最小的仓库：一套题 t/01-x、一份 syllabus、课程清单、tutor-prep agent 的定义。"""
+    """一个最小的仓库：一套题 t/01-x、课程定义、学习者资料、tutor-prep agent 的定义。"""
     r = tmp_path / "repo"
     write(r / "progress" / "settings.yaml", f"lab_root: '{(tmp_path / 'labs').as_posix()}'\n")
-    write(r / "progress" / "syllabus.yaml", """
-        topics:
-          tools:
+    write(r / "progress" / "course.yaml", """
+        schema_version: 2
+        goal: 能验证 AI 写的代码对不对
+        stages:
+          - {id: verify, title: 能验证, weeks: [1, 8], pass: 能独立修一个线上 bug}
+        subjects:
+          - id: tools
             title: 开发工具
+            priority: P0
+            stage: verify
+            goal: 能自己 git bisect
+            sources:
+              - {id: missing, title: 讲义, url: "https://missing.csail.mit.edu/2026/", kind: course}
             units:
-              - {id: tools-01-shell, title: Shell, status: watching, notes: 零基础}
+              - {id: tools-01-shell, title: Shell, requests: [零基础], sources: [{ref: missing, url: "https://missing.csail.mit.edu/2026/course-shell/"}]}
     """)
-    write(r / "progress" / "learner.md", "- 身份：产品经理\n")
-    write(r / "curriculum.md", """
-        | id | 学科 | 主课 |
-        |---|---|---|
-        | `tools` | 开发工具 | [讲义](https://missing.csail.mit.edu/2026/) |
+    write(r / "progress" / "profile.yaml", """
+        schema_version: 1
+        about:
+          identity: 产品经理
+        time:
+          session_minutes: 45
     """)
     lesson = r / "lessons" / "t" / "01-x"
     write(lesson / "quiz.yaml", """
@@ -172,6 +185,7 @@ def root(tmp_path):
     """)
     shutil.copytree(REPO / "agents" / "tutor-prep", r / "agents" / "tutor-prep")
     shutil.copytree(REPO / "agents" / "short-grader", r / "agents" / "short-grader")
+    shutil.copytree(REPO / "agents" / "quiz-maker", r / "agents" / "quiz-maker")
     (r / "agents" / "_pi").mkdir(parents=True)
     (r / "agents" / "_pi" / "env_bridge.ts").write_text("// fake", encoding="utf-8")
     return r
@@ -221,6 +235,11 @@ def sec(title, minutes, **kw):
 
 
 def plan_v2(run="run-2"):
+    # 深拷贝：检查点常量（CHOICE、FILL、LAB_TASK）是模块级共享的，测试改了一份计划不能改到别的测试
+    return copy.deepcopy(_plan_v2(run))
+
+
+def _plan_v2(run):
     return {"schema_version": 2, "unit": "tools-01-shell", "title": "Shell", "summary": "s",
             "provenance": {"run": run, "known_terms": []},
             "lab": LAB, "sources": [{"title": "讲义", "url": "https://missing.csail.mit.edu/2026/course-shell/"}],
@@ -237,3 +256,13 @@ def plan_v2(run="run-2"):
 def unit(app):
     app.course.publish(plan_v2())
     return "tools-01-shell"
+
+
+def add_unit(root: Path, uid: str = "tools-02-git", title: str = "Git", requests=("想学 bisect",), scope: str = "set",
+             subject: str = "tools") -> None:
+    """往测试仓库的课程定义里加一个单元（加在学科的最后）。"""
+    p = root / "progress" / "course.yaml"
+    data = yaml.safe_load(p.read_text(encoding="utf-8"))
+    s = next(x for x in data["subjects"] if x["id"] == subject)
+    s["units"].append({"id": uid, "title": title, "requests": list(requests), "scope": scope})
+    p.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")

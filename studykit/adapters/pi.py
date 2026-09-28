@@ -17,7 +17,7 @@ import sys
 import time
 from pathlib import Path
 
-from studykit.app.ports import AgentDef, RawRun
+from studykit.app.ports import AgentDef, Completion, RawRun
 from studykit.domain.errors import DomainError
 from studykit.domain.harness import RunStep
 
@@ -132,10 +132,10 @@ class PiRuntime:
         (raw / "stderr.log").write_text(stderr, encoding="utf-8")
         return RawRun(steps_from_events(stdout.splitlines()), code, round(time.monotonic() - t0, 1))
 
-    def complete(self, model: dict, system: str, prompt_file: Path, workspace: Path, timeout: int) -> str:
-        """不带工具的一问一答（评分模型用）。"""
+    def complete(self, model: dict, system: str, prompt_file: Path, workspace: Path, timeout: int) -> Completion:
+        """不带工具的一问一答（评审、评分、批改用）。WHY: 用事件流（--mode json）而不是 --print：只有事件流里有用量和费用。"""
         cmd = self._cmd() + [
-            "--print", "--no-session", "--no-context-files", "--no-skills", "--no-prompt-templates",
+            "--mode", "json", "--no-session", "--no-context-files", "--no-skills", "--no-prompt-templates",
             "--no-extensions", "--no-approve", "--no-tools",
             "--provider", model["provider"], "--model", model["id"], "--system-prompt", system,
             f"@{prompt_file.name}", "按评分标准评估上面的内容，只输出 JSON。",
@@ -143,6 +143,11 @@ class PiRuntime:
         proc = subprocess.run(cmd, cwd=workspace, env=self._env({}), capture_output=True, text=True, encoding="utf-8",
                               errors="replace", timeout=timeout, stdin=subprocess.DEVNULL)
         (workspace / "raw").mkdir(exist_ok=True)
-        (workspace / "raw" / f"{prompt_file.stem}-reply.txt").write_text(proc.stdout + "\n--- stderr ---\n" + proc.stderr,
-                                                                         encoding="utf-8")
-        return proc.stdout
+        (workspace / "raw" / f"{prompt_file.stem}-events.jsonl").write_text(proc.stdout, encoding="utf-8")
+        (workspace / "raw" / f"{prompt_file.stem}-stderr.log").write_text(proc.stderr, encoding="utf-8")
+        steps = steps_from_events(proc.stdout.splitlines())
+        texts = [s.summary for s in steps if s.kind == "model" and s.summary]
+        if not texts:   # 模型报错（如 401 key 不对）：把原因带出去，不要当成"回答是空的"
+            errors = [s.summary for s in steps if s.kind == "error"] or [proc.stderr.strip()[-300:] or f"退出码 {proc.returncode}"]
+            raise AgentError(f"{model['provider']}/{model['id']} 没有回答：{errors[-1][:300]}")
+        return Completion(texts[-1], sum(s.tokens for s in steps), round(sum(s.cost for s in steps), 6))

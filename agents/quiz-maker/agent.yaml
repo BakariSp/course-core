@@ -1,0 +1,26 @@
+# 出题 agent：学习者学完一个单元，按课程目标和这个学习者在单元里的表现出一套单元题（D-041，PRD_V2 阶段 C）
+# 这个文件夹就是 agent 的全部定义。改 agent = 改这里的文件。
+schema_version: 1
+name: quiz-maker
+description: 学习者学完一个单元后，出一套 6–8 道的单元题：新概念逐级出，薄弱点出变体，至少 3 种题型、至少 1 道 4 级题。
+
+model:
+  provider: deepseek
+  id: deepseek-flash
+  thinking: medium
+
+prompt:                       # system prompt 的部件，按顺序原样拼接（D-033）
+  - {part: role, file: prompt/role.md}
+  - {part: rules, file: prompt/rules.md}
+  - {part: formats, file: prompt/formats.md}
+task: task.md                 # 单元信息 + 学习者在这个单元的表现（每一步共用）
+stages:
+  make:   {task: stages/make.md, tools: [submit_quiz]}              # 出一整套
+  repair: {task: stages/repair.md, tools: [submit_quiz_repair]}     # 只重写被指出的题
+
+review:                       # 评审模型：兼任安全闸门（代码题的测试会在本机执行）和质量评审
+  model: {provider: deepseek, id: deepseek-v4-pro}
+  prompt: reviewer.md         # 评分标准见 eval.rubric
+
+eval:
+  rubric: evals/rubric.md

@@ -188,27 +188,73 @@ def test_course_evaluation_pairs_predictions_with_what_happened(app, unit, clock
 # 学习者模型
 # ======================================================================
 
-def test_observations_and_graded_queries(app, unit):
+def _graph_for_shell(app):
+    """样例课程教 pwd、cd、grep（各节的新词）；role 是先修，没有单元教它。"""
     app.content.add_nodes([
-        {"id": "tools.shell.role", "title": "终端 / shell / 命令", "kind": "concept", "units": ["tools-00-intro"]},
-        {"id": "tools.shell.glob", "title": "通配符", "kind": "concept", "requires": ["tools.shell.role"], "units": [unit]},
-        {"id": "tools.cmd.sed", "title": "sed", "kind": "term", "requires": ["tools.shell.glob"], "units": [unit]},
-    ])
-    app.learner.observe("tools.shell.glob", "weak", "glob 那段完全跟不上")
+        {"id": "tools.shell.role", "title": "终端 / shell / 命令", "kind": "concept"},
+        {"id": "tools.cmd.pwd", "title": "pwd", "kind": "term", "requires": ["tools.shell.role"]},
+        {"id": "tools.cmd.cd", "title": "cd", "kind": "term"},
+        {"id": "tools.cmd.grep", "title": "grep", "kind": "term", "requires": ["tools.cmd.pwd"], "helpful": ["tools.shell.pipe"]},
+        {"id": "tools.shell.pipe", "title": "管道", "kind": "concept"},
+    ], by="r-test")
+
+
+def test_observations_and_graded_queries(app, unit):
+    _graph_for_shell(app)
+    app.learner.observe("tools.cmd.pwd", "weak", "pwd 那段完全跟不上")
     with pytest.raises(KnowledgeError):
         app.learner.observe("Bad", "weak", "x")
-    assert "通配符（`tools.shell.glob`）" in app.learner.summary()
+    assert "pwd（`tools.cmd.pwd`）" in app.learner.summary()
     rel = app.learner.related(unit)
-    assert [n["id"] for n in rel["taught"]] == ["tools.shell.glob", "tools.cmd.sed"]
+    assert [n["id"] for n in rel["taught"]] == ["tools.cmd.pwd", "tools.cmd.cd", "tools.cmd.grep"]   # 从课程计划投影（D-047）
     assert rel["prerequisites_not_mastered"] == [{"id": "tools.shell.role", "title": "终端 / shell / 命令",
                                                   "state": "new", "distance": 1}]
-    assert rel["weak"][0]["why"] == ["glob 那段完全跟不上（tutor）"]
-    show = app.learner.show("tools.shell.glob")
-    assert show["state"] == "weak" and show["required_by"][0]["id"] == "tools.cmd.sed"
+    assert rel["weak"][0]["why"] == ["pwd 那段完全跟不上（tutor）"]
+    show = app.learner.show("tools.cmd.pwd")
+    assert show["state"] == "weak" and show["required_by"][0]["id"] == "tools.cmd.grep" and show["units"] == [unit]
+    assert show["requires"][0] | {} == {"id": "tools.shell.role", "title": "终端 / shell / 命令", "state": "new",
+                                        "kind": "required", "by": "r-test"}
     tree = app.learner.tree("tools")
-    assert ["tools.shell.role", "tools.shell.glob"] in tree["edges"]
+    assert ["tools.shell.role", "tools.cmd.pwd", "required"] in tree["edges"] and ["tools.shell.pipe", "tools.cmd.grep", "helpful"] in tree["edges"]
+    assert {n["id"]: n["units"] for n in tree["nodes"]}["tools.shell.role"] == []
     with pytest.raises(KnowledgeError):
         app.learner.show("tools.nope")
+
+
+def test_readiness_groups_prerequisites_by_kind_and_state(app, unit):
+    """D-047：先修要求 = 本单元教的知识点依赖的、不属于本单元的知识点，按 必须 / 更好 × 满足 / 不满足 分组。"""
+    _graph_for_shell(app)
+    r = app.learner.readiness(unit)
+    assert [x["id"] for x in r["required"]["unmet"]] == ["tools.shell.role"] and r["required"]["met"] == []
+    assert r["required"]["unmet"][0]["for"] == ["tools.cmd.pwd"] and r["required"]["unmet"][0]["by"] == "r-test"
+    assert [x["id"] for x in r["helpful"]["unmet"]] == ["tools.shell.pipe"]
+    assert [x["id"] for x in r["learn"]] == ["tools.cmd.pwd", "tools.cmd.cd", "tools.cmd.grep"]
+
+
+def test_publishing_a_plan_records_who_proposed_each_prerequisite(app):
+    from tests.conftest import plan_v2
+    plan = plan_v2()
+    plan["nodes"] = [{"id": "tools.cmd.pwd", "title": "pwd", "desc": "d", "kind": "term", "requires": ["tools.cmd.cd"]},
+                     {"id": "tools.cmd.cd", "title": "cd", "desc": "d", "kind": "term"}]
+    app.course.publish(plan)
+    edges = app.content.graph()["tools.cmd.pwd"].edges
+    assert [(e.id, e.kind, e.by) for e in edges] == [("tools.cmd.cd", "required", plan["provenance"]["run"])]
+
+
+def test_profile_and_teacher_observations_that_the_learner_can_refute(app):
+    """D-047：资料是学习者写的；老师的观察是证据，学习者说不对就不再给老师看。"""
+    a = app.learner.note_strategy("先给心智模型，再让他亲眼看到", source="Shell 第 4 节")
+    b = app.learner.note_strategy("一节塞太多命令会过载")
+    p = app.learner.profile()
+    assert {x["key"]: x["value"] for x in p["about"]}["identity"] == "产品经理"
+    assert {x["key"]: x["value"] for x in p["time"]} == {"session_minutes": 45, "unit_budget_minutes": 180, "max_new_terms": 5}
+    assert [o["id"] for o in p["observations"]] == [a.id, b.id]
+    app.learner.refute_strategy(b.id, "现在不会了")
+    assert [o["id"] for o in app.learner.profile()["observations"]] == [a.id]
+    brief = app.learner.brief_profile()
+    assert "产品经理" in brief and "先给心智模型" in brief and "塞太多" not in brief
+    with pytest.raises(KnowledgeError):
+        app.learner.refute_strategy(b.id)                                # 已经推翻过了
 
 
 def test_graph_check_reports_orphans(app):
@@ -217,9 +263,12 @@ def test_graph_check_reports_orphans(app):
 
 
 def test_weak_report_and_untested_concepts(app, unit):
-    app.content.add_nodes([{"id": "tools.shell.glob", "title": "通配符", "kind": "concept", "units": [unit]}])
+    app.content.add_nodes([{"id": "tools.cmd.grep", "title": "grep", "kind": "term"}])
+    assert app.learner.weak()["studied_units"] == []                # 学过哪些单元由证据算：还一节都没过
+    app.course.record(unit, 2, "done")                              # 第 3 节没有检查点，点"学完"就算通过
     w = app.learner.weak()
-    assert w["studied_units"][0]["id"] == unit and w["untested_concepts"] == ["tools.shell.glob"]
+    assert w["studied_units"] == [{"topic": "tools", "id": unit, "title": "Shell", "passed": 1, "sections": 3}]
+    assert w["untested_concepts"] == ["tools.cmd.grep"]
 
 
 def test_time_report_includes_manual_entries(app, unit):
@@ -227,15 +276,6 @@ def test_time_report_includes_manual_entries(app, unit):
     app.learner.log_time("2026-09-25T20:00:00", 48, "看第 1 讲视频")
     report = app.learner.time_report()
     assert "2026-09-25  合计 48 分钟" in report and "看第 1 讲视频" in report and "2026-09-26" in report
-
-
-def test_weak_report_is_json_even_with_yaml_dates(app, root):
-    # syllabus.yaml 里不加引号的 done_on: 2026-09-26 会被 YAML 解析成 date 对象
-    (root / "progress" / "syllabus.yaml").write_text(
-        "topics:\n  tools:\n    title: 开发工具\n    units:\n"
-        "      - {id: tools-01-shell, title: Shell, status: done, done_on: 2026-09-26}\n", encoding="utf-8")
-    w = app.learner.weak()
-    assert json.loads(json.dumps(w))["studied_units"][0]["done_on"] == "2026-09-26"
 
 
 # ---------- 单元题整卷一次交（D-031） ----------
@@ -285,6 +325,87 @@ def test_exam_submit_grades_everything_and_llm_grades_short(app, runtime, root):
     assert "cd 失败了还会继续 rm" in next(ws.iterdir()).joinpath("input.md").read_text(encoding="utf-8")
     view = {x["id"]: x for x in app.assessment.view(EXAM)["questions"]}
     assert view["q2"]["previous"]["graded_by"] == "short-grader"
+
+
+def test_exam_records_each_scoring_point_and_mastery_follows_them(app, runtime, root):
+    """D-056 第 1 步：key.parts 让一道题的每个得分点各记到自己的知识点上，错项带上误解。"""
+    from tests.conftest import write
+    lesson = root / "lessons" / "t" / "03-parts"
+    write(lesson / "quiz.yaml", """
+        title: 得分点
+        unit: tools-01-shell
+        questions:
+          - {id: q1, checker: choice, concept: t.a, level: 1, prompt: 选 A 和 D, multi: true, options: [a, b, c, d]}
+          - {id: q2, checker: short, concept: t.b, level: 4, prompt: 找 bug}
+    """)
+    write(lesson / "key.yaml", """
+        answers:
+          q1:
+            answer: [A, D]
+            explain: 因为
+            parts:
+              - {concept: t.a}
+              - {concept: t.a}
+              - {concept: t.a, misconception: mixes_up}
+              - {concept: t.d, level: 2}
+          q2:
+            rubric: ["说出 cd 失败不停（0.5）", "说出 glob 提前展开（0.5）", "加分项：成功提示不可信"]
+            explain: 两个问题
+            parts: [{concept: t.b}, {concept: t.glob, misconception: late_glob}, {concept: t.b}]
+    """)
+    runtime.judge_reply = LLM_OK                          # 第 1 条 0.5/0.5，第 2 条 0.25/0.5
+    app.assessment.submit_exam("t/03-parts", {"q1": ["A", "C"], "q2": "cd 失败了还会继续 rm"})
+    [a1, a2] = [e for e in app.store.query("me", verbs=("answered",)) if e.object_id.startswith("t/03-parts")]
+    assert a1.nodes == ("t.a", "t.d") and a2.nodes == ("t.b", "t.glob")
+    assert a1.payload["parts"][2] == {"concept": "t.a", "level": 1, "score": 0.0, "misconception": "mixes_up"}
+    [g] = [e for e in app.store.query("me", verbs=("graded",)) if e.object_id.startswith("t/03-parts")]
+    assert g.payload["parts"] == [{"concept": "t.b", "level": 4, "score": 1.0},
+                                  {"concept": "t.glob", "level": 4, "score": 0.5, "misconception": "late_glob"}]
+    assert "t.glob" in g.nodes
+    stats = {c["concept"]: c for c in app.learner.weak()["concepts"]}
+    assert stats["t.d"]["failing_levels"] == [2] and stats["t.b"]["mastery"] == 4 and stats["t.glob"]["failing_levels"] == [4]
+
+
+class HeldJobs:
+    """后台任务先不跑，测试里手动放行：模拟"交卷已经返回、简答题还在批"（D-049）。"""
+
+    def __init__(self):
+        self.held, self.jobs = {}, {}
+
+    def start(self, key, fn):
+        self.held[key], self.jobs[key] = fn, {"state": "running", "started": "t", "error": ""}
+        return True
+
+    def status(self, key):
+        return self.jobs.get(key)
+
+    def release(self):
+        for key, fn in self.held.items():
+            fn()
+            self.jobs[key]["state"] = "done"
+        self.held = {}
+
+
+def test_exam_submit_returns_before_short_answers_are_graded(root, tmp_path, clock, runtime, fetcher):
+    """D-049：交卷马上返回自动判分的结果，简答题标成"批改中"，在后台批完后从 exam_result 取。"""
+    from studykit.bootstrap import Config, build
+    jobs = HeldJobs()
+    a = build(Config(root=root, data=tmp_path / "data"), clock=clock, runtime=runtime, fetcher=fetcher, jobs=jobs)
+    try:
+        runtime.judge_reply = LLM_OK
+        r = a.assessment.submit_exam(EXAM, {"q1": ["B"], "q2": "cd 失败了还会继续 rm"})
+        assert r["questions"]["q1"]["score"] == 1.0 and r["grading"] == ["q2"] and r["score"] is None
+        assert r["questions"]["q2"]["result"] == "pending" and r["questions"]["q2"]["grading"] is True
+        assert a.store.query("me", verbs=("submitted_exam",))                # 交卷已经记下，不等批改
+        view = {x["id"]: x for x in a.assessment.view(EXAM)["questions"]}
+        assert view["q2"]["previous"]["grading"] is True                     # 刷新页面也知道还在批
+        jobs.release()
+        done = a.assessment.exam_result(EXAM, r["exam"])
+        assert done["grading"] == [] and done["questions"]["q2"]["score"] == 0.75
+        assert done["questions"]["q2"]["graded_by"] == "short-grader" and done["score"] == round((1 + 0.75 + 0) / 3, 3)
+        assert "grading" not in {x["id"]: x for x in a.assessment.view(EXAM)["questions"]}["q2"]["previous"]
+    finally:
+        a.close()
 
 
 def test_llm_failure_leaves_short_answer_for_the_tutor(app, runtime):

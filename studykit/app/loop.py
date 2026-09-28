@@ -16,10 +16,12 @@ from studykit.domain.artifact import Finding, blocking, unexpected_changes
 
 @dataclass
 class Attempt:
-    """生成者的一次产出。run 是这次运行的 id（每一轮都能回放），cost 是美元。"""
+    """生成者的一次产出。run 是这次运行的 id（每一轮都能回放），cost 是美元；
+    costs 是 cost 按步骤拆开的明细（如 {"大纲": 0.02, "各节": 0.1}），不给就整笔记成"生成"。"""
     artifact: dict
     run: str
     cost: float = 0.0
+    costs: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -38,6 +40,7 @@ class Kind:
     repair: Callable[[Attempt, list[Finding], dict], Attempt]   # (当前这一轮, 阻断级发现, 输入) → 新的产出
     evaluators: list[Evaluator]
     parts: Callable[[dict], dict[str, object]]
+    review_cost: Callable[[Attempt], float] = lambda a: 0.0   # 检验器调模型花的钱（评审模型），这一轮检验完后查
 
 
 @dataclass(frozen=True)
@@ -50,7 +53,8 @@ class Budget:
 class Round:
     run: str
     findings: list[Finding]
-    cost: float
+    cost: float                                              # 这一轮一共花的：生成或修复 + 检验
+    costs: dict[str, float] = field(default_factory=dict)    # 按步骤的明细，加起来等于 cost
 
 
 @dataclass
@@ -87,7 +91,9 @@ def run_loop(kind: Kind, inp: dict, budget: Budget = Budget()) -> LoopResult:
     frozen: list[Finding] = []
     while True:
         findings = evaluate(kind, attempt, frozen)
-        result.rounds.append(Round(attempt.run, findings, attempt.cost))
+        review = kind.review_cost(attempt)
+        costs = {k: round(v, 6) for k, v in {**(attempt.costs or {"生成": attempt.cost}), "评审": review}.items()}
+        result.rounds.append(Round(attempt.run, findings, attempt.cost + review, costs))
         result.artifact = attempt.artifact
         todo = blocking(findings)
         if not todo:
