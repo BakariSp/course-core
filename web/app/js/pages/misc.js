@@ -40,11 +40,29 @@ export async function questionPage(id) {
 }
 
 // 课程设置：阶段、课程清单（都来自 progress/course.yaml）
+// D-064：待确认、路线外的课程从首页挪到这里
 export async function settingsPage() {
   const c = await src.course();
+  const units = src.flatUnits(c);
+  const asks = units.filter(u => u.state.key === "ask");
+  const others = units.filter(u => !c.path.includes(u.id) && u.state.key !== "ask");
   return h("div", { class: "stack-lg" },
     h("div", { class: "stack-sm" }, h("a", { class: "small", href: "#course" }, "← 课程"), h("h1", {}, "课程设置"),
       c.goal ? h("p", { class: "muted" }, "目标：", c.goal) : null),
+    asks.length ? h("section", { class: "stack-sm" },
+      h("h2", {}, "待确认"),
+      h("p", { class: "small muted" }, "这些单元的范围还没定（一整门讲座、一个频道），系统不会备它们。"),
+      h("div", { class: "list" }, asks.map(u => h("div", { class: "item" },
+        h("span", { class: "small muted" }, c.path.includes(u.id) ? "在路线上" : "路线外"),
+        h("div", {}, h("div", { class: "item-title" }, u.title), h("div", { class: "item-meta" }, u.subject.title)),
+        h("a", { class: "btn btn--sm", href: `#q.${u.id}` }, "确认范围"))))) : null,
+    others.length ? h("section", { class: "stack-sm" },
+      h("h2", {}, "其他课程"),
+      h("p", { class: "small muted" }, "不在路线上；想学时在这里打开。"),
+      h("div", { class: "list" }, others.map(u => h("div", { class: "item" },
+        h("span", { class: "small muted" }, u.subject.title),
+        h("a", { class: "item-title", href: `#u.${u.id}` }, u.title),
+        h("span"))))) : null,
     h("section", { class: "stack-sm" },
       h("h2", {}, "阶段"),
       h("div", { class: "list" }, c.stages.map(s => h("div", { class: "item", style: "grid-template-columns:6em minmax(0,1fr) auto" },

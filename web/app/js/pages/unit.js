@@ -7,6 +7,7 @@ import { h, fmtMinutes } from "../lib/dom.js";
 import { badge, mock, stepper, toast } from "../components/ui.js";
 import { challengeButton } from "../components/challenge.js";
 import * as src from "../data/source.js";
+import { unitAction } from "./course.js";
 import { badgeOf, TAGS, proposalFor, sectionsOf, remainingMinutes, sectionTitle, reasonText, prepSteps, STOPPED } from "../domain/course.js";
 
 export async function unitPage(id, rerender) {
@@ -20,19 +21,21 @@ export async function unitPage(id, rerender) {
       h("div", { class: "stack-sm", style: "gap:4px" },
         h("div", { class: "row" }, h("h1", {}, u.title), badge(badgeOf(u)),
           ...u.state.tags.map(t => h("span", { class: "tag tag--accent" }, TAGS[t] || t)),
-          k === "blocked" ? mock("自动续跑、换策略重试、上报开发者是第二期；现在由开发者处理") : null),
+          null),
         progress),
       act));
-  if (!u.course) return h("div", { class: "stack-lg" }, head(null, null), notReady(u, units), footer(u));
+  if (!u.course) return h("div", { class: "stack-lg" }, head(k === "queued" ? unitAction(u, rerender) : null, null),
+    notReady(u, units), footer(u));
 
   const page = await src.unit(id);
   const quiz = u.quiz;
-  const act = k === "quiz" ? h("a", { class: "btn btn--primary", href: src.quizHref(quiz.ref) }, "做单元题")
-    : h("a", { class: "btn btn--primary", href: src.learnHref(id) }, k === "done" ? "复习" : k === "ready" ? "开始学" : "继续学");
+  const act = h("a", { class: "btn btn--primary", href: src.learnHref(id) }, k === "done" ? "复习" : k === "ready" ? "开始学" : "继续学");
   const left = remainingMinutes(page);
+  // 事实（D-064）：走过几节、通过几节、跳过几节、单元题做了几道；学没学完由后端按"各节走过"算
   const progress = h("div", { class: "sum" },
-    h("span", {}, h("b", {}, `${u.course.passed}/${u.course.sections}`), " 节"),
-    h("span", {}, "单元题 ", h("b", {}, quiz ? `${quiz.answered}/${quiz.questions}` : "—")),
+    h("span", {}, "走过 ", h("b", {}, `${u.course.walked}/${u.course.sections}`), " 节"),
+    h("span", {}, "通过 ", h("b", {}, `${u.course.passed}`), u.course.skipped ? ` · 跳过 ${u.course.skipped}` : ""),
+    h("span", {}, "单元题 ", quiz ? h("a", { href: src.quizHref(quiz.ref) }, h("b", {}, `${quiz.answered}/${quiz.questions}`)) : h("b", {}, "—")),
     left ? h("span", {}, "还剩 ", h("b", {}, fmtMinutes(left))) : null);
   return h("div", { class: "stack-lg" },
     head(act, progress),
@@ -136,14 +139,14 @@ function notReady(u, units) {
       h("span", { style: "flex:1;min-width:200px" }, "范围还没定，系统不会备它。", p ? p.why : ""),
       h("a", { class: "btn btn--primary", href: `#q.${u.id}` }, "确认范围"));
   } else if (k === "preparing") line = h("div", { class: "stack-sm" }, stepper(prepSteps(u.prep.progress)),
-    h("p", { class: "small muted" }, "备好了这里会自己变成「能学」，不用刷新。"));
+    h("p", { class: "small muted" }, "备好了这里会自己变成「备好了」，不用刷新。"));
   else if (k === "blocked" && u.prep.stage === "interrupted")
     line = h("p", {}, "上次备课中途停了，服务下次启动时会自动接着备。", h("span", { class: "muted" }, " 可以先学别的。"));
   else if (k === "blocked") line = h("div", { class: "stack-sm" },
     h("p", {}, `备课卡住了：${STOPPED[u.prep.stopped] || STOPPED.budget}。要开发者看一下检验或提示词。`, h("span", { class: "muted" }, " 可以先学别的。")),
     u.prep.stuck?.length ? h("details", { class: "small" }, h("summary", { class: "muted", style: "cursor:pointer" }, "卡在哪"),
       h("ul", {}, u.prep.stuck.map(s => h("li", {}, s)))) : null);
-  else line = h("p", { class: "muted" }, u.queued_after ? `学「${units.find(x => x.id === u.queued_after)?.title}」时开始准备。` : "按课程顺序准备。");
+  else line = h("p", { class: "muted" }, u.queued_after ? `学「${units.find(x => x.id === u.queued_after)?.title}」时会自动备好；想跳过去现在学，可以现在就备。` : "按路线顺序自动备。");
   return h("section", { class: "stack-sm" }, line,
     h("dl", { class: "kv" },
       h("dt", {}, "主课里的这一部分"), h("dd", {}, u.sources.length
