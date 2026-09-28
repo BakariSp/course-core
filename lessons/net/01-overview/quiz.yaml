@@ -1,0 +1,120 @@
+schema_version: 1
+unit: net-01-overview
+title: 第 1 章 概述：因特网是什么，一次请求怎么走 — 单元题
+source: net-01-overview 课程页（出题 agent，D-041）
+questions:
+- id: q1
+  checker: choice
+  concept: net.overview.internet
+  level: 1
+  prompt: 朋友问你「因特网到底是什么」。下面哪几句话是从**用途**（因特网为用户、为应用提供什么服务）这一面在描述因特网？选出所有正确的。
+  options:
+  - 因特网向用户提供网页浏览、视频流、邮件、即时消息这类服务。
+  - 因特网由数以亿计互相连接的端系统、通信链路和分组交换机组成。
+  - 因特网是一个「网络的网络」：由许多互相连接的网络拼起来。
+  - 因特网给写应用的人提供一套 API，应用程序按这套接口把数据交给它去送。
+  multi: true
+- id: q2
+  checker: fill
+  concept: net.overview.protocol
+  level: 1
+  prompt: '讲义说：协议（protocol）规定了通信双方要遵守的三样东西。请按下面每句话的描述，写出讲义里对应的那个说法（中文，每空一个说法）：
+
+
+    ① 双方交换的东西长什么样、分哪些字段、字段怎么排列：____
+
+
+    ② 谁先发、谁后发，你来我往按什么次序进行：____
+
+
+    ③ 收到对方的请求或应答之后，要做出什么反应：____'
+- id: q3
+  checker: fill
+  concept: net.overview.transmission_delay
+  level: 2
+  prompt: '一条流从用户笔记本出发，它经过的第 1 跳链路速率是 50 Mbps。现在要在这条链路上发一条长度 L = 20000 bit 的消息；笔记本到机房这段媒体的长度约 3000 km，比特在这段媒体里每秒前进 200000
+    km。
+
+
+    ① 把这 20000 bit 一个一个推上这条链路，要花 L/R = ____ 毫秒
+
+
+    ② 推上链路之后，比特沿着这 3000 km 的媒体跑到另一端，要花 d/s = ____ 毫秒
+
+
+    ③ 上面算出来的两个时间，哪一个更大？填出它的名称（写成「X时延」的形式）：____'
+- id: q4
+  checker: choice
+  concept: net.overview.packet_switching
+  level: 3
+  prompt: 下面关于「一个分组怎么从笔记本走到 API 服务器」的说法，哪些是正确的？选出所有正确的。
+  options:
+  - 一台路由器收到分组后，把它放到通往下一跳的那条链路上送出去，这个动作叫转发（forwarding）。
+  - 分组交换不给每个用户预留带宽：链路由当前正在发数据的用户按需共享。
+  - 电路交换里，用户在通信中不说话的那段时间，他预留的那份链路容量可以借给别人用。
+  - 从笔记本到 API 服务器这条完整路径是怎么选出来的，这是选路（routing）负责的全局动作。
+  - 分组到达的速率超过了链路能送出去的最大速率时，多出来的分组先在缓冲区里排队；缓冲区被填满后，再来的分组会被丢掉。
+  - 链路的流量强度 I = L·a/R 越接近 1，分组的平均排队时延就越短。
+  multi: true
+- id: q5
+  checker: fill
+  concept: net.overview.layer
+  level: 2
+  prompt: '一次 HTTP 请求从笔记本发到 API 服务器，要经过五层协议栈。下面每句话描述的是其中哪一层？请写讲义用的中文名字：
+
+
+    ① HTTP 请求报文（message）是在哪一层产生的？____
+
+
+    ② 把数据报从源主机一站一站送到目的主机的，是哪一层？____
+
+
+    ③ 笔记本的 Wi-Fi 网卡把一串比特变成电磁波送上空中的，是哪一层？____
+
+
+    ④ 在两个进程之间传送数据、可能可靠也可能不可靠的，是哪一层？____
+
+
+    ⑤ 这一层交换的数据单元叫 frame，它是哪一层？____'
+- id: q6
+  checker: terminal
+  concept: net.cmd.ls
+  level: 3
+  prompt: '你现在开在一个练习场的**根目录**里。这个终端只有这些命令可用：`pwd`、`ls`、`cat`、`echo 文本 > 文件`（`>>` 是追加）、`mkdir`、`touch`、`rm`；没有 `cd`，也没有编辑器。
+
+
+    请做三件事，并把结果写进 `notes/00-orientation.md`，一行一条：
+
+
+    1. 用 `pwd` 确认自己在哪里，用 `ls` 看清这一层有哪些名字；
+
+    2. 用 `cat` 读出 `path/trace.txt` 里的路径记录：**第 1 跳的设备名写在第一行**，**最后一跳的设备名写在第二行**；
+
+    3. 用 `ls incident` 看一眼 incident 这个目录里有什么，把里面那个文件的名字写在第三行。
+
+
+    （三行只写名字本身，不要写其它文字。）'
+  setup:
+  - mkdir -p path incident notes
+  - 'echo "hop 1: laptop" > path/trace.txt'
+  - 'echo "hop 2: home-router" >> path/trace.txt'
+  - 'echo "hop 3: isp-gateway" >> path/trace.txt'
+  - 'echo "hop 4: isp-core" >> path/trace.txt'
+  - 'echo "hop 5: api-server" >> path/trace.txt'
+  - echo "2026-09-27 20:10 晚高峰，API 响应明显变慢。" > incident/report.md
+- id: q7
+  checker: short
+  concept: net.overview.throughput
+  level: 4
+  kind: bug
+  prompt: "nanoteacher 的 API 服务器要从上游 LLM 服务拉一段很长的生成结果，这条流依次经过三条链路。AI 给你写了下面这段代码，用来算这条流的端到端吞吐量（Mbps）：\n\n```python\nLINKS =\
+    \ [\n    (\"api-server -> cloud-edge\", 200),\n    (\"cloud-edge -> llm-upstream\", 100),\n    (\"llm-upstream -> model-host\"\
+    , 1000),\n]\n\ndef end_to_end_throughput(links):\n    fastest = 0\n    for name, rate in links:\n        if rate > fastest:\n\
+    \            fastest = rate\n    return fastest\n```\n\n请回答：\n\n① 这段代码现在会返回多少？\n\n② 按讲义，这条流的端到端吞吐量应该是多少？瓶颈链路是哪一条？\n\n\
+    ③ 为什么是这个值，而不是最快那条链路的速率？\n\n④ 如果要让 AI 改对，你会怎么描述这个改法（一句话）？"
+- id: q8
+  checker: code
+  concept: net.overview.throughput
+  level: 3
+  prompt: 请实现 `code/ex1.py` 里的 `bottleneck(links)` 函数：给出一条流的各条链路（按从源到目的的顺序排好），返回这条流的瓶颈链路。测试会检查：典型的三条链路、单条链路、并列最小、以及最慢链路出现在列表末尾这些情况。
+  file: code/ex1.py

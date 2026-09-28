@@ -1,0 +1,101 @@
+# 答案、检查项、rubric：只在服务器端读，不会发给网页
+schema_version: 1
+answers:
+  q1:
+    answer:
+    - A
+    - D
+    explain: 「构成」视角回答的是「因特网由什么搭起来」：端系统（主机）、通信链路、分组交换机，以及它本身是「网络的网络」——所以 B、C 属于构成视角。「用途」视角回答的是「它为用户和应用提供什么」：Web、视频、邮件、即时消息这些服务，以及给分布式应用用的那套
+      API——所以 A、D 是用途视角。
+  q2:
+    blanks:
+    - - 消息格式
+      - 报文格式
+      - 消息的格式
+      - 格式
+    - - 收发顺序
+      - 发送和接收的顺序
+      - 收发次序
+      - 顺序
+    - - 采取的动作
+      - 动作
+      - 要采取的动作
+      - 响应动作
+      - 反应动作
+    explain: 协议规定的三样东西是：①消息格式（交换的消息长什么样）；②收发顺序（谁先说、谁后说）；③采取的动作（收到消息后要做什么）。用 HTTP 举例：请求报文长什么样是格式；必须先发请求、再收回响应是顺序；收到 GET /index.html
+      就去取出那个文件并回一个 200 是动作。
+  q3:
+    blanks:
+    - - '0.4'
+      - '0.40'
+      - 0.4ms
+      - 0.4毫秒
+    - - '15'
+      - 15ms
+      - 15毫秒
+    - - 传播时延
+      - 传播延迟
+    explain: ① 传输时延 L/R = 20000 bit ÷ 50×10^6 bit/s = 0.0004 s = 0.4 ms。② 传播时延 d/s = 3000 km ÷ 200000 km/s = 0.015 s = 15
+      ms。③ 传播时延更大。原因是两个公式看的东西不同：传输时延只看分组长度 L 和链路速率 R，传播时延只看距离 d 和信号在媒体里的速度 s；这条链路上距离带来的 15 ms 远大于把 20000 bit 推上 50 Mbps 链路的
+      0.4 ms。
+  q4:
+    answer:
+    - A
+    - B
+    - D
+    - E
+    explain: A 对：转发是单台路由器的本地动作，决定「这个分组从哪个口出去」。B 对：这是分组交换的「按需使用」，也是因特网用分组交换、不用电路交换的核心理由。C 错：电路交换预留出来的那份容量即使用户空闲也不给别人用，这正是它的浪费之处。D
+      对：选路是决定整条路径的全局动作，转发才是逐台设备搬分组。E 对：缓冲区满之后到达的分组会被丢弃，也就是丢包（loss）。F 错：I 越接近 1，说明到达速率越接近链路的送出速率，排队时延越长而不是越短。
+  q5:
+    blanks:
+    - - 应用层
+      - 应用
+    - - 网络层
+      - 网络
+    - - 物理层
+      - 物理
+    - - 运输层
+      - 传输层
+      - 运输
+    - - 链路层
+      - 链路
+    explain: 五层从上到下是：应用层、运输层、网络层、链路层、物理层。各层交换的数据单元依次叫 message、segment、datagram、frame、bit。HTTP 请求报文由应用层产生；网络层负责把数据报从源主机送到目的主机（主机到主机）；运输层在两个进程之间传数据，可能可靠（TCP）也可能不可靠（UDP）；链路层在相邻的网络设备之间传
+      frame；物理层把 bit 变成信号送进送出媒体。
+  q6:
+    checks:
+    - contains: laptop
+      desc: 第一行是 path/trace.txt 里第 1 跳的设备名（laptop）
+      file: notes/00-orientation.md
+    - contains: api-server
+      desc: 第二行是这条路径最后一跳的设备名（api-server）
+      file: notes/00-orientation.md
+    - contains: report.md
+      desc: 第三行是 incident 目录里的文件名（report.md）
+      file: notes/00-orientation.md
+    explain: 参考做法：`pwd` 回答「我在哪」；`ls` 列出当前这一层有哪些名字（能看到 path、incident、notes）；`cat path/trace.txt` 把文件内容原样打印出来，从里面读出第 1 跳是 laptop、最后一跳是
+      api-server；再 `ls incident` 看到这个目录里只有 report.md。把这几个名字用 `echo 文本 > 文件`（第一次创建）和 `echo 文本 >> 文件`（追加）写进 notes/00-orientation.md。
+    solution:
+    - pwd
+    - ls
+    - cat path/trace.txt
+    - ls incident
+    - echo "laptop" > notes/00-orientation.md
+    - echo "api-server" >> notes/00-orientation.md
+    - echo "report.md" >> notes/00-orientation.md
+  q7:
+    explain: '端到端吞吐量由瓶颈链路决定，也就是这条流经过的所有链路里速率最小的那条。这里三条链路是 200、100、1000 Mbps，最小值是 100 Mbps（cloud-edge -> llm-upstream），所以这条流最多只能跑到约
+      100 Mbps——上游那段 1000 Mbps 再快也没用，数据在 100 Mbps 那一段就被卡住了。而这段代码取的是最大值（`if rate > fastest`），返回 1000，方向正好反了。改法：取最小速率那条链路，例如
+      `min(links, key=lambda x: x[1])`。'
+    rubric:
+    - ① 指出这段代码现在返回 1000（各链路速率里最大的那个）（0.2）
+    - ② 指出按讲义端到端吞吐量是 100 Mbps，瓶颈链路是 cloud-edge -> llm-upstream（0.3）
+    - ③ 说明一条流要依次经过所有链路，端到端吞吐量由瓶颈链路（速率最小的那条）决定：最慢的一段卡住整条流，其它链路再快也没用（0.3）
+    - ④ 给出具体改法：把取最大的判断改成取最小的（用 min，或把 rate > fastest 改成 rate < fastest）（0.2）
+    - 加分：指出这种 bug 会让人误判「最后一段 1000 Mbps 是瓶颈」，据此得出错误的扩容/优化方向
+  q8:
+    explain: 一条流要依次经过所有链路，端到端吞吐量由速率最小的那条（瓶颈链路）决定。所以正确做法是从列表第一个元素开始，一路比较把「当前最小」记下来：遇到速率更小的链路就更新，遍历结束后返回的就是瓶颈链路名和它的速率。注意比较要用
+      `<` 而不是 `>`，并且从第一个元素开始记，这样并列最小的时候留下的自然是列表中先出现的那一条。
+    solution: "def bottleneck(links):\n    \"\"\"找出这条流的瓶颈链路。\n\n    links 是一个列表，每个元素是 (链路名, 速率) 的二元组，速率单位是 Mbps，\n    链路按数据实际经过的顺序排列（从源到目的）。\n\
+      \n    返回一个二元组 (瓶颈链路名, 瓶颈链路速率)。\n    瓶颈链路是这条流经过的所有链路里速率最小的那一条；\n    如果有多条链路的速率并列最小，返回列表中先出现的那一条。\n    \"\"\"\n    name,\
+      \ rate = links[0]\n    for link_name, link_rate in links[1:]:\n        if link_rate < rate:\n            name, rate\
+      \ = link_name, link_rate\n    return name, rate\n"

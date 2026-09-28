@@ -1,0 +1,114 @@
+# 答案、检查项、rubric：只在服务器端读，不会发给网页
+schema_version: 1
+answers:
+  q1:
+    answer: A
+    explain: '`git init -b main` 做两件事：把当前目录变成仓库（生成隐藏的 `.git` 目录，Git 从此开始记录），并把还没出生的主线名字定成 `main`。它不会替你 `git add`，也不会替你提交。所以紧跟着的
+      `git status` 会说还没有任何提交（`No commits yet`），并把目录里所有文件列在 `Untracked files:` 下——untracked 就是「在工作目录里、Git 还没开始跟踪」。'
+  q2:
+    answer: A
+    explain: 提交的内容来自**暂存区**，也就是你最后一次 `git add` 放进去的那一份快照。第 3 步加的 `hint_for` 从来没进过暂存区，所以不在这次提交里；它现在只是「手上还没暂存的改动」，`git status`
+      看得到、`git diff` 也看得到。想让两处改动进同一条提交，第 3 步之后要再 `git add` 一次。
+  q3:
+    blanks:
+    - - HEAD
+    explain: 三种用法回答三个不同的问题：`git diff`（不带参数）= 工作目录 vs 暂存区，只看**还没暂存**的改动；`git diff --staged`（=`--cached`）= 暂存区 vs HEAD，只看**已暂存**的改动；`git
+      diff HEAD` = 工作目录 vs HEAD，也就是把已暂存和未暂存全都算进来的当前全部改动。注意 Git 的引用名（`HEAD`、分支名等）是**大小写敏感**的，必须大写写成 `HEAD`；`git diff head`
+      会被 Git 当成一个不存在的引用而报错，不是合法命令。
+  q4:
+    answer: A
+    explain: '`HEAD` 的意思是「你现在站在哪里」，通常指向你所在分支的最新提交。`(HEAD -> feature/hint)` 就是在说：现在站在 feature/hint 上，它的最新提交是 3f9c1a2；`(main)`
+      表示 main 的最新提交是 b7d2e10 而不是 3f9c1a2。`git show HEAD` 读的就是 HEAD 指的那次提交（3f9c1a2）。行首那串十六进制字符是提交哈希，用来指名一次提交。'
+  q5:
+    answer: A
+    explain: '`git bisect run <命令>` 每换到一个版本就跑一次这条命令，**只看它的退出码**：0 判 good，非 0 判 bad（125 表示跳过）。版本 B 虽然打印了 `FAIL`，但 python 自己正常结束、退出码是
+      0，于是每个版本都被判 good，bisect 缩小不了范围，最后只能把一开始 `git bisect bad` 标的那个提交当成 first bad commit——结论是错的。教训：AI 写的检查脚本必须用退出码表达结论（`sys.exit(1)`），打印给人看的字不参与判断。'
+  q6:
+    checks:
+    - run: git status
+      contains: nothing to commit
+      desc: 合并做完，工作目录是干净的
+    - file: app/grader.py
+      not_contains: <<<<<<<
+      desc: 冲突开始标记已删掉
+    - file: app/grader.py
+      not_contains: '>>>>>>>'
+      desc: 冲突结束标记已删掉
+    - file: app/grader.py
+      not_contains: =======
+      desc: 冲突分隔标记已删掉
+    - file: app/grader.py
+      contains: def hint_for
+      desc: 分支上的 hint_for 函数保住了
+    - file: app/grader.py
+      matches: MAX_SCORE = (80|120)
+      desc: 满分取了 80 或 120
+    - run: git log --oneline -1
+      contains: 'merge: 合入'
+      desc: 最后用给定的合并消息收尾
+    solution:
+    - git merge feature/hint
+    - echo 'MAX_SCORE = 80' > app/grader.py
+    - echo 'def hint_for(question):' >> app/grader.py
+    - echo '    return 0' >> app/grader.py
+    - echo 'def grade(answers):' >> app/grader.py
+    - echo '    return 0' >> app/grader.py
+    - git add app/grader.py
+    - 'git commit -m ''merge: 合入 feature/hint 的提示改动'''
+    explain: 解决冲突就三步：① 删掉 `<<<<<<<`、`=======`、`>>>>>>>` 三行标记，把两边要保留的内容留在最终文件里——本例必须留下分支加的 `hint_for`，`MAX_SCORE` 取 80 还是 120
+      由你决定；② `git add app/grader.py`，告诉 Git「这个文件的冲突我处理完了」；③ `git commit` 收尾，这次提交会有两个父提交（main 的 r4 和分支的 r5）。只要还剩一行标记没删，Git
+      就会把 `<<<<<<<` 当普通内容提交进去，代码直接坏掉——所以合并后一定要再跑一次自检。
+  q7:
+    checks:
+    - file: .gitignore
+      contains: .env
+      desc: .gitignore 里挡了 .env
+    - file: .gitignore
+      contains: notes/
+      desc: .gitignore 里挡了 notes/
+    - file: app/grader.py
+      contains: MAX_SCORE = 90
+      desc: 改好的代码还在磁盘上，没被丢掉
+    - run: git status
+      not_contains: .env
+      desc: .env 不再出现在 git status 里
+    - run: git status
+      not_contains: notes
+      desc: notes/ 不再出现在 git status 里
+    - run: git ls-files
+      not_contains: .env
+      desc: .env 没有被提交进仓库
+    - run: git log --oneline -1
+      contains: 加 .gitignore
+      desc: 提交消息符合要求
+    - run: 'git show --name-only --pretty=format: HEAD'
+      not_contains: app/grader.py
+      desc: 最新一次提交里只有 .gitignore，app/grader.py 没被顺手带进去
+    - run: git diff --name-only
+      contains: app/grader.py
+      desc: app/grader.py 的改动仍在，只是回到了「未暂存」状态
+    - file: .env
+      contains: API_KEY
+      desc: .env 文件本身还在磁盘上
+    solution:
+    - echo .env > .gitignore
+    - echo notes/ >> .gitignore
+    - git reset app/grader.py
+    - git add .gitignore
+    - git commit -m '加 .gitignore：本机密钥和草稿不进仓库'
+    explain: 两件事配合起来：`.gitignore` 只影响**还没被跟踪**的文件，写进去之后 `git status` 就当 `.env` 和 `notes/` 不存在，但文件还在磁盘上（只是 Git 假装看不见）——注意对已经提交过的文件写忽略规则是没用的。`git
+      reset <路径>`（或 `git restore --staged <路径>`）把文件从暂存区拿出来，**工作目录的内容一个字节都不动**，所以改好的代码还在，只是变回「未暂存」；真正会丢改动的写法是 `git checkout
+      -- <路径>` 或 `git restore <路径>`（不带 `--staged`）。最后这一点要自己验证：`git reset app/grader.py` 之前，暂存区里躺着 `app/grader.py` 的新版本，如果你直接
+      `git add .gitignore` 就提交，那次提交会把两者一起写进历史——所以提交后要看一眼「这次提交到底带了哪些文件」（`git show --name-only HEAD`），只有 `.gitignore` 才对；同时
+      `git diff --name-only` 应该还能看到 `app/grader.py`，说明改动是被「拿出暂存区」而不是被丢掉。
+  q8:
+    rubric:
+    - 说明 `git blame` 报的是这一行**最后一次**被改动的提交（这里 r6 把它改了），所以它回答「这行现在长这样是谁写的」（0.35）
+    - 说明 `git log -S` 报的是**引入或删除**过含该字符串的那次提交，所以它回答「这个名字什么时候进/出这个文件」；r6 也会匹配，但最早那次是 r3（0.35）
+    - 第 2 问答 `git blame app/grader.py`（0.15）
+    - 第 3 问答 `git log -S "hint_for" -- app/grader.py`，并且取输出**最下面**那一行（最早那次），因为 `git log` 默认从新到旧、`-S` 会列出所有涉及该字符串的提交（0.15）
+    - 加分项：提到可以接 `| tail -1` 直接拿最早那次
+    - 加分项：指出同一行被两次提交碰过时，blame 只会停在较晚的那次，所以查「谁引入的」不能只看 blame
+    explain: 两条命令问的不是同一个问题。`git blame` 按**行**看：它给每一行标出**最后一次改动该行**的提交，所以 `def hint_for(question):` 这一行显示 r6（改名那次），它回答的是「这行现在的内容是谁写的」。`git
+      log -S "<字符串>"` 按**内容增减**看：它列出所有让这个字符串出现次数发生变化的提交（引入或删除），r3 第一次把 `hint_for` 引入文件、r6 改了它所在的行也会命中，所以输出会有多条；`git log` 默认从新到旧，取最下面那一行（也可以接
+      `| tail -1`）才是最早引入那次。所以：问「这行现在是谁写的」用 `git blame`；问「这个名字什么时候进这个文件的」用 `git log -S` 再取最早一条。
