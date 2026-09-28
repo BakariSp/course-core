@@ -119,6 +119,57 @@ def test_node_state_from_evidence():
     assert knowledge.known_titles(sts) == {"t.b", "b"}
 
 
+# ---------- 备课简报的切片（D-061） ----------
+
+def _chain(n: int, width: int = 1) -> dict[str, knowledge.Node]:
+    """n 层、每层 width 个节点的图；第 k 层的每个节点都要先会第 k-1 层的全部。"""
+    nodes = {}
+    for k in range(n):
+        for j in range(width):
+            nid = f"t.n{k}_{j}"
+            nodes[nid] = knowledge.Node(nid, f"N{k}_{j}", edges=[knowledge.Edge(f"t.n{k - 1}_{i}") for i in range(width)] if k else [])
+    return nodes
+
+
+def _states(nodes, mastered=(), weak=()):
+    st = lambda nid: "mastered" if nid in mastered else "weak" if nid in weak else "new"  # noqa: E731
+    return {nid: knowledge.NodeState(n, st(nid), []) for nid, n in nodes.items()}
+
+
+def test_slice_stops_at_mastered_prerequisites():
+    """沿先修往上追，遇到已掌握就停：掌握的节点进边界，它的先修不再追。"""
+    nodes = _chain(5)                                     # n0 ← n1 ← n2 ← n3 ← n4
+    inside, edge = knowledge.unit_slice(nodes, _states(nodes, mastered={"t.n2_0", "t.n0_0"}), ["t.n4_0"])
+    assert inside == {"t.n4_0": 0, "t.n3_0": 1} and edge == {"t.n2_0"}      # n1、n0 在 n2 后面，不追
+
+
+def test_slice_size_does_not_grow_with_the_rest_of_the_graph():
+    """同一个单元，知识图里其余的节点从 10 个变成 3000 个，切片一样大。"""
+    small, big = _chain(3), {**_chain(3), **{f"t.x{i}": knowledge.Node(f"t.x{i}", f"X{i}") for i in range(3000)}}
+    for nodes in (small, big):
+        inside, edge = knowledge.unit_slice(nodes, _states(nodes, mastered={"t.n0_0", *(f"t.x{i}" for i in range(3000))}), ["t.n2_0"])
+        assert set(inside) == {"t.n2_0", "t.n1_0"} and edge == {"t.n0_0"}
+
+
+def test_slice_follows_prerequisites_of_points_not_yet_in_the_graph():
+    """知识库刚提出的点还不在知识图里：从它自己写的先修接上图。"""
+    nodes = _chain(2)
+    inside, edge = knowledge.unit_slice(nodes, _states(nodes, mastered={"t.n0_0"}), ["t.new"], {"t.new": ["t.n1_0"]})
+    assert inside == {"t.new": 0, "t.n1_0": 1} and edge == {"t.n0_0"}
+
+
+def test_named_matches_titles_aliases_and_the_part_before_brackets():
+    nodes = {"t.p": knowledge.Node("t.p", "protocol（协议）"), "t.g": knowledge.Node("t.g", "Git", aliases=["版本控制"])}
+    assert knowledge.named(nodes, ["Protocol", "版本控制", "HTTP"]) == {"t.p", "t.g"}
+
+
+def test_mentioned_finds_names_used_in_text_as_whole_words():
+    nodes = {"t.ls": knowledge.Node("t.ls", "ls"), "t.pipe": knowledge.Node("t.pipe", "管道"),
+             "t.cd": knowledge.Node("t.cd", "cd")}
+    text = "用 `ls -l` 看一下，再用管道接 grep。tools 目录里有 abcd。"
+    assert knowledge.mentioned(nodes, {"t.ls", "t.pipe", "t.cd"}, text) == ["t.ls", "t.pipe"]   # abcd、tools 不算
+
+
 def test_answers_override_with_mastery_rules_and_orphans_are_reported():
     nodes = {"t.a": knowledge.Node("t.a", "A")}
     evs = [answer(0.2, concept="t.a"), answer(1.0, concept="t.typo")]
