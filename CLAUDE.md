@@ -128,5 +128,7 @@
 - 做完一件就提交，不要攒着；不相关的改动不进同一个提交。
 - 会写多个提交、或要和别的需求并行时，用 worktree 分开；worktree 里不碰 `data/study.db`（用临时数据目录），答题网页换一个端口，不占 8770。
 - 新的 D-xxx / F-xxx 编号先在 main 上提交占号，再开分支，避免撞号。
+- 设计文档（FEEDBACK.md、DECISIONS.md）讨论中不逐条提交：一条提议写完、或学习者拍板时一起提交一次（D-067）。
+- 功能合并进 main 时，在 `CHANGELOG.md`「未发布」加一条学习者能感觉到的变化（带 D-xxx）；发版由学习者定，发版时打 tag `v0.x`（D-067）。
 - 学习数据导出（`progress/evidence.jsonl`、`agents/*/evals/runs.jsonl`、`progress.md`）单独提交 `chore(progress): …`，不和功能混。
 - 决定完成时，在 DECISIONS.md 那条的「实现」里写上合并提交号。
