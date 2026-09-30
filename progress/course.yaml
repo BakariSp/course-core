@@ -37,7 +37,7 @@ destination:
   - id: S6
     can: 存储：SQL、事务与隔离级别、索引、并发控制、文件写入的崩溃一致性
     accept: 解释 SQLite WAL 下写锁什么时候成为瓶颈、atomic_write_text 为什么是临时文件 + rename；给一条慢查询说出该加什么索引
-    units: [db-01-sqlbolt, db-02-index, db-03-txn, db-04-cc, os-04-fs]
+    units: [se-01-data, db-01-sqlbolt, db-02-index, db-03-txn, db-04-cc, os-04-fs]
   - id: X1
     can: 隔离与安全：每个请求都在后端鉴权、数据和文件按租户隔离、注入类漏洞
     accept: 在 nanoteacher 上审一个接口，指出隔离靠什么保证、哪里可能漏
@@ -49,11 +49,14 @@ destination:
   - id: X3
     can: 验证：测试、调试、护栏（架构测试、类型检查），判断 vibe coding 的结果是否可信
     accept: 把一份设计交给便宜模型实现，通过测试、架构测试、类型检查；故意塞一个越层写法，护栏拦得住
-    units: [tools-01-shell, tools-02-git, tools-03-debug, test-01-batchelder, test-02-pytest, tools-04-quality]
+    units: [tools-01-shell, tools-02-git, tools-03-debug, test-01-batchelder, test-02-pytest, tools-04-quality, se-02-spec, se-03-legacy]
 
 # 学习路线（D-062、D-064）：分阶段，每个阶段写它补终点地图的哪几段（fills）。学完、在学的在最前面（不动已学的）；
 # 之后按数据流和先修排。没列进来的单元排在后面，在「课程设置」里。
 # 先修：SSE 要 TCP 长连接和 async；并发控制要线程和锁；多租户审查要先会读分层；学习者模型要落到存储（事务）。
+# D-068：「开发与架构设计」放在鉴权之后、后端运行之前——数据建模要先会 SQL；后面每个单元都用得上"数据怎么设计""对怎么定义"。
+# 故意不学（D-068 审计，design/AUDIT-curriculum-coverage.md）：需求工程、项目管理（产品经理本职）；编译原理、形式化证明
+# （验证 AI 代码用测试、类型、规格就够）；分片、一致性哈希、CAP 只到概念层（单机 SQLite）；前端工程化暂不学。
 path:
   - title: 动手与验证：Shell、Git、调试、测试
     fills: [X3]
@@ -64,15 +67,18 @@ path:
   - title: 鉴权：访问控制与身份认证
     fills: [X1]
     units: [sec-01-access, sec-02-auth]
-  - title: 后端结构与运行：分层、进程、线程、异步
+  - title: 开发与架构设计：数据、规格、模块、改造旧代码
+    fills: [S6, X3, S3]
+    units: [se-01-data, se-02-spec, design-01-ousterhout, design-02-layers, se-03-legacy]
+  - title: 后端运行：进程、线程、异步
     fills: [S3]
-    units: [design-01-ousterhout, design-02-layers, os-01-process, os-02-thread, os-03-sync, lang-01-asyncio]
+    units: [os-01-process, os-02-thread, os-03-sync, lang-01-asyncio]
   - title: 长连接与推流：TCP 与 SSE
     fills: [S2]
     units: [net-03-tcp, net-04-sse]
-  - title: 数据库进阶：索引、事务、并发控制、崩溃一致性
+  - title: 数据库进阶：索引、事务、并发控制、崩溃一致性、缓存
     fills: [S6, X2]
-    units: [db-02-index, db-03-txn, db-04-cc, os-04-fs]
+    units: [db-02-index, db-03-txn, db-04-cc, os-04-fs, sysdesign-01]
   - title: 多租户隔离：路径穿越、SSRF、隔离审查
     fills: [X1]
     units: [sec-03-path, sec-04-ssrf, sec-05-tenant]
@@ -224,19 +230,68 @@ subjects:
     project_links:
       - {where: '"current" 是 session_id 的魔法值（issue #78）', concept: 数据建模、哨兵值的坏处}
     units:
-      - {id: design-01-ousterhout, title: Ousterhout 演讲, sources: [{ref: ousterhout}]}
+      - {id: design-01-ousterhout, title: Ousterhout 演讲, sources: [{ref: ousterhout}], requests: ["例子用 nanoteacher（commit hash 原样引用）：孤立代理字符导致崩流，在入口清洗、写盘兜底、LLM 侧清洗、宽容处理连补四层，最后才收到 atomic_write_text 和流式总出口一处（18a943ac）；连接池自愈逻辑先散在 agent.py 两处，后来才抽成 litellm_resilience.py（d2c85e6b → f7a175b0）；server.py 9464 行、254 个函数"]}
       - {id: design-02-layers, title: 分层、端口与依赖注入, sources: [{ref: cosmicpython}], requests: [用 cs-study 自己的代码当例子（studykit 的 domain / app / adapters / bootstrap）]}
+
+  - id: se
+    title: 开发与架构设计
+    priority: P0
+    stage: judge
+    goal: 能自己掌握全局设计（数据怎么建模、"对"怎么定义、屎山怎么安全地改），AI 只负责局部实现
+    scope: 数据建模、规格与不变量、改造旧代码（D-068）；模块与抽象沿用 design 学科
+    sources:
+      - {id: cmu445-l1, title: CMU 15-445 第 1 讲 Relational Model（Andy Pavlo，Fall 2024 播放列表）, url: "https://www.youtube.com/playlist?list=PLSE8ODhjZXjYDBpQnSymaectKjxCy6BYq", kind: video}
+      - {id: hi-data, title: Hello Interview · Data Modeling, url: "https://www.hellointerview.com/learn/system-design/core-concepts/data-modeling", kind: page}
+      - {id: kleppmann-inside-out, title: Martin Kleppmann · Turning the database inside out（Strange Loop 2014，视频 + 文字稿）, url: "https://martin.kleppmann.com/2015/03/04/turning-the-database-inside-out.html", kind: page}
+      - {id: mit6031, title: MIT 6.031 Software Construction（在线读物）, url: "https://web.mit.edu/6.031/www/sp21/", kind: course}
+      - {id: feathers-ai, title: "Michael Feathers · Working Effectively with Legacy Code and AI Coding Assistant（Tech Lead Journal #195）", url: "https://www.youtube.com/watch?v=mwVRHDD0tEk", kind: video}
+      - {id: legacy-keypoints, title: The key points of Working Effectively with Legacy Code（understandlegacycode.com）, url: "https://understandlegacycode.com/blog/key-points-of-working-effectively-with-legacy-code/", kind: page}
+    project_links:
+      - {where: 记忆前后存过 5 种以上（MEMORY.md、TOPIC_MEMORY.md、GLOBAL_MEMORY.md、learning_state.json、topic_memory.json），失忆修了几十次, concept: 唯一的数据源、派生视图}
+      - {where: 带学关不掉：当前页由游标和聊天历史两处推导，退出后被历史"复活", concept: 状态机、不变量}
+      - {where: server.py 从 2102 行涨到 9464 行，前三个月只有 13 个测试文件, concept: 改造旧代码、先钉住现有行为}
+    units:
+      - id: se-01-data
+        title: 数据建模：实体、唯一的数据源、派生数据
+        sources: [{ref: cmu445-l1, note: 第 1 讲 Relational Model}, {ref: hi-data}, {ref: kleppmann-inside-out, note: 补充：唯一的数据源和派生数据}]
+        requests:
+          - 先给准确定义：数据模型、schema、实体、主键、关系、唯一的数据源（source of truth）、派生数据；再讲按访问模式设计、规范化与反规范化
+          - 例子用 nanoteacher 的真实案例（导师从 git 历史整理并核对过，commit hash 原样引用，不要补充这里没有的细节）：失忆修了几十次，记忆前后存过 MEMORY.md、TOPIC_MEMORY.md、GLOBAL_MEMORY.md、learning_state.json、topic_memory.json 至少 5 种，每处各修各的；f2c70740（2026-06-20）新话题的记忆范围在创建时写死成"隔离"，读不到全局记忆；52dda43e（2026-07-03）量化后发现失忆主因是"学生的要求从没被写进记忆"，不是压缩丢了；sessions_completed 同时存在全局和每个话题两处，编号撞车（c2200756）
+          - 练习：让学习者画 nanoteacher 记忆相关的数据地图——有哪些实体、各存在哪、谁写谁读、哪几处是同一份数据；再说出如果只留一个数据源，其他几处应该怎么从它派生
+      - id: se-02-spec
+        title: 规格、不变量与状态机
+        sources: [{ref: mit6031, url: "https://web.mit.edu/6.031/www/sp21/classes/06-specifications/"}, {ref: mit6031, url: "https://web.mit.edu/6.031/www/sp21/classes/10-abstract-data-types/"}, {ref: mit6031, url: "https://web.mit.edu/6.031/www/sp21/classes/11-abstraction-functions-rep-invariants/"}]
+        requests:
+          - 主材料是 MIT 6.031 的三篇读物（学习者 2026-09-30 选定），原文例子是 Java，讲解时换成 Python，最好换成 nanoteacher 的例子
+          - 核心问题是"没有规格就没有'对'的定义，也就没法验证 AI 写的对不对"：前置条件、后置条件、表示不变量（rep invariant）、抽象函数、状态机
+          - 例子用 nanoteacher 的带学模式：退出只清游标，下一轮又从聊天历史重新锁上（e7e3b0c8，2026-07-01）→ 加退出水位线 → 轮中翻页、重读旧页又绕过（fb7aeb9d、af55aed1）→ 僵尸游标一天十几次死循环（0e36aff8，2026-08-07）。根因是"当前页"由游标和历史两处推导，没有显式状态机
+          - 第二个例子：章节压缩活锁 20 天，幂等键只带起点、不带会话归属（8e664a05）——不变量没写全
+          - 练习：为带学模式写出状态（未开始 / 带学中 / 已退出）、合法的状态转移和不变量，并说出 e7e3b0c8 的做法违反了哪条
+      - id: se-03-legacy
+        title: 改造旧代码：先钉住行为，再小步改
+        sources: [{ref: feathers-ai}, {ref: legacy-keypoints}]
+        requests:
+          - 核心概念：legacy code = 没有测试的代码；characterization test（钉住代码现在的行为，不是它应该的行为）；seam（不改这一处就能改变行为的切入点）；小步重构；新旧实现并存时要有删除计划（strangler fig）
+          - 例子用 nanoteacher：bb9bffcb（2026-04-13）i18n 合并悄悄丢了心跳修复，线上 8 天后才补回（e6504477）——如果有回归测试当场就红；9a30cdc8（2026-09-24）fixture 没导出，xfail 的测试体从来没执行，测试"绿"了却什么都没测；新旧记忆管线并存，最后靠 bc713570 集中删 882 行零引用代码
+          - 练习：在 nanoteacher 上挑一个反复出现的 bug，先写一个钉住现有行为的测试，再说出修的时候从哪个切入点下手
 
   - id: sysdesign
     title: 系统设计
     priority: P2
     stage: deliver
     goal: 能画出你的产品扩到 1 万用户的架构
-    scope: 挑缓存、队列、限流、多租户相关的视频
+    scope: 缓存；分片、一致性哈希、CAP 只到概念层（D-068）
     sources:
-      - {id: bytebytego, title: ByteByteGo 频道, url: "https://www.youtube.com/@ByteByteGo", kind: video}
+      - {id: hi-caching, title: Hello Interview · Caching, url: "https://www.hellointerview.com/learn/system-design/core-concepts/caching", kind: page}
+      - {id: hi-core, title: Hello Interview · Core Concepts（总览）, url: "https://www.hellointerview.com/learn/system-design/in-a-hurry/core-concepts", kind: page}
+      - {id: bytebytego, title: ByteByteGo 频道（补充）, url: "https://www.youtube.com/@ByteByteGo", kind: video}
     units:
-      - {id: sysdesign-01, title: ByteByteGo 视频, scope: open, sources: [{ref: bytebytego}]}
+      - id: sysdesign-01
+        title: 缓存与扩展：从单机到 1 万用户
+        sources: [{ref: hi-caching}, {ref: hi-core, note: 只看 Sharding、Consistent Hashing、CAP 三节的概念}]
+        requests:
+          - 先测量再优化：nanoteacher 的例子是 52dda43e（先量化根因）和 cs-study 课程页 0.6s → 0.13s（F-094：证据读一次、有新证据才重读，这就是缓存失效）
+          - 分片、一致性哈希、CAP 只讲到"单机 SQLite 什么时候不够、下一步是什么"
 
   - id: agent
     title: Agent 工程
