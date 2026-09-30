@@ -55,7 +55,8 @@ destination:
 # 之后按数据流和先修排。没列进来的单元排在后面，在「课程设置」里。
 # 先修：SSE 要 TCP 长连接和 async；并发控制要线程和锁；多租户审查要先会读分层；学习者模型要落到存储（事务）。
 # D-068：「开发与架构设计」放在鉴权之后、后端运行之前——数据建模要先会 SQL；后面每个单元都用得上"数据怎么设计""对怎么定义"。
-# 故意不学（D-068 审计，design/AUDIT-curriculum-coverage.md）：需求工程、项目管理（产品经理本职）；编译原理、形式化证明
+# 需求工程只学"把需求写成能实现、能验证的规格、判断收没收敛"这一半（se-00-req，D-068 修订 2）；找需求、排优先级是 PM 本职。
+# 故意不学（D-068 审计，design/AUDIT-curriculum-coverage.md）：项目管理（产品经理本职）；编译原理、形式化证明
 # （验证 AI 代码用测试、类型、规格就够）；分片、一致性哈希、CAP 只到概念层（单机 SQLite）；前端工程化暂不学。
 path:
   - title: 动手与验证：Shell、Git、调试、测试
@@ -67,9 +68,9 @@ path:
   - title: 鉴权：访问控制与身份认证
     fills: [X1]
     units: [sec-01-access, sec-02-auth]
-  - title: 开发与架构设计：数据、规格、模块、改造旧代码
+  - title: 开发与架构设计：需求、数据、规格、模块、改造旧代码
     fills: [S6, X3, S3]
-    units: [se-01-data, se-02-spec, design-01-ousterhout, design-02-layers, se-03-legacy]
+    units: [se-00-req, se-01-data, se-02-spec, design-01-ousterhout, design-02-layers, se-03-legacy]
   - title: 后端运行：进程、线程、异步
     fills: [S3]
     units: [os-01-process, os-02-thread, os-03-sync, lang-01-asyncio]
@@ -237,9 +238,12 @@ subjects:
     title: 开发与架构设计
     priority: P0
     stage: judge
-    goal: 能自己掌握全局设计（数据怎么建模、"对"怎么定义、屎山怎么安全地改），AI 只负责局部实现
-    scope: 数据建模、规格与不变量、改造旧代码（D-068）；模块与抽象沿用 design 学科
+    goal: 能自己掌握全局设计（需求收没收敛、数据怎么建模、"对"怎么定义、屎山怎么安全地改），AI 只负责局部实现
+    scope: 需求（写成可验证的规格）、数据建模、规格与不变量、改造旧代码（D-068）；模块与抽象沿用 design 学科
     sources:
+      - {id: joel-spec, title: Joel Spolsky · Painless Functional Specifications（Part 1 Why Bother，2000）, url: "https://www.joelonsoftware.com/2000/10/02/painless-functional-specifications-part-1-why-bother/", kind: page}
+      - {id: shapeup, title: Ryan Singer · Shape Up（Basecamp 免费在线书，第一部分 Shaping）, url: "https://basecamp.com/shapeup", kind: book}
+      - {id: fowler-gwt, title: Martin Fowler · Given When Then（bliki）, url: "https://martinfowler.com/bliki/GivenWhenThen.html", kind: page}
       - {id: cmu445-l1, title: CMU 15-445 第 1 讲 Relational Model（Andy Pavlo，Fall 2024 播放列表）, url: "https://www.youtube.com/playlist?list=PLSE8ODhjZXjYDBpQnSymaectKjxCy6BYq", kind: video}
       - {id: hi-data, title: Hello Interview · Data Modeling, url: "https://www.hellointerview.com/learn/system-design/core-concepts/data-modeling", kind: page}
       - {id: kleppmann-inside-out, title: Martin Kleppmann · Turning the database inside out（Strange Loop 2014，视频 + 文字稿）, url: "https://martin.kleppmann.com/2015/03/04/turning-the-database-inside-out.html", kind: page}
@@ -251,6 +255,16 @@ subjects:
       - {where: 带学关不掉：当前页由游标和聊天历史两处推导，退出后被历史"复活", concept: 状态机、不变量}
       - {where: server.py 从 2102 行涨到 9464 行，前三个月只有 13 个测试文件, concept: 改造旧代码、先钉住现有行为}
     units:
+      - id: se-00-req
+        title: 需求：从场景到可验证的规格
+        sources: [{ref: joel-spec}, {ref: shapeup, url: "https://basecamp.com/shapeup/1.1-chapter-02", note: 第 2–5 章 Principles of Shaping、Set Boundaries、Find the Elements、Risks and Rabbit Holes}, {ref: fowler-gwt}]
+        requests:
+          - 学习者自己就是产品经理（F-109、F-110）：找需求、排优先级他会；这一课只讲另一半——把一个还没想清楚的需求，写成 AI 能实现、他自己能验收的东西，并判断它收没收敛
+          - 先给准确定义：问题陈述和方案分开；需求（现实世界里要成立什么）、规格（系统边界上的行为）、程序三者的区别（Michael Jackson 的 World and Machine 思路，只讲概念）；验收标准写成 Given / When / Then，必须有反例（"不能发生什么"）；非功能需求；定边界（Shape Up 的 appetite：先定愿意花多少，再定做多少）；探索用的原型要能扔掉
+          - 核心判断标准"需求收敛了"：写代码之前能写出状态和转移、不变量、验收例子（含反例）；写不出就还在探索，只该做一次性原型
+          - 例子用 nanoteacher（commit hash 原样引用，不补这里没有的细节）：教学模式 2026-06-15 一天 5 个提交从零接进主路径（d8267fb1 → 8589e0b4 → 8a7c84b9 → 38123669 → 2284445e），之后把它弄坏的全是没写进需求的场景——退出后下一轮又被历史锁上（e7e3b0c8）、轮中翻页和重读旧页（fb7aeb9d、af55aed1）、僵尸游标死循环（0e36aff8）；这些都是本该写在验收例子里的反例
+          - 第二个例子用本仓库：D-065 从 F-097 到 F-105 在文档里改了 9 轮（粒度从整节到段到选中文字）才收敛，一轮都没进代码
+          - 练习：挑一条 nanoteacher 的真实投诉（失忆或带学关不掉），写出问题陈述、3 个 Given/When/Then 验收例子（至少 1 个反例）、还没回答的问题，再判断它收没收敛、缺哪一条
       - id: se-01-data
         title: 数据建模：实体、唯一的数据源、派生数据
         sources: [{ref: cmu445-l1, note: 第 1 讲 Relational Model}, {ref: hi-data}, {ref: kleppmann-inside-out, note: 补充：唯一的数据源和派生数据}]
