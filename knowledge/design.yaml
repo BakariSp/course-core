@@ -1,0 +1,184 @@
+# 知识图（D-020、D-047）：节点 + 先修关系。状态不写在这里，由证据算出（study.py kg）。
+# requires 每条：id、kind（required 必须先会 / helpful 先会更好）、by（谁说的：运行 id 或 learner）。
+# misconceptions：常见误解 id → desc（说明）、by（谁提的）；题目的得分点用它说明错在哪（D-056）。
+topic: design
+nodes:
+  design.basic.module:
+    title: 模块（module）
+    desc: 程序里放在一起、对外只通过接口被使用的一组代码；一个函数、一个类、一个文件都可以是一个模块。
+    kind: term
+  design.basic.interface:
+    title: 接口（interface）
+    desc: 一个模块对外提供的东西的总和：别人怎么调用它、它返回什么、调用之后除了返回值还会发生什么，以及使用者必须遵守的约定。
+    kind: term
+    requires:
+    - id: design.basic.module
+      kind: required
+      by: 20260930-150622-design-01-ousterhout-r2
+  design.philosophy.software-design-art:
+    title: 软件设计（software design）
+    desc: 决定一个程序由哪些模块组成、每个模块对外暴露什么接口的活动；Ousterhout 认为它至今基本还是一门没有共识的技艺。
+    kind: concept
+    requires:
+    - id: design.basic.module
+      kind: required
+      by: 20260930-150622-design-01-ousterhout-r2
+    - id: design.basic.interface
+      kind: required
+      by: 20260930-150622-design-01-ousterhout-r2
+  design.philosophy.problem-decomposition:
+    title: problem decomposition（问题分解）
+    desc: 把一个复杂问题或系统拆成若干可以相对独立地构建的部分；他认为这是计算机科学里最重要的概念，也是软件设计的核心技能。
+    kind: concept
+    requires:
+    - id: design.philosophy.software-design-art
+      kind: required
+      by: 20260930-150622-design-01-ousterhout-r2
+  design.philosophy.principles-not-recipes:
+    title: 原则不是配方（no recipe）
+    desc: 他给的是大约 10 条很高层、近乎哲学的想法，没有「照做这几步就得到好设计」的步骤；这些想法只有对着真实代码评审时才被真正用上。
+    kind: concept
+    requires:
+    - id: design.philosophy.software-design-art
+      kind: required
+      by: 20260930-150622-design-01-ousterhout-r2
+  design.review.warning-signs:
+    title: warning signs（警告信号）
+    desc: 一组具体的、可观察的代码模式或做法：一旦出现就说明设计很可能出了问题；做法是换一种写法，直到信号消失。
+    kind: concept
+    requires:
+    - id: design.philosophy.principles-not-recipes
+      kind: required
+      by: 20260930-150622-design-01-ousterhout-r2
+  design.principle.information-hiding:
+    title: 信息隐藏（information hiding, Parnas）
+    desc: 模块应该把容易变化的设计决策藏在自己内部，只对外暴露稳定的接口，这样内部改动不会溢出去。
+    kind: concept
+    requires:
+    - id: design.basic.interface
+      kind: required
+      by: 20260930-150622-design-01-ousterhout-r2
+  design.principle.deep-class:
+    title: 深模块（deep module）
+    desc: 接口很小、内部功能很多的模块：矩形面积是它给系统其余部分提供的功能，上边是接口（成本），深模块就是面积大而上边短的那一种。
+    kind: concept
+    requires:
+    - id: design.principle.information-hiding
+      kind: required
+      by: 20260930-150622-design-01-ousterhout-r2
+  design.principle.shallow-class:
+    title: 浅类（shallow class）
+    desc: 功能很少、或者接口很复杂（有时两者都有）的模块；最坏的情况下它暴露的接口比它藏起来的实现还复杂，净效果是把系统的复杂性变大了。
+    kind: term
+    requires:
+    - id: design.principle.deep-class
+      kind: required
+      by: 20260930-150622-design-01-ousterhout-r2
+  design.principle.classitis:
+    title: classitis
+    desc: 一种设计病：把「类是好东西」理解成「类越多越好」，于是系统里塞满许多功能极少的小类，每个只比前一个多一点点功能。
+    kind: term
+    requires:
+    - id: design.principle.shallow-class
+      kind: required
+      by: 20260930-150622-design-01-ousterhout-r2
+  design.principle.class-depth-not-size:
+    title: 深浅不看现在的代码量
+    desc: 判断深浅看的是接口和功能的关系，不是现在有多少行代码：将来会长大或可能换实现的模块，今天很小也可能是深的，但也不能想太远。
+    kind: concept
+    requires:
+    - id: design.principle.deep-class
+      kind: required
+      by: 20260930-150622-design-01-ousterhout-r2
+  design.principle.method-length:
+    title: 长度不是根本问题
+    desc: 代码长度本身不是设计问题：一个上百行的方法只要逻辑干净、抽象是深的就可以不拆；拆分的理由应该来自抽象，而不是行数。
+    kind: concept
+    requires:
+    - id: design.principle.deep-class
+      kind: required
+      by: 20260930-150622-design-01-ousterhout-r2
+  design.principle.unix-file-interface:
+    title: Unix 文件 I/O 接口
+    desc: open / close / read / write / seek 几个函数是深接口的经典样本：文件系统、缓存、磁盘空间管理、设备驱动之间的差别全被藏在后面。
+    kind: term
+    requires:
+    - id: design.principle.deep-class
+      kind: required
+      by: 20260930-150622-design-01-ousterhout-r2
+  design.principle.define-errors-out-of-existence:
+    title: define errors out of existence（把错误定义成不存在）
+    desc: 一种接口设计做法：不改调用者的写法，而是改变操作的语义，让原本会报错的情况变成一个正常而合理的结果，于是这类错误根本不用被处理。
+    kind: concept
+    requires:
+    - id: design.basic.interface
+      kind: required
+      by: 20260930-150622-design-01-ousterhout-r2
+  design.principle.errors-when-contract-broken:
+    title: 什么时候必须抛异常
+    desc: 当模块无法兑现对调用者的承诺（比如读操作因为 I/O 错误根本完不成）时必须抛异常；异常在需要穿过很多层时价值最大。
+    kind: concept
+    requires:
+    - id: design.principle.define-errors-out-of-existence
+      kind: required
+      by: 20260930-150622-design-01-ousterhout-r2
+  design.principle.optimize-for-common-case:
+    title: 让常见且正确的做法最简单
+    desc: 设计接口时，最常见、最正确的用法应该最容易写出来；为了「防止使用者犯错」而加的机制通常给所有使用者增加复杂性。
+    kind: concept
+    requires:
+    - id: design.basic.interface
+      kind: required
+      by: 20260930-150622-design-01-ousterhout-r2
+  design.mindset.tactical-programming:
+    title: 战术式编程（tactical programming）
+    desc: 一种心态：目标是让手上这个任务（修好这个 bug、做完这个功能）尽快能工作，允许自己抄近路、写临时性的 hack。
+    kind: concept
+  design.mindset.tactical-tornado:
+    title: tactical tornado
+    desc: 战术式编程的极端类型：以极高速度产出大量「约 80% 能用」的平庸代码，同时在身后留下一串破坏；很多组织反而把这种人当英雄。
+    kind: term
+    requires:
+    - id: design.mindset.tactical-programming
+      kind: required
+      by: 20260930-150622-design-01-ousterhout-r2
+  design.mindset.working-code-not-enough:
+    title: 能工作还不够
+    desc: 「能工作」是软件的最低要求，不是设计目标；把能跑当成唯一目标，就等于选了战术式路线。
+    kind: concept
+    requires:
+    - id: design.mindset.tactical-programming
+      kind: required
+      by: 20260930-150622-design-01-ousterhout-r2
+  design.mindset.strategic-investment:
+    title: 把设计当投资（the investment model）
+    desc: 战略式编程是一个投资模型：今天多花时间做设计，是为了让将来的开发更快，这笔投入会在某个时间点之后连本带利收回。
+    kind: concept
+    requires:
+    - id: design.mindset.working-code-not-enough
+      kind: required
+      by: 20260930-150622-design-01-ousterhout-r2
+  design.mindset.investment-amount:
+    title: 该往设计里投多少
+    desc: 他的回答是「你现在能承受多少就投多少」，给出 10%–20% 这个量级，并估计追平点大约在 6–12 个月。
+    kind: concept
+    requires:
+    - id: design.mindset.strategic-investment
+      kind: required
+      by: 20260930-150622-design-01-ousterhout-r2
+  design.arch.abstraction-coupling:
+    title: 抽象与耦合（abstraction / coupling）
+    desc: 耦合指两个组件互相依赖的程度；抽象是在两个组件之间插入的一层更简单的接口，让被使用方内部的复杂细节变化时不传到使用方。
+    kind: concept
+    requires:
+    - id: design.basic.interface
+      kind: required
+      by: 20260930-150622-design-01-ousterhout-r2
+  design.arch.functional-core:
+    title: functional core, imperative shell（FCIS）
+    desc: 一种代码组织方式：外壳负责读写文件、数据库这类有副作用的动作，核心只接收简单数据、只返回简单数据（例如一个动作列表），所以不需要真实文件系统就能被彻底测试。
+    kind: concept
+    requires:
+    - id: design.arch.abstraction-coupling
+      kind: required
+      by: 20260930-150622-design-01-ousterhout-r2
