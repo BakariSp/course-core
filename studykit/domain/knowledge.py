@@ -5,6 +5,7 @@ INVARIANT: 知识图和具体课程无关（D-047）：节点上不记"哪个单
 """
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 
@@ -211,6 +212,81 @@ def studied(states: dict[str, NodeState], taught_by: dict[str, list[str]], earli
     out = [(min(rank[u] for u in units if u in rank), nid) for nid, units in taught_by.items()
            if any(u in rank for u in units) and (states.get(nid) is None or states[nid].state not in ("mastered", "weak"))]
     return [nid for _, nid in sorted(out, key=lambda x: x[0])]     # 先按单元在路线上的先后，同一单元里按教的顺序
+
+
+def unit_slice(nodes: dict[str, Node], states: dict[str, NodeState], start: list[str],
+               extra: dict[str, list[str]] | None = None) -> tuple[dict[str, int], set[str]]:
+    """备课简报的切片（D-061）：从一个单元的知识点出发沿先修（必须的 + 更好的）往上追，遇到已掌握的就停。
+
+    start 里可以有知识图里还没有的点（知识库刚提出的），它们的先修在 extra 里。
+    返回 (没掌握的 {节点: 距离}，含起点；边界上已掌握的)。
+    WHY: 掌握的节点是边界——它的先修学习者一定也会，不用再往上追，所以切片大小只和这个单元有关，不随知识图总量增长。
+    """
+    extra = extra or {}
+    mastered = lambda nid: nid in states and states[nid].state == "mastered"  # noqa: E731
+    inside: dict[str, int] = {}
+    edge: set[str] = set()
+    frontier: list[str] = []
+    for nid in dict.fromkeys(start):
+        if mastered(nid):
+            edge.add(nid)
+        else:
+            inside[nid] = 0
+            frontier.append(nid)
+    d = 0
+    while frontier:
+        d += 1
+        nxt = []
+        for nid in frontier:
+            for r in [*(nodes[nid].prerequisites if nid in nodes else []), *extra.get(nid, [])]:
+                if r in inside or r in edge:
+                    continue
+                if mastered(r):
+                    edge.add(r)
+                elif r in nodes:
+                    inside[r] = d
+                    nxt.append(r)
+        frontier = nxt
+    return inside, edge
+
+
+def _names(node: Node) -> set[str]:
+    """一个节点能被叫出的名字：标题、别名，以及括号前的部分（"protocol（协议）" → "protocol"），都转小写。"""
+    out = set()
+    for t in [node.title, *node.aliases]:
+        t = (t or "").strip().lower()
+        if t:
+            out |= {t, t.split("（")[0].split("(")[0].strip()}
+    return out - {""}
+
+
+def named(nodes: dict[str, Node], terms: list[str]) -> set[str]:
+    """名字和 terms 里某一项对得上的节点（D-061：知识库提出的点可能换了 id，名字还是同一个）。"""
+    wanted = set()
+    for t in terms:
+        t = (t or "").strip().lower()
+        if t:
+            wanted |= {t, t.split("（")[0].split("(")[0].strip()}
+    wanted -= {""}
+    return {nid for nid, n in nodes.items() if _names(n) & wanted}
+
+
+def mentioned(nodes: dict[str, Node], ids: set[str], text: str) -> list[str]:
+    """ids 里名字出现在 text 里的节点（D-061：评审只需要知道课程实际用到了哪些已经会的）。
+    英文名按整词找（不然 ls 会匹配到 tools），中文名按子串找。"""
+    low = text.lower()
+    out = []
+    for nid in sorted(ids):
+        if nid not in nodes:
+            continue
+        for name in _names(nodes[nid]):
+            if len(name) < 2 and name.isascii():
+                continue
+            hit = (re.search(r"(?<![\w.-])" + re.escape(name) + r"(?![\w-])", low) if name.isascii() else name in low)
+            if hit:
+                out.append(nid)
+                break
+    return out
 
 
 def known_titles(states: dict[str, NodeState], topic: str | None = None) -> set[str]:

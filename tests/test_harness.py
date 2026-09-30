@@ -332,6 +332,61 @@ def test_known_titles_cross_subjects(app, root, monkeypatch):
     assert app.harness.build_input("net-01-overview")["known_titles"] == ["pwd"]
 
 
+# ---------- 简报按单元切片（D-061） ----------
+
+def _graph(root, monkeypatch, app, states: dict[str, str]):
+    """知识图写进 knowledge/tools.yaml；states：节点 → 状态（其余的是 new）。"""
+    import yaml
+    from studykit.domain import knowledge
+    graph = {"tools.cmd.pwd": {"title": "pwd"}, "tools.cmd.cd": {"title": "cd"}, "tools.cmd.grep": {"title": "grep"},
+             "tools.cmd.ls": {"title": "ls"}, "tools.git.commit": {"title": "commit", "requires": [{"id": "tools.cmd.cd"}]}}
+    (root / "knowledge").mkdir(exist_ok=True)
+    (root / "knowledge" / "tools.yaml").write_text(yaml.safe_dump({"topic": "tools", "nodes": graph}, allow_unicode=True), encoding="utf-8")
+    nodes = app.content.graph()
+    monkeypatch.setattr(app.learner, "states", lambda nodes_=None: {
+        nid: knowledge.NodeState(n, states.get(nid, "new"), ["错过检查点"] if states.get(nid) == "weak" else []) for nid, n in nodes.items()})
+
+
+def test_brief_slices_the_learner_model_from_the_knowledge_base_of_a_new_unit(app, unit, root, monkeypatch):
+    """没发布过的单元，从知识库的点出发沿先修往上追：只列边界上已经掌握的，其余按教它的单元数一数；相关的薄弱点不再是空的。"""
+    from tests.conftest import add_unit
+    add_unit(root, "tools-02-git", "Git")
+    _graph(root, monkeypatch, app, {"tools.cmd.pwd": "mastered", "tools.cmd.cd": "mastered", "tools.cmd.grep": "mastered",
+                                    "tools.cmd.ls": "mastered", "tools.git.commit": "weak"})
+    full = app.harness.build_input("tools-02-git")                     # 没有知识库：切不出来，给全量
+    assert full["known_titles"] == ["cd", "grep", "ls", "pwd"] and full["brief_nodes"] is None
+
+    kb = {"points": [{"id": "tools.git.branch", "term": "branch", "requires": ["tools.git.commit"]}]}
+    inp = app.harness.build_input("tools-02-git", kb)
+    assert inp["known_titles"] == ["cd"]                                # branch ← commit ← cd：cd 是边界
+    assert [w["id"] for w in inp["related"]["weak"]] == ["tools.git.commit"]
+    assert [p["id"] for p in inp["related"]["prerequisites_not_mastered"]] == ["tools.git.commit"]
+    assert inp["known_elsewhere"] == {"units": [{"unit": "Shell", "count": 2}], "other": 1}   # pwd、grep 是 Shell 教的；ls 没单元教
+    brief = app.harness.render_brief("{knowledge}", {**inp, "unit_budget_minutes": 1, "session_minutes": 1, "max_new_terms": 1})
+    assert brief.splitlines()[0].endswith("：cd") and "Shell单元教的 2 个" in brief.splitlines()[1]
+
+
+def test_brief_shows_only_studied_nodes_in_the_slice_but_checks_use_all(app, unit, root, monkeypatch):
+    """「学过」简报上只显示切片里的；新词检查和回顾用的仍是全部（D-051 的规则不因切片而变）。"""
+    from tests.conftest import add_unit
+    add_unit(root, "tools-02-git", "Git")
+    app.course.record(unit, 0, "open")
+    _graph(root, monkeypatch, app, {})
+    inp = app.harness.build_input("tools-02-git", {"points": [{"id": "tools.git.x", "term": "x", "requires": ["tools.cmd.cd"]}]})
+    assert {s["id"] for s in inp["studied"]} == {"tools.cmd.pwd", "tools.cmd.cd", "tools.cmd.grep"}
+    assert [s["id"] for s in app.harness.shown_studied(inp)] == ["tools.cmd.cd"]
+    assert "学过、没列出的知识点 2 个" in app.harness.known_elsewhere(inp)          # 连不上的也要让写课的人知道
+
+
+def test_reviewer_is_told_which_known_nodes_the_plan_uses(app, runtime, fetcher, root, monkeypatch):
+    """简报只列切片，评审判跳跃要知道课程里用到的"会的"：程序按名字在课程计划里找出来交给评审。"""
+    run = _run(app, runtime, fetcher, plan_of(section(), section("b"), section("c"), section("d")))
+    _graph(root, monkeypatch, app, {"tools.cmd.pwd": "mastered", "tools.cmd.ls": "mastered"})
+    app.harness.reviewer(run)
+    used = runtime.reviews[-1].split("# 课程里用到的、学习者已经会的")[1].split("\n# ")[0]
+    assert "`tools.cmd.pwd`" in used and "tools.cmd.ls" not in used      # 课程里只有 pwd
+
+
 # ---------- 路线上学过的（D-051） ----------
 
 def test_brief_has_what_the_learner_studied_earlier_on_the_path(app, unit, root):

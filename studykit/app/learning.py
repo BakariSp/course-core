@@ -478,6 +478,34 @@ class LearnerModel:
                 "prerequisites_not_mastered": prereq,
                 "weak": [sts[nid].brief() | {"why": sts[nid].reasons} for nid in dist if sts[nid].state in ("weak", "stale")]}
 
+    def brief_slice(self, unit: str, points: list[dict] = ()) -> dict | None:
+        """备课简报里的学习者模型（D-061）：从这个单元的知识点（发布的课程计划教的 + 知识库的 points）沿先修往上追，遇到已掌握就停。
+        没有起点（没发布过、也没有知识库）时返回 None——切不出来，调用方给全量。"""
+        nodes = self.d.content.graph()
+        sts = self.states(nodes)
+        ids = [p["id"] for p in points if p.get("id")]
+        start = [*self.taught(unit), *ids, *sorted(knowledge.named(nodes, [p.get("term", "") for p in points]))]
+        if not start:
+            return None
+        inside, edge = knowledge.unit_slice(nodes, sts, start, {p["id"]: list(p.get("requires") or []) for p in points if p.get("id")})
+        # 切片外已经掌握的，按教它的单元数一数：写课的人知道"Shell 教的那些都会"，不用把名字全列出来
+        titles = {u.id: u.title for _, u in self.d.content.course().units()}
+        by_unit: dict[str, int] = defaultdict(int)
+        taught_by = self.taught_by()
+        for nid, s in sts.items():
+            if s.state == "mastered" and nid not in edge:
+                units = [u for u in taught_by.get(nid) or [] if u in titles]
+                by_unit[titles[units[0]] if units else ""] += 1
+        near = [nid for nid in inside if nid in sts]
+        return {"ids": sorted({*inside, *edge}),
+                "mastered": sorted({sts[nid].node.title for nid in edge}),
+                "elsewhere": [{"unit": u, "count": n} for u, n in by_unit.items() if u],
+                "elsewhere_other": by_unit.get("", 0),
+                "related": {"unit": unit, "taught": [sts[nid].brief() for nid in start if nid in sts and inside.get(nid) == 0],
+                            "prerequisites_not_mastered": [sts[nid].brief() | {"distance": inside[nid]}
+                                                           for nid in sorted(near, key=inside.get) if inside[nid] > 0],
+                            "weak": [sts[nid].brief() | {"why": sts[nid].reasons} for nid in near if sts[nid].state in ("weak", "stale")]}}
+
     def show(self, nid: str) -> dict:
         """第 2 级：一个节点的全部信息。"""
         nodes = self.d.content.graph()
