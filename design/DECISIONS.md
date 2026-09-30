@@ -1963,29 +1963,45 @@ cs-study        路线   我   助手
 - **学习者的回答（2026-09-29）**：ok（版本号用 v0.x）。
 - **怎么验证**：学习者只看 CHANGELOG 能说出每个版本多了什么；下一个提议从讨论到提交，`docs(design)` 不超过 2 条。
 
-## D-068 按三把尺子审计课程覆盖度；补一个「上线与稳定」阶段和规格、系统设计单元 · 提议 · 2026-09-30
+## D-068 课程补"开发与架构设计"一段：先数据、再规格、再模块、再改造旧代码，最后才是优化和上线；案例用 nanoteacher 病历 · 提议（修订）· 2026-09-30
 
-- **问题**（F-107）：
-  1. Hello Interview 的 9 项核心概念课程里只有 2–3 项，学习者怀疑课程的合理性。
-  2. 学习者的目标是"和 AI 一起开发并**上线一个稳定的** agent native 学习系统"。D-048、D-062 都是从链路上已知的坑往回推，
-     只覆盖"一次请求怎么走通"；发布、观测、外部依赖出错（超时、重试、幂等）、数据演进这些"上线后"的事没有单元。
-  3. `docs/curriculum-notes.md` 的验证阶梯 7 层，第 1、5、6、7 层没有单元：课程写了原则，路线没跟上。
-- **证据**：审计全文见 [AUDIT-curriculum-coverage.md](AUDIT-curriculum-coverage.md)。nanoteacher 已经在用而课程没教的：
-  `.github/workflows/gate-pr.yml`、`e2e.yml`、`load-test.yml`；灰度清单 + 回滚开关；`engine/litellm_resilience.py`（超时不重试）；
-  `engine/database.py` 的幂等账本；`usage_worker.py` 后台队列；验证码限流；一串 `test_*_migration.py`。
+- **问题**（F-107、F-108）：
+  1. Hello Interview 的 9 项核心概念课程里只覆盖 2–3 项，学习者怀疑课程的合理性。
+  2. 学习者的目标是"和 AI 一起开发并上线一个稳定的 agent native 学习系统"。现在的路线只教"一次请求怎么走通"，
+     没教怎么**设计**：数据怎么建模、"对"怎么定义、模块边界在哪、屎山怎么安全地改。
+  3. 学习者（F-108）：保证质量的是开发和架构设计，运维（灰度、回滚）是下游；最大的问题是 AI slop 堆成的屎山，
+     "既不知道数据怎么设计的，也不知道怎么优化，出了一堆 bug 都修不好"。
+- **证据**：
+  - 覆盖度审计：[AUDIT-curriculum-coverage.md](AUDIT-curriculum-coverage.md)（第一版，重心在运维，已被 F-108 修正）。
+  - nanoteacher 病历：`data/materials/nanoteacher-casebook.md`（不进 git，D-069）。
+    pi 按月读 1624 个提交写复盘，导师合成、抽查 6 个关键提交。三类仍在被投诉的问题（失忆、带学关不掉、内容偏移）
+    修了几十次，根子都是"同一份状态存了好几处 / 每轮从历史推导"和"关键行为靠 prompt 而不是代码保证"；
+    `server.py` 2102 → 9464 行，前三个月 4.5 万行代码只有 13 个测试文件。
 - **考虑过**：
-  1. 只把 Hello Interview 那一页补成 sysdesign 单元：堵住一个洞，"上线与稳定"那一整块照样漏，下次看到别的大纲还会问同样的问题。
-  2. **用三把尺子（目标 / 遇到的问题 / 公认大纲 SWEBOK v4 + Hello Interview）逐块对照，每块标"已覆盖 / 缺 / 故意不学"**（提议）：
-     课程合不合理变成能查表回答的问题；"故意不学"写明理由，以后可查。
+  1. 只把 Hello Interview 那一页补成 sysdesign 单元：堵一个洞，设计能力照样缺。
+  2. 第一版提议：补「上线与稳定」（发布、观测、重试幂等）为主：学习者否决（F-108），运维是下游，先学设计。
+  3. **从下往上补"开发与架构设计"，每一步都拿 nanoteacher 病历里的真实案例当例子**（采用）。
 - **提议**：
-  - 新单元（材料是候选，备课前核对）：`se-01-spec` 规格、不变量与契约；`ops-01-deliver` 发布；`ops-02-observe` 可观测性；
-    `ops-03-reliability` 超时、重试、幂等、后台任务；`sysdesign-01-api-data` API 设计 + 数据建模 + schema 演进；
-    `sysdesign-02-scale` 缓存 + 扩展概念（分片、CAP 只到概念层）。
-  - 终点地图加 X4「上线与稳定」；X2 由 `sysdesign-02` 撑起来；X3 加 `se-01-spec`。
-  - 路线位置见审计第 4 节；不动已学、在学的单元（D-062 的约定）。
-  - `course.yaml` 加一段"故意不学"及理由。
+  - 路线新增一个阶段「开发与架构设计：数据、规格、模块、改造旧代码」，顺序和材料：
+    | 顺序 | 单元 | 主材料 | 病历里的首选案例 |
+    |---|---|---|---|
+    | 1 | `se-01-data` 数据建模：实体、唯一的数据源、派生视图、稳定 id | CMU 15-445 第 1 讲（视频）+ Hello Interview Data Modeling；Kleppmann *Turning the database inside out* 当补充 | 记忆存了 5 种以上；`f2c70740` |
+    | 2 | `se-02-spec` 规格、不变量、状态机 | **MIT 6.031** 读物 Specifications、Abstract Data Types、Abstraction Functions & Rep Invariants（学习者 2026-09-30 选定；例子是 Java，备课时换成 Python / nanoteacher） | 带学关不掉；`8e664a05` 幂等键 |
+    | 3 | 模块与抽象：沿用 `design-01-ousterhout`、`design-02-layers`，requests 加上病历案例 | — | `18a943ac` 四层补丁 |
+    | 4 | `se-03-legacy` 改造旧代码：钉住现有行为的测试、切入点、小步重构、新旧并存的删除计划 | Feathers 访谈 *Working Effectively with Legacy Code and AI Coding Assistant* + understandlegacycode.com 要点文 | `bb9bffcb` 合并丢修复；`9a30cdc8` 测试假绿 |
+    | 5 | 优化：先量化再修；缓存 | 沿用 `db-02-index`、`tools-03-debug`；`sysdesign-01` 改成 Hello Interview 的 Caching 等几节 | `52dda43e` capture gap |
+    | 6 | 上线：开关、灰度、回滚、观测 | 以后再定 | 灰度清单；`f5e8e574` 死开关 |
+  - 位置：放在「从请求到数据：HTTP 与 SQL」之后（数据建模要先会 SQL），「后端结构与运行」之前；不动已学、在学的单元（D-062 的约定）。
+  - 终点地图：X3 验证加 `se-02-spec`、`se-03-legacy`；S6 存储加 `se-01-data`；X2 由缓存单元撑起来。
+  - `course.yaml` 加一段"故意不学"及理由（需求、项目管理：PM 本职；分片、CAP：只到概念层）。
+- **一个缺口（要改 harness，另起一条决定）**：备课 agent 只能 `fetch_url` 读白名单网站，**读不了本地文件**，
+  所以病历和 nanoteacher 的代码它都看不到，只能讲通用例子或编例子。候选做法：
+  1. 加一个只读的本地材料工具（只能读登记过的文件和目录，读过的记进 `fetches.jsonl`，和网页一样算"打开过"，评审能核对）；
+  2. 病历作为材料放进简报（最省事，但病历 1 万多字，每次备课都占上下文）。
+  倾向 1：以后"读 nanoteacher 代码"也走同一个工具。
 - **待学习者决定**：
-  1. 6 个新单元全要，还是先挑几个？
-  2. 路线位置是否认可（特别是 `se-01-spec` 插在「动手与验证」之后，会把后面所有单元往后推一个）？
-  3. 这几块好的视频少，候选大多是读物（MIT 6.031、Google SRE 书），能接受吗？
-- **怎么验证**：学习者拿任意一份新大纲来，能在审计表里找到每一项的结论和理由；学完 `ops-*` 后，能讲清 nanoteacher 一个改动从 PR 到生产、再到出事回滚的全过程。
+  1. 第 1–4 步的顺序和位置是否认可？
+  2. 本地材料工具先做（新决定），还是先用做法 2 把第 1、2 步备出来？
+- **怎么验证**：学完 `se-01-data`，学习者能画出 nanoteacher 记忆相关的数据地图并指出哪几处是同一份数据；
+  学完 `se-02-spec`，能为带学模式写出状态机和不变量，并说出 `e7e3b0c8` 为什么不够；
+  学完 `se-03-legacy`，能在 nanoteacher 上为一个反复出现的 bug 先写钉住行为的测试再修。
